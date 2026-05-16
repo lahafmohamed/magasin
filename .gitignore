@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Environment variables — NEVER commit secrets
+backend/.env
+frontend/.env
+.env
+
+# Build output
+backend/dist/
+frontend/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS artifacts
+.DS_Store
+Thumbs.db
