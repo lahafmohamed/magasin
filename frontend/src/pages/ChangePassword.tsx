@@ -2,6 +2,10 @@ import { useState } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { authService } from '../services/authService';
 import { toast } from 'sonner';
+import { Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 export default function ChangePassword() {
   const { logout } = useAuth();
@@ -35,20 +39,20 @@ export default function ChangePassword() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-base-200">
-      <div className="card w-full max-w-md bg-base-100 shadow-xl">
-        <div className="card-body">
-          <h2 className="card-title text-2xl font-bold mb-1">Changement de mot de passe requis</h2>
-          <p className="text-base-content/60 text-sm mb-4">
+    <div className="min-h-screen flex items-center justify-center bg-muted/40 p-4">
+      <div className="w-full max-w-md rounded-md border bg-card shadow-sm">
+        <div className="p-6">
+          <h1 className="text-xl font-semibold mb-1">Changement de mot de passe requis</h1>
+          <p className="text-sm text-muted-foreground mb-6">
             Pour des raisons de sécurité, vous devez définir un nouveau mot de passe avant de continuer.
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="form-control">
-              <label className="label"><span className="label-text">Mot de passe actuel</span></label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="current">Mot de passe actuel</Label>
+              <Input
+                id="current"
                 type="password"
-                className="input input-bordered"
                 value={currentPassword}
                 onChange={e => setCurrentPassword(e.target.value)}
                 required
@@ -56,11 +60,11 @@ export default function ChangePassword() {
               />
             </div>
 
-            <div className="form-control">
-              <label className="label"><span className="label-text">Nouveau mot de passe</span></label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="new">Nouveau mot de passe</Label>
+              <Input
+                id="new"
                 type="password"
-                className="input input-bordered"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
                 required
@@ -68,20 +72,27 @@ export default function ChangePassword() {
               />
             </div>
 
-            <div className="form-control">
-              <label className="label"><span className="label-text">Confirmer le nouveau mot de passe</span></label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="confirm">Confirmer le nouveau mot de passe</Label>
+              <Input
+                id="confirm"
                 type="password"
-                className="input input-bordered"
                 value={confirm}
                 onChange={e => setConfirm(e.target.value)}
                 required
               />
             </div>
 
-            <button type="submit" className="btn btn-primary w-full" disabled={loading}>
-              {loading ? <span className="loading loading-spinner loading-sm" /> : 'Changer le mot de passe'}
-            </button>
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Mise à jour…
+                </>
+              ) : (
+                'Changer le mot de passe'
+              )}
+            </Button>
           </form>
         </div>
       </div>

@@ -241,9 +241,15 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
       }
 
       const invoice = invoiceRows[0];
-      const remainingDue = invoice.total - invoice.montant_paye;
+      const total = parseFloat(invoice.total);
+      const montantPaye = parseFloat(invoice.montant_paye);
+      const remainingDue = total - montantPaye;
 
-      if (montant > remainingDue) {
+      if (montant <= 0) {
+        throw new Error('Le montant du paiement doit être positif');
+      }
+
+      if (montant > remainingDue + 0.01) {
         throw new Error(`Le montant du paiement (${montant}) dépasse le reste dû (${remainingDue})`);
       }
 
@@ -267,6 +273,17 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
            (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
          VALUES ($1, 'paiement', $2, $3, $4, 0, $5, $6)`,
         [ff_tiers_id, paiementResult[0].id, `PAI-FF-${paiementResult[0].id}`, montant, null, effectuePar || null]
+      );
+
+      // Update the invoice balance and status.
+      const newMontantPaye = montantPaye + montant;
+      const newReste = total - newMontantPaye;
+      const newStatut = newReste <= 0.01 ? 'payee' : newMontantPaye > 0 ? 'partielle' : 'en_attente';
+      await client.query(
+        `UPDATE factures_fournisseur
+         SET montant_paye = $1, reste_due = $2, statut = $3
+         WHERE id = $4`,
+        [newMontantPaye, Math.max(0, newReste), newStatut, factureId]
       );
 
       await client.query('COMMIT');
@@ -295,7 +312,7 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
    */
   async getPayableInvoices(): Promise<any[]> {
     const { rows } = await pool.query(
-      `SELECT ff.*, f.nom as fournisseur_nom,
+      `SELECT ff.*, t.raison_sociale as fournisseur_nom,
               ff.total - ff.montant_paye as reste_du,
               CASE 
                 WHEN ff.date_echeance < CURRENT_DATE THEN 'en_retard'

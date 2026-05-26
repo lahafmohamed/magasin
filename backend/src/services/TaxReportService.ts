@@ -31,7 +31,7 @@ export class TaxReportService {
         t.code as taux_code,
         t.taux as taux_pct,
         COUNT(DISTINCT c.id) as nombre_commandes,
-        COALESCE(SUM(cl.total_ligne * t.taux / 100), 0) as tva deductible,
+        COALESCE(SUM(cl.total_ligne * t.taux / 100), 0) as tva_deductible,
         COALESCE(SUM(cl.total_ligne), 0) as total_ht,
         COALESCE(SUM(cl.total_ligne * (1 + t.taux / 100)), 0) as total_ttc
        FROM commande_lignes cl

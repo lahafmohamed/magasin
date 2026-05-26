@@ -130,10 +130,17 @@ export interface StatsDashboard {
   alertes_stock: number;
 }
 
-export const METHODES_PAIEMENT = {
-  espece: { label: 'Espèces', color: 'bg-green-500', icon: '💵' },
-  carte: { label: 'Carte', color: 'bg-blue-500', icon: '💳' },
-  cheque: { label: 'Chèque', color: 'bg-yellow-500', icon: '📝' },
-  virement: { label: 'Virement', color: 'bg-purple-500', icon: '🏦' },
-  acompte: { label: 'Acompte', color: 'bg-orange-500', icon: '🔶' },
-} as const;
+import { Banknote, CreditCard, ScrollText, Landmark, CircleDollarSign, Wallet, type LucideIcon } from 'lucide-react';
+
+export const METHODES_PAIEMENT: Record<
+  'espece' | 'carte' | 'cheque' | 'virement' | 'acompte',
+  { label: string; color: string; Icon: LucideIcon }
+> = {
+  espece: { label: 'Espèces', color: 'bg-success-500', Icon: Banknote },
+  carte: { label: 'Carte', color: 'bg-primary-500', Icon: CreditCard },
+  cheque: { label: 'Chèque', color: 'bg-warning-500', Icon: ScrollText },
+  virement: { label: 'Virement', color: 'bg-primary-700', Icon: Landmark },
+  acompte: { label: 'Acompte', color: 'bg-warning-600', Icon: CircleDollarSign },
+};
+
+export const FALLBACK_PAIEMENT_ICON: LucideIcon = Wallet;

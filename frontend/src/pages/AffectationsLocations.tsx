@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { Loader2 } from 'lucide-react';
 import { userLocationAssignmentService } from '../services/api';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 
 interface AssignmentUser {
   id: number;
@@ -122,7 +125,7 @@ export default function AffectationsLocations() {
   if (loading) {
     return (
       <div className="flex justify-center p-8">
-        <span className="loading loading-spinner loading-lg"></span>
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -130,48 +133,52 @@ export default function AffectationsLocations() {
   return (
     <div className="container mx-auto p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold">Affectations Utilisateur-Locations</h1>
-        <p className="text-sm text-base-content/70 mt-1">
-          Configure les locations accessibles pour chaque utilisateur et la location par defaut.
+        <h1 className="text-2xl font-semibold tracking-tight">Affectations Utilisateur-Locations</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Configure les locations accessibles pour chaque utilisateur et la location par défaut.
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="card bg-base-100 shadow-xl">
-          <div className="card-body">
-            <h2 className="card-title">Utilisateurs</h2>
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Utilisateur</th>
-                    <th>Role</th>
-                    <th>Statut</th>
-                    <th>Locations</th>
+        <div className="rounded-md border bg-card shadow-sm">
+          <div className="p-5">
+            <h2 className="text-lg font-semibold mb-3">Utilisateurs</h2>
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 text-left">
+                  <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className="px-3 py-2 font-medium">Utilisateur</th>
+                    <th className="px-3 py-2 font-medium">Rôle</th>
+                    <th className="px-3 py-2 font-medium">Statut</th>
+                    <th className="px-3 py-2 font-medium">Locations</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y">
                   {users.map((user) => (
                     <tr
                       key={user.id}
-                      className={selectedUserId === user.id ? 'bg-primary/10 cursor-pointer' : 'cursor-pointer'}
+                      className={`cursor-pointer hover:bg-muted/30 ${selectedUserId === user.id ? 'bg-primary/10' : ''}`}
                       onClick={() => void selectUser(user.id)}
                     >
-                      <td>
+                      <td className="px-3 py-2">
                         <div className="font-medium">{user.username}</div>
                         {user.nom_complet && (
-                          <div className="text-xs text-base-content/70">{user.nom_complet}</div>
+                          <div className="text-xs text-muted-foreground">{user.nom_complet}</div>
                         )}
                       </td>
-                      <td>
-                        <span className="badge badge-outline">{user.role}</span>
+                      <td className="px-3 py-2">
+                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs">
+                          {user.role}
+                        </span>
                       </td>
-                      <td>
-                        <span className={`badge ${user.actif ? 'badge-success' : 'badge-ghost'}`}>
+                      <td className="px-3 py-2">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                          user.actif ? 'bg-success-100 text-success-700' : 'bg-muted text-muted-foreground'
+                        }`}>
                           {user.actif ? 'Actif' : 'Inactif'}
                         </span>
                       </td>
-                      <td>{user.locations.length}</td>
+                      <td className="px-3 py-2 num">{user.locations.length}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -180,12 +187,12 @@ export default function AffectationsLocations() {
           </div>
         </div>
 
-        <div className="card bg-base-100 shadow-xl">
-          <div className="card-body">
-            <h2 className="card-title">Affectations</h2>
+        <div className="rounded-md border bg-card shadow-sm">
+          <div className="p-5">
+            <h2 className="text-lg font-semibold mb-3">Affectations</h2>
             {!selectedUser ? (
-              <div className="alert alert-info">
-                <span>Selectionne un utilisateur pour modifier ses affectations.</span>
+              <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">
+                Sélectionnez un utilisateur pour modifier ses affectations.
               </div>
             ) : (
               <>
@@ -193,22 +200,22 @@ export default function AffectationsLocations() {
                   <span className="font-semibold">Utilisateur:</span> {selectedUser.username}
                 </div>
 
-                <div className="space-y-3 mb-6">
+                <div className="space-y-2 mb-6">
                   {locations.map((location) => {
                     const checked = selectedLocationIds.includes(location.id);
                     return (
-                      <label key={location.id} className="flex items-center justify-between gap-3 p-3 rounded-lg border">
+                      <label key={location.id} className="flex items-center justify-between gap-3 p-3 rounded-md border hover:bg-muted/30 cursor-pointer">
                         <div>
                           <div className="font-medium">
-                            {location.nom} <span className="text-xs text-base-content/70">({location.code})</span>
+                            {location.nom} <span className="text-xs text-muted-foreground">({location.code})</span>
                           </div>
                           {location.est_principal && (
-                            <div className="text-xs text-primary">Location principale systeme</div>
+                            <div className="text-xs text-primary">Location principale système</div>
                           )}
                         </div>
                         <input
                           type="checkbox"
-                          className="checkbox"
+                          className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
                           checked={checked}
                           onChange={(e) => toggleLocation(location.id, e.target.checked)}
                         />
@@ -217,12 +224,11 @@ export default function AffectationsLocations() {
                   })}
                 </div>
 
-                <div className="form-control mb-6">
-                  <label className="label">
-                    <span className="label-text">Location par defaut</span>
-                  </label>
+                <div className="space-y-1.5 mb-6">
+                  <Label htmlFor="default-location">Location par défaut</Label>
                   <select
-                    className="select select-bordered"
+                    id="default-location"
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     value={defaultLocationId ?? ''}
                     onChange={(e) => setDefaultLocationId(e.target.value ? parseInt(e.target.value, 10) : null)}
                     disabled={selectedLocationIds.length === 0}
@@ -239,9 +245,16 @@ export default function AffectationsLocations() {
                 </div>
 
                 <div className="flex justify-end">
-                  <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-                    {saving ? <span className="loading loading-spinner"></span> : 'Enregistrer'}
-                  </button>
+                  <Button onClick={handleSave} disabled={saving}>
+                    {saving ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Enregistrement…
+                      </>
+                    ) : (
+                      'Enregistrer'
+                    )}
+                  </Button>
                 </div>
               </>
             )}

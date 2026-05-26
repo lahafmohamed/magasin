@@ -293,7 +293,7 @@ export default function DemandeForm() {
                 <Label htmlFor="magasin">Magasin destinataire *</Label>
                 <select
                   id="magasin"
-                  className="select select-bordered w-full"
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={formData.magasin_id}
                   onChange={(e) => setFormData({ ...formData, magasin_id: e.target.value })}
                   required
@@ -311,7 +311,7 @@ export default function DemandeForm() {
                 <Label htmlFor="depot">Dépôt source *</Label>
                 <select
                   id="depot"
-                  className="select select-bordered w-full"
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={formData.depot_id}
                   onChange={(e) => setFormData({ ...formData, depot_id: e.target.value })}
                   required

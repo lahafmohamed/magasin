@@ -357,20 +357,6 @@ export class DemandeController {
                 }
             }
 
-            // Validate partial approval requires line decisions
-            if (decision === 'approuvee' && lignes_decision) {
-                // Check if any line is partial
-                const isPartial = lignes_decision.some((ld: any) => {
-                    const line = existing.lignes.find((l: any) => l.id === ld.ligne_id);
-                    return line && ld.quantite_approuvee < line.quantite_demandee;
-                });
-
-                // If partial, reject this request - client should handle partial properly
-                if (isPartial) {
-                    // Actually, the service handles this - let it through
-                }
-            }
-
             // Refusal requires reason
             if (decision === 'refusee' && !raison_refus) {
                 res.status(400).json({ success: false, error: 'Motif de refus requis' });
@@ -495,10 +481,10 @@ export class DemandeController {
                 return;
             }
 
-            await demandeService.cancel(id, userId, req);
+            await demandeService.cancel(id, userId, userRole, req);
             successResponse(res, null, 'Demande annulée avec succès');
         } catch (error: any) {
-            res.status(400).json({ success: false, error: error.message });
+            res.status(error.code === 'FORBIDDEN' ? 403 : 400).json({ success: false, error: error.message });
         }
     }
 

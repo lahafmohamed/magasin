@@ -120,11 +120,19 @@ export class CompensationService {
          `Compensation ${pieceNum}`, input.cree_par || null]
       );
 
-      // Update compensation record with acompte reference
-      await client.query(
-        `UPDATE compensations SET acompte_client_id = $1 WHERE id = $2`,
-        [acompteId, compRows[0].id]
-      ).catch(() => { /* column may not exist yet — ignore */ });
+      // Update compensation record with acompte reference. The column may not
+      // exist in older schemas; use a SAVEPOINT so a failure here does not abort
+      // the whole transaction (a swallowed error would otherwise poison COMMIT).
+      await client.query('SAVEPOINT sp_acompte_link');
+      try {
+        await client.query(
+          `UPDATE compensations SET acompte_client_id = $1 WHERE id = $2`,
+          [acompteId, compRows[0].id]
+        );
+        await client.query('RELEASE SAVEPOINT sp_acompte_link');
+      } catch {
+        await client.query('ROLLBACK TO SAVEPOINT sp_acompte_link');
+      }
 
       await client.query('COMMIT');
       logger.info({ tiersId: input.tiers_id, montant: input.montant }, 'Compensation created');

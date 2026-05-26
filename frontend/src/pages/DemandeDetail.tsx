@@ -218,7 +218,12 @@ export default function DemandeDetail() {
     );
   }
 
-  const statusConfig = STATUS_CONFIG[demande.statut];
+  const statusConfig = STATUS_CONFIG[demande.statut] ?? {
+    label: demande.statut,
+    variant: 'outline' as const,
+    icon: Clock,
+    description: '',
+  };
   const StatusIcon = statusConfig.icon;
 
   // Determine available actions based on role and state

@@ -176,7 +176,7 @@ export class CashVarianceService {
       ecart_total: totalEcart.toFixed(2),
       ecarts_positifs: nombreEcartsPositifs,
       ecarts_negatifs: nombreEcartsNegatifs,
-      taux_conformite: nombreSessions > 0 ? (((nombreSessions - nombreEcartsNegatifs) / nombreSessions) * 100).toFixed(2) : '100.00',
+      taux_conformite: nombreSessions > 0 ? (((nombreSessions - nombreEcartsNegatifs - nombreEcartsPositifs) / nombreSessions) * 100).toFixed(2) : '100.00',
     };
   }
 }

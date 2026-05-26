@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 interface Shortcut {
@@ -49,7 +49,7 @@ export function useKeyboardShortcuts(shortcuts: Shortcut[]) {
 export function useERPShortcuts() {
   const navigate = useNavigate();
 
-  const shortcuts: Shortcut[] = [
+  const shortcuts: Shortcut[] = useMemo(() => [
     {
       key: 'F1',
       action: () => navigate('/factures/nouvelle'),
@@ -62,13 +62,8 @@ export function useERPShortcuts() {
     },
     {
       key: 'F3',
-      action: () => navigate('/clients'),
-      description: 'Clients',
-    },
-    {
-      key: 'F4',
-      action: () => navigate('/fournisseurs'),
-      description: 'Fournisseurs',
+      action: () => navigate('/tiers'),
+      description: 'Contacts',
     },
     {
       key: 'F5',
@@ -105,7 +100,7 @@ export function useERPShortcuts() {
       },
       description: 'Afficher l\'aide',
     },
-  ];
+  ], [navigate]);
 
   useKeyboardShortcuts(shortcuts);
   return shortcuts;

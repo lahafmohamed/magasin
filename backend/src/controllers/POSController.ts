@@ -98,12 +98,22 @@ export class POSController {
    */
   static async closeSession(req: Request, res: Response): Promise<void> {
     try {
+      const authReq = req as AuthRequest;
       const { sessionId } = req.params;
 
+      await posService.assertSessionAccess(parseInt(sessionId), authReq.user!.id, authReq.user!.role);
       const session = await posService.closeSession(parseInt(sessionId));
       res.json({ success: true, data: session });
     } catch (error: any) {
       console.error('Erreur POST /api/pos/close:', error);
+      if (error.code === 'FORBIDDEN') {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      if (error.code === 'NOT_FOUND') {
+        res.status(404).json({ error: error.message });
+        return;
+      }
       res.status(400).json({ error: error.message });
     }
   }
@@ -113,12 +123,22 @@ export class POSController {
    */
   static async getSessionSummary(req: Request, res: Response): Promise<void> {
     try {
+      const authReq = req as AuthRequest;
       const { sessionId } = req.params;
 
+      await posService.assertSessionAccess(parseInt(sessionId), authReq.user!.id, authReq.user!.role);
       const summary = await posService.getSessionSummary(parseInt(sessionId));
       res.json({ success: true, data: summary });
     } catch (error: any) {
       console.error('Erreur GET /api/pos/summary:', error);
+      if (error.code === 'FORBIDDEN') {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      if (error.code === 'NOT_FOUND') {
+        res.status(404).json({ error: error.message });
+        return;
+      }
       res.status(400).json({ error: error.message });
     }
   }

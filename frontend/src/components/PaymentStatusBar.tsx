@@ -1,4 +1,7 @@
 import React from 'react';
+import { CheckCircle2, CircleDashed, XCircle, Circle, Plus, type LucideIcon } from 'lucide-react';
+import { Button } from './ui/button';
+import { formatFCFA } from '../utils/format';
 
 interface PaymentStatusBarProps {
   montantPaye: number;
@@ -7,6 +10,13 @@ interface PaymentStatusBarProps {
   statut: 'payee' | 'partielle' | 'en_attente' | 'annulee';
   onAddPayment?: () => void;
 }
+
+type StatusConfig = {
+  textColor: string;
+  barColor: string;
+  label: string;
+  Icon: LucideIcon;
+};
 
 export const PaymentStatusBar: React.FC<PaymentStatusBarProps> = ({
   montantPaye,
@@ -18,98 +28,77 @@ export const PaymentStatusBar: React.FC<PaymentStatusBarProps> = ({
   const montantPayeNum = parseFloat(montantPaye as any) || 0;
   const remainingDueNum = parseFloat(remainingDue as any) || 0;
   const totalNum = parseFloat(total as any) || 0;
-  
+
   const percentage = totalNum > 0 ? (montantPayeNum / totalNum) * 100 : 0;
 
-  const getStatusConfig = () => {
+  const getStatusConfig = (): StatusConfig => {
     switch (statut) {
       case 'payee':
-        return {
-          color: 'text-success',
-          bgColor: 'bg-success',
-          label: 'Payée',
-          icon: '✓',
-        };
+        return { textColor: 'text-success-700', barColor: 'bg-success-500', label: 'Payée', Icon: CheckCircle2 };
       case 'partielle':
-        return {
-          color: 'text-warning',
-          bgColor: 'bg-warning',
-          label: 'Partielle',
-          icon: '◐',
-        };
+        return { textColor: 'text-warning-700', barColor: 'bg-warning-500', label: 'Partielle', Icon: CircleDashed };
       case 'annulee':
-        return {
-          color: 'text-error',
-          bgColor: 'bg-error',
-          label: 'Annulée',
-          icon: '✕',
-        };
+        return { textColor: 'text-danger-700', barColor: 'bg-danger-500', label: 'Annulée', Icon: XCircle };
       default:
-        return {
-          color: 'text-error',
-          bgColor: 'bg-error',
-          label: 'Non payée',
-          icon: '○',
-        };
+        return { textColor: 'text-danger-700', barColor: 'bg-danger-500', label: 'Non payée', Icon: Circle };
     }
   };
 
-  const statusConfig = getStatusConfig();
+  const cfg = getStatusConfig();
+  const StatusIcon = cfg.Icon;
 
   if (statut === 'annulee') {
     return (
-      <div className="alert alert-error mb-4">
-        <span className="text-2xl">{statusConfig.icon}</span>
-        <span className="font-bold">Facture {statusConfig.label}</span>
+      <div className="mb-4 flex items-center gap-2 rounded-md border border-danger-200 bg-danger-50 p-3 text-sm text-danger-800">
+        <StatusIcon className="h-5 w-5 shrink-0" />
+        <span className="font-semibold">Facture {cfg.label}</span>
       </div>
     );
   }
 
   return (
-    <div className="card bg-base-100 shadow-md mb-4">
-      <div className="card-body p-4">
+    <div className="mb-4 rounded-md border bg-card shadow-sm">
+      <div className="p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <span className={`text-2xl ${statusConfig.color}`}>{statusConfig.icon}</span>
-            <span className={`font-bold text-lg ${statusConfig.color}`}>
-              Statut: {statusConfig.label}
+            <StatusIcon className={`h-5 w-5 ${cfg.textColor}`} />
+            <span className={`font-semibold text-base ${cfg.textColor}`}>
+              Statut: {cfg.label}
             </span>
           </div>
           {onAddPayment && statut !== 'payee' && (
-            <button className="btn btn-primary btn-sm" onClick={onAddPayment}>
-              <span className="text-lg">+</span>
+            <Button size="sm" onClick={onAddPayment} className="gap-1.5">
+              <Plus className="h-4 w-4" />
               Enregistrer un paiement
-            </button>
+            </Button>
           )}
         </div>
 
-        {/* Progress Bar */}
         <div className="mb-3">
           <div className="flex justify-between text-sm mb-1">
-            <span className="text-base-content/70">Progression du paiement</span>
-            <span className="font-semibold">{percentage.toFixed(0)}%</span>
+            <span className="text-muted-foreground">Progression du paiement</span>
+            <span className="font-medium num">{percentage.toFixed(0)}%</span>
           </div>
-          <div className="w-full bg-base-200 rounded-full h-3 overflow-hidden">
+          <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
             <div
-              className={`h-full transition-all duration-500 ${statusConfig.bgColor}`}
+              className={`h-full transition-all duration-500 ${cfg.barColor}`}
               style={{ width: `${percentage}%` }}
             />
           </div>
         </div>
 
-        {/* Payment Details */}
         <div className="grid grid-cols-3 gap-4">
-          <div className="stat-place-holder">
-            <div className="text-sm text-base-content/60">Total</div>
-            <div className="font-bold text-lg">{totalNum.toFixed(2)} XOF</div>
+          <div>
+            <div className="text-xs text-muted-foreground">Total</div>
+            <div className="font-semibold text-base num">{formatFCFA(totalNum)}</div>
           </div>
-          <div className="stat-place-holder">
-            <div className="text-sm text-success">Payé</div>
-            <div className="font-bold text-lg text-success">{montantPayeNum.toFixed(2)} XOF</div>
+          <div>
+            <div className="text-xs text-success-700">Payé</div>
+            <div className="font-semibold text-base text-success-700 num">{formatFCFA(montantPayeNum)}</div>
           </div>
-          <div className="stat-place-holder">
-            <div className="text-sm text-error">Reste dû</div>
-            <div className="font-bold text-lg text-error">{remainingDueNum.toFixed(2)} XOF</div>
+          <div>
+            <div className="text-xs text-danger-700">Reste dû</div>
+            <div className="font-semibold text-base text-danger-700 num">{formatFCFA(remainingDueNum)}</div>
           </div>
         </div>
       </div>

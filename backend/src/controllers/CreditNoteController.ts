@@ -86,7 +86,10 @@ export class CreditNoteController {
         msg.includes('Client') ||
         msg.includes('avoir') ||
         msg.includes('validée') ||
-        msg.includes('validée');
+        msg.includes('annulée') ||
+        msg.includes('tiers') ||
+        msg.includes('introuvable') ||
+        msg.includes('line');
 
       res.status(isBusinessError ? 400 : 500).json({ success: false, error: msg });
     }

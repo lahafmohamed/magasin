@@ -449,7 +449,7 @@ export class DevisService {
       const numeroDevis = await generateDocumentNumber('devis', client);
 
       // Calculate totals
-      const { sousTotal, remiseGlobale, remiseGlobalePct, total } = calculateTotals(
+      const { sousTotal, remiseGlobale, remiseGlobalePct, total, totalLignes } = calculateTotals(
         lignes,
         remise_globale,
         remise_globale_pct
@@ -475,17 +475,17 @@ export class DevisService {
       const remiseMontants: number[] = [];
       const totals: number[] = [];
 
-      for (const ligne of lignes) {
+      lignes.forEach((ligne, i) => {
         produitIds.push(ligne.produit_id || null);
         descriptions.push(ligne.description || null);
         quantities.push(ligne.quantite);
         prices.push(ligne.prix_unitaire);
         remisePcts.push(ligne.remise_pct || 0);
         remiseMontants.push(ligne.remise_montant || 0);
-        
-        const totalLigne = ligne.quantite * ligne.prix_unitaire;
-        totals.push(totalLigne);
-      }
+
+        // Use the discount-applied per-line total so the line totals sum to sous_total.
+        totals.push(totalLignes[i]);
+      });
 
       await client.query(
         `INSERT INTO document_lignes (document_type, document_id, produit_id, description, quantite, prix_unitaire, remise_pct, remise_montant, total_ligne)
@@ -765,7 +765,7 @@ export class DevisService {
 
       // Ensure quote exists and is in a convertible state.
       const { rows: devisRows } = await client.query(
-        'SELECT id, statut FROM devis WHERE id = $1 FOR UPDATE',
+        'SELECT id, statut, location_id FROM devis WHERE id = $1 FOR UPDATE',
         [id]
       );
 

@@ -9,13 +9,14 @@ import { formatXOF, normalizeSearch } from '@/utils/format';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
-import { Plus, Search as SearchIcon, FileText, Info } from 'lucide-react';
+import { Plus, Search as SearchIcon, FileText, Info, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Factures() {
   const navigate = useNavigate();
   const [factures, setFactures] = useState<Facture[]>([]);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [loading, setLoading] = useState(true);
 
@@ -25,16 +26,26 @@ export default function Factures() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
+  // Debounce search input
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Reset to first page whenever the filters change
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter]);
+
   useEffect(() => {
     loadFactures();
-  }, [search, statusFilter, page, limit]);
+  }, [debouncedSearch, statusFilter, page, limit]);
 
   const loadFactures = async () => {
     setLoading(true);
     try {
       const status = statusFilter === 'all' ? undefined : statusFilter;
-      const response = await factureService.getAll(normalizeSearch(search), status, page, limit);
-      console.log(' Factures response:', response);
+      const response = await factureService.getAll(normalizeSearch(debouncedSearch), status, page, limit);
       const factureData = response?.data ?? response ?? [];
       setFactures(Array.isArray(factureData) ? factureData : []);
       setTotal(response.pagination?.total ?? 0);
@@ -79,7 +90,7 @@ export default function Factures() {
               />
             </div>
             <select
-              className="select select-bordered select-sm"
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >
@@ -96,7 +107,7 @@ export default function Factures() {
       {/* Tableau */}
       {loading ? (
         <div className="flex justify-center items-center py-12">
-          <span className="loading loading-spinner loading-lg"></span>
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
         <Card>
@@ -113,9 +124,9 @@ export default function Factures() {
                   <TableHead>Total</TableHead>
                   <TableHead className="flex items-center gap-1">
                   Payé
-                  <div className="tooltip tooltip-right" data-tip="Allocation FIFO: les paiements remboursent les factures les plus anciennes en premier">
+                  <span title="Allocation FIFO: les paiements remboursent les factures les plus anciennes en premier">
                     <Info className="h-4 w-4 text-muted-foreground cursor-help" />
-                  </div>
+                  </span>
                 </TableHead>
                   <TableHead>Statut</TableHead>
                 </TableRow>

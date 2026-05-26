@@ -27,7 +27,7 @@ class UserLocationAssignmentService {
          u.id,
          u.username,
          u.nom_complet,
-         u.role,
+         r.nom AS role,
          u.actif,
          COALESCE(
            JSON_AGG(
@@ -39,9 +39,10 @@ class UserLocationAssignmentService {
            '[]'::json
          ) AS locations
        FROM utilisateurs u
+       LEFT JOIN roles r ON u.role_id = r.id
        LEFT JOIN utilisateur_locations ul ON ul.utilisateur_id = u.id
-       GROUP BY u.id
-       ORDER BY u.actif DESC, u.role ASC, u.username ASC`
+       GROUP BY u.id, r.nom
+       ORDER BY u.actif DESC, r.nom ASC, u.username ASC`
     );
 
     return rows;
@@ -64,7 +65,7 @@ class UserLocationAssignmentService {
          u.id,
          u.username,
          u.nom_complet,
-         u.role,
+         r.nom AS role,
          u.actif,
          COALESCE(
            JSON_AGG(
@@ -76,9 +77,10 @@ class UserLocationAssignmentService {
            '[]'::json
          ) AS locations
        FROM utilisateurs u
+       LEFT JOIN roles r ON u.role_id = r.id
        LEFT JOIN utilisateur_locations ul ON ul.utilisateur_id = u.id
        WHERE u.id = $1
-       GROUP BY u.id`,
+       GROUP BY u.id, r.nom`,
       [userId]
     );
 

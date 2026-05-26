@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { AuthRequest } from '../middleware/auth';
 import { stockTransferService } from '../services/StockTransferService';
 import { successResponse, paginatedResponse } from '../utils/response';
 
@@ -45,7 +46,7 @@ export class StockTransferController {
   /**
    * Create stock transfer
    */
-  static async create(req: Request, res: Response): Promise<void> {
+  static async create(req: AuthRequest, res: Response): Promise<void> {
     try {
       const { location_source_id, location_destination_id, lignes, notes } = req.body;
 
@@ -72,7 +73,7 @@ export class StockTransferController {
   /**
    * Complete stock transfer
    */
-  static async complete(req: Request, res: Response): Promise<void> {
+  static async complete(req: AuthRequest, res: Response): Promise<void> {
     try {
       const { id } = req.params;
 

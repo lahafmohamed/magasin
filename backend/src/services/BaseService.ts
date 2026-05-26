@@ -83,7 +83,8 @@ export abstract class BaseService<T extends { id: number }> {
     const sortColumn = this.allowedSortColumns.includes(pagination.sort)
       ? pagination.sort
       : this.defaultSortColumn;
-    const orderBy = ` ORDER BY ${this.tableName}.${sortColumn} ${pagination.order}`;
+    const safeOrder = pagination.order === 'DESC' ? 'DESC' : 'ASC';
+    const orderBy = ` ORDER BY ${this.tableName}.${sortColumn} ${safeOrder}`;
 
     // Add pagination
     const limitClause = ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;

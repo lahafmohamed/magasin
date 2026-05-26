@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import { AlertCircle, Loader2 } from 'lucide-react';
 import { METHODES_PAIEMENT } from '../types';
 import { MoneyInput } from './ui/money-input';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
+import { Textarea } from './ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
+import { formatFCFA } from '../utils/format';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -51,7 +58,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     }
 
     if (montantNum > remainingDue) {
-      setError(`Le montant ne peut pas dépasser le reste dû (${remainingDue.toFixed(2)} XOF)`);
+      setError(`Le montant ne peut pas dépasser le reste dû (${formatFCFA(remainingDue)})`);
       return;
     }
 
@@ -67,7 +74,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
       onClose();
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Une erreur est survenue lors de l\'enregistrement du paiement');
+      setError(err.response?.data?.error || "Une erreur est survenue lors de l'enregistrement du paiement");
     } finally {
       setLoading(false);
     }
@@ -77,71 +84,61 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setMontant(parseFloat(remainingDue as any).toFixed(2));
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="modal modal-open">
-      <div className="modal-box max-w-lg">
-        <h2 className="text-2xl font-bold mb-4">💳 Enregistrer un paiement</h2>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Enregistrer un paiement</DialogTitle>
+        </DialogHeader>
 
-        <form onSubmit={handleSubmit}>
-          {/* Amount */}
-          <div className="form-control mb-4">
-            <label className="label">
-              <span className="label-text font-semibold">Montant du paiement</span>
-              <button
-                type="button"
-                className="btn btn-xs btn-outline"
-                onClick={handleSetFullAmount}
-              >
-                Payer le reste ({remainingDue.toFixed(2)} XOF)
-              </button>
-            </label>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="payment-amount">Montant du paiement</Label>
+              <Button type="button" variant="outline" size="sm" onClick={handleSetFullAmount} className="h-7 text-xs">
+                Payer le reste ({formatFCFA(remainingDue)})
+              </Button>
+            </div>
             <MoneyInput
               value={montant}
               onChange={(v) => setMontant(v)}
               placeholder="0"
               required
             />
-            <label className="label">
-              <span className="label-text-alt text-base-content/60">
-                Total facture: {total.toFixed(2)} XOF | Déjà payé: {(total - remainingDue).toFixed(2)} XOF
-              </span>
-            </label>
+            <p className="text-xs text-muted-foreground num">
+              Total facture: {formatFCFA(total)} · Déjà payé: {formatFCFA(total - remainingDue)}
+            </p>
           </div>
 
-          {/* Payment Method */}
-          <div className="form-control mb-4">
-            <label className="label">
-              <span className="label-text font-semibold">Méthode de paiement</span>
-            </label>
+          <div className="space-y-1.5">
+            <Label>Méthode de paiement</Label>
             <div className="grid grid-cols-2 gap-2">
-              {Object.entries(METHODES_PAIEMENT).map(([key, config]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={`btn ${
-                    methodePaiement === key ? 'btn-primary' : 'btn-outline'
-                  }`}
-                  onClick={() => setMethodePaiement(key as any)}
-                >
-                  <span className="text-xl">{config.icon}</span>
-                  {config.label}
-                </button>
-              ))}
+              {Object.entries(METHODES_PAIEMENT).map(([key, config]) => {
+                const MethodIcon = config.Icon;
+                const active = methodePaiement === key;
+                return (
+                  <Button
+                    key={key}
+                    type="button"
+                    variant={active ? 'default' : 'outline'}
+                    onClick={() => setMethodePaiement(key as any)}
+                    className="justify-start gap-2"
+                  >
+                    <MethodIcon className="h-4 w-4" />
+                    {config.label}
+                  </Button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Reference */}
-          <div className="form-control mb-4">
-            <label className="label">
-              <span className="label-text font-semibold">
-                Référence {methodePaiement === 'cheque' || methodePaiement === 'virement' ? '(requis)' : '(optionnel)'}
-              </span>
-            </label>
-            <input
+          <div className="space-y-1.5">
+            <Label htmlFor="payment-reference">
+              Référence {methodePaiement === 'cheque' || methodePaiement === 'virement' ? '(requis)' : '(optionnel)'}
+            </Label>
+            <Input
+              id="payment-reference"
               type="text"
-              className="input input-bordered w-full"
               value={reference}
               onChange={(e) => setReference(e.target.value)}
               placeholder={
@@ -149,60 +146,47 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   ? 'N° du chèque'
                   : methodePaiement === 'virement'
                   ? 'Référence du virement'
-                  : 'Référence (optionnel)'
+                  : ''
               }
               required={methodePaiement === 'cheque' || methodePaiement === 'virement'}
             />
           </div>
 
-          {/* Notes */}
-          <div className="form-control mb-4">
-            <label className="label">
-              <span className="label-text font-semibold">Notes (optionnel)</span>
-            </label>
-            <textarea
-              className="textarea textarea-bordered w-full"
+          <div className="space-y-1.5">
+            <Label htmlFor="payment-notes">Notes (optionnel)</Label>
+            <Textarea
+              id="payment-notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Ajouter des notes ou commentaires..."
+              placeholder="Ajouter des notes ou commentaires"
               rows={3}
             />
           </div>
 
-          {/* Error Message */}
           {error && (
-            <div className="alert alert-error mb-4">
+            <div className="flex items-start gap-2 rounded-md border border-danger-200 bg-danger-50 p-3 text-sm text-danger-800">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
               <span>{error}</span>
             </div>
           )}
 
-          {/* Actions */}
-          <div className="modal-action">
-            <button
-              type="button"
-              className="btn"
-              onClick={onClose}
-              disabled={loading}
-            >
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
               Annuler
-            </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={loading}
-            >
+            </Button>
+            <Button type="submit" disabled={loading}>
               {loading ? (
                 <>
-                  <span className="loading loading-spinner loading-sm"></span>
-                  Enregistrement...
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Enregistrement…
                 </>
               ) : (
                 'Enregistrer le paiement'
               )}
-            </button>
-          </div>
+            </Button>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };

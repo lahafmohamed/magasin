@@ -449,6 +449,7 @@ export class PaiementController {
       );
 
       if (existingPayment.length === 0) {
+        await client.query('ROLLBACK');
         res.status(404).json({ error: 'Paiement non trouvé' });
         return;
       }
@@ -456,7 +457,8 @@ export class PaiementController {
       const payment = existingPayment[0];
 
       // Validate amount if provided
-      if (montant && montant <= 0) {
+      if (montant !== undefined && montant <= 0) {
+        await client.query('ROLLBACK');
         res.status(400).json({ error: 'Le montant doit être supérieur à 0' });
         return;
       }
@@ -508,6 +510,7 @@ export class PaiementController {
       );
 
       if (existingPayment.length === 0) {
+        await client.query('ROLLBACK');
         res.status(404).json({ error: 'Paiement non trouvé' });
         return;
       }

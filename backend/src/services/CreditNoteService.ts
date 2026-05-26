@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { checkPeriodIsOpen } from './PeriodService';
+import { ClientAllocationService } from './ClientAllocationService';
 
 export interface CreditNoteLigneInput {
   produit_id?: number;
@@ -343,7 +344,7 @@ export class CreditNoteService {
 
       // Lock both records
       const { rows: avoirRows } = await client.query(
-        'SELECT id, tiers_id, statut, total FROM factures_avoir WHERE id = $1 FOR UPDATE',
+        'SELECT id, tiers_id, statut, total, numero_avoir FROM factures_avoir WHERE id = $1 FOR UPDATE',
         [avoirId]
       );
       if (avoirRows.length === 0) {
@@ -375,6 +376,18 @@ export class CreditNoteService {
          WHERE id = $2`,
         [factureId, avoirId]
       );
+
+      // Give the applied credit note a real financial effect through the FIFO engine:
+      // turn it into available client credit (an acompte), then let the recompute
+      // allocate it to the client's invoices and re-derive balances. This keeps the
+      // FIFO engine the single source of truth instead of hand-mutating remaining_due.
+      await client.query(
+        `INSERT INTO acomptes_clients (tiers_id, montant, date_acompte, statut, notes)
+         VALUES ($1, $2, CURRENT_TIMESTAMP, 'disponible', $3)`,
+        [avoir.tiers_id, avoir.total, `Issu de l'avoir ${avoir.numero_avoir}`]
+      );
+
+      await ClientAllocationService.recomputeClientAllocations(avoir.tiers_id, { transaction: client });
 
       await client.query('COMMIT');
 

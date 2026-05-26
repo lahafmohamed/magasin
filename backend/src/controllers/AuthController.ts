@@ -5,7 +5,7 @@ import { generateToken, authenticate, AuthRequest, authorize, revokeSession, rev
 import pool from '../db/connection';
 import { logger } from '../utils/logger';
 
-const BCRYPT_ROUNDS = 10;
+const BCRYPT_ROUNDS = 12;
 
 export class AuthController {
   /**
@@ -181,7 +181,7 @@ export class AuthController {
         email,
         password_hash,
         nom_complet,
-        role: role || 'caissier',
+        role_id: 3, // Default caissier
       });
 
       // Log audit
@@ -235,9 +235,10 @@ export class AuthController {
         return;
       }
 
+      const { password_hash, ...safeUser } = user as any;
       res.json({
         success: true,
-        data: user,
+        data: safeUser,
       });
     } catch (error) {
       logger.error({ err: error }, 'Me error');
@@ -339,12 +340,12 @@ export class AuthController {
   static async updateUser(req: AuthRequest, res: Response): Promise<void> {
     try {
       const userId = parseInt(req.params.id);
-      const { email, nom_complet, role, actif } = req.body;
+      const { email, nom_complet, role_id, actif } = req.body;
 
       const user = await UserModel.update(userId, {
         email,
         nom_complet,
-        role,
+        role_id,
         actif,
       });
 

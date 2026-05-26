@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { StockLocationController } from '../controllers/StockLocationController';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authorize } from '../middleware/auth';
 
 const router = Router();
 
@@ -9,7 +9,7 @@ router.use(authenticate);
 
 router.get('/', StockLocationController.getAll);
 router.get('/:id', StockLocationController.getById);
-router.post('/', StockLocationController.create);
+router.post('/', authorize(['admin', 'manager']), StockLocationController.create);
 router.get('/:id/stock', StockLocationController.getStockLevels);
 router.get('/:id/products-with-stock', StockLocationController.getProductsWithStock);
 

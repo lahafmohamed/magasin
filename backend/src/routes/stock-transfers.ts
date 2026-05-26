@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { StockTransferController } from '../controllers/StockTransferController';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authorize } from '../middleware/auth';
 
 const router = Router();
 
@@ -9,7 +9,7 @@ router.use(authenticate);
 
 router.get('/', StockTransferController.getAll);
 router.get('/:id', StockTransferController.getById);
-router.post('/', StockTransferController.create);
-router.post('/:id/complete', StockTransferController.complete);
+router.post('/', authorize(['admin', 'manager', 'depot_staff']), StockTransferController.create);
+router.post('/:id/complete', authorize(['admin', 'manager', 'depot_staff']), StockTransferController.complete);
 
 export default router;

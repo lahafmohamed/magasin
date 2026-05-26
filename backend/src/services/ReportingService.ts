@@ -7,33 +7,34 @@ export class ReportingService {
   async getPnL(dateDebut: string, dateFin: string): Promise<any> {
     const { rows } = await pool.query(
       `SELECT
-        -- Revenue
-        COALESCE(SUM(f.total) FILTER (WHERE f.statut != 'annulee'), 0) as chiffre_affaires,
-        
+        -- Revenue (line-level so the 1-to-many invoice/line join does not multiply invoice totals)
+        COALESCE(SUM(dl.total_ligne) FILTER (WHERE f.statut != 'annulee'), 0) as chiffre_affaires,
+
         -- Cost of goods sold (based on purchase price * quantity sold)
         COALESCE(SUM(dl.quantite * p.prix_achat) FILTER (WHERE f.statut != 'annulee'), 0) as cout_ventes,
-        
+
         -- Gross margin
-        COALESCE(SUM(f.total - (dl.quantite * p.prix_achat)) FILTER (WHERE f.statut != 'annulee'), 0) as marge_brute,
-        
+        COALESCE(SUM(dl.total_ligne - (dl.quantite * p.prix_achat)) FILTER (WHERE f.statut != 'annulee'), 0) as marge_brute,
+
         -- Gross margin percentage
-        CASE 
-          WHEN COALESCE(SUM(f.total) FILTER (WHERE f.statut != 'annulee'), 0) = 0 THEN 0
+        CASE
+          WHEN COALESCE(SUM(dl.total_ligne) FILTER (WHERE f.statut != 'annulee'), 0) = 0 THEN 0
           ELSE ROUND(
-            (COALESCE(SUM(f.total - (dl.quantite * p.prix_achat)) FILTER (WHERE f.statut != 'annulee'), 0) / 
-             COALESCE(SUM(f.total) FILTER (WHERE f.statut != 'annulee'), 0)) * 100, 2
+            (COALESCE(SUM(dl.total_ligne - (dl.quantite * p.prix_achat)) FILTER (WHERE f.statut != 'annulee'), 0) /
+             COALESCE(SUM(dl.total_ligne) FILTER (WHERE f.statut != 'annulee'), 0)) * 100, 2
           )
         END as marge_pourcentage,
-        
+
         -- Number of invoices
         COUNT(DISTINCT f.id) FILTER (WHERE f.statut != 'annulee') as nombre_factures,
-        
+
         -- Number of products sold
         COALESCE(SUM(dl.quantite) FILTER (WHERE f.statut != 'annulee'), 0) as produits_vendus
        FROM factures f
        LEFT JOIN document_lignes dl ON dl.document_type = 'facture' AND f.id = dl.document_id
        LEFT JOIN produits p ON dl.produit_id = p.id
-       WHERE f.date_facture BETWEEN $1 AND $2`,
+       WHERE f.date_facture BETWEEN $1 AND $2
+         AND f.deleted_at IS NULL`,
       [dateDebut, dateFin]
     );
     return rows[0];
@@ -119,14 +120,15 @@ export class ReportingService {
         COALESCE(p.categorie, 'Sans catégorie') as categorie,
         COUNT(DISTINCT f.id) as nombre_factures,
         SUM(dl.quantite) as unites_vendues,
-        SUM(f.total) as chiffre_affaires,
+        SUM(dl.total_ligne) as chiffre_affaires,
         SUM(dl.quantite * p.prix_achat) as cout_ventes,
-        SUM(f.total - (dl.quantite * p.prix_achat)) as marge_brute
+        SUM(dl.total_ligne - (dl.quantite * p.prix_achat)) as marge_brute
        FROM factures f
        LEFT JOIN document_lignes dl ON dl.document_type = 'facture' AND f.id = dl.document_id
        LEFT JOIN produits p ON dl.produit_id = p.id
        WHERE f.date_facture BETWEEN $1 AND $2
          AND f.statut != 'annulee'
+         AND f.deleted_at IS NULL
        GROUP BY p.categorie
        ORDER BY chiffre_affaires DESC`,
       [dateDebut, dateFin]
@@ -160,6 +162,7 @@ export class ReportingService {
        LEFT JOIN factures f ON dl.document_type = 'facture' AND dl.document_id = f.id
        WHERE f.date_facture BETWEEN $1 AND $2
          AND f.statut != 'annulee'
+         AND f.deleted_at IS NULL
          AND p.deleted_at IS NULL
        GROUP BY p.id, p.reference, p.nom, p.categorie, p.stock, p.prix_achat, p.prix_vente
        ORDER BY marge_brute DESC

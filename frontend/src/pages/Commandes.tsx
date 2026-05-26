@@ -11,7 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Trash2, ShoppingCart, CheckCircle, Clock, Truck, XCircle, Package } from 'lucide-react';
+import { Plus, Search, Trash2, ShoppingCart, CheckCircle, Clock, Truck, XCircle, Package, Loader2 } from 'lucide-react';
+import { normalizeSearch } from '@/utils/format';
 import { toast } from 'sonner';
 
 export default function Commandes() {
@@ -20,6 +21,7 @@ export default function Commandes() {
   const canCreate = ['admin', 'manager', 'depot_staff'].includes(user?.role || '');
   const [commandes, setCommandes] = useState<any[]>([]);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [loading, setLoading] = useState(true);
 
@@ -33,14 +35,19 @@ export default function Commandes() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
     loadCommandes();
-  }, [search, statusFilter]);
+  }, [debouncedSearch, statusFilter]);
 
   const loadCommandes = async () => {
     setLoading(true);
     try {
       const statut = statusFilter === 'all' ? undefined : statusFilter;
-      const data = await commandeService.getAll(search, statut);
+      const data = await commandeService.getAll(normalizeSearch(debouncedSearch), statut);
       setCommandes(data);
     } catch (error) {
       toast.error('Erreur lors du chargement');
@@ -187,7 +194,7 @@ export default function Commandes() {
               />
             </div>
             <select
-              className="select select-bordered select-sm"
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >
@@ -332,7 +339,7 @@ export default function Commandes() {
       {/* Orders Table */}
       {loading ? (
         <div className="flex justify-center items-center py-12">
-          <span className="loading loading-spinner loading-lg"></span>
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
         <Card>

@@ -17,7 +17,24 @@ export interface AllocationResult {
 export class TiersAllocationService {
 
   static async recomputeClientAllocations(tiersId: number, options: { transaction?: any } = {}): Promise<AllocationResult> {
-    const db = options.transaction || pool;
+    // Resets every invoice's montant_paye to 0 before re-allocating, so it MUST run
+    // in a transaction. The standalone path manages its own to avoid a half-applied recompute.
+    if (!options.transaction) {
+      const conn = await pool.connect();
+      try {
+        await conn.query('BEGIN');
+        const result = await this.recomputeClientAllocations(tiersId, { transaction: conn });
+        await conn.query('COMMIT');
+        return result;
+      } catch (error) {
+        await conn.query('ROLLBACK');
+        throw error;
+      } finally {
+        conn.release();
+      }
+    }
+
+    const db = options.transaction;
 
     try {
       const { rows: factures } = await db.query(

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, FileCheck, Truck } from 'lucide-react';
+import { formatFCFA as formatXOF } from '../utils/format';
+import { ArrowLeft, FileCheck, Truck, Printer, Download } from 'lucide-react';
 import { bonLivraisonService } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { DocumentPrint } from '@/components/ui/print-layout';
 
 export default function BonLivraisonDetail() {
   const { id } = useParams();
@@ -13,6 +15,7 @@ export default function BonLivraisonDetail() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [bon, setBon] = useState<any>(null);
+  const [showPrint, setShowPrint] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -33,9 +36,10 @@ export default function BonLivraisonDetail() {
 
   const canMarkDelivered = bon?.statut === 'valide' || bon?.statut === 'brouillon';
   const canConvert = bon?.statut === 'livre';
-
-  const formatXOF = (amount: number) =>
-    new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF' }).format(Number(amount || 0));
+  const downloadPDF = () => {
+    setShowPrint(true);
+    setTimeout(() => window.print(), 300);
+  };
 
   const handleMarkDelivered = async () => {
     if (!bon?.id) return;
@@ -106,6 +110,14 @@ export default function BonLivraisonDetail() {
           <p className="text-muted-foreground">Client: {bon.client_nom || bon.tiers_id || '-'}</p>
         </div>
         <div className="ml-auto flex gap-2">
+          <Button variant="outline" onClick={() => setShowPrint(true)}>
+            <Printer className="h-4 w-4 mr-2" />
+            Imprimer
+          </Button>
+          <Button variant="outline" onClick={downloadPDF}>
+            <Download className="h-4 w-4 mr-2" />
+            Télécharger PDF
+          </Button>
           {canMarkDelivered && (
             <Button onClick={handleMarkDelivered} disabled={actionLoading}>
               <Truck className="h-4 w-4 mr-2" />
@@ -171,6 +183,33 @@ export default function BonLivraisonDetail() {
           )}
         </CardContent>
       </Card>
+
+      {showPrint && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-auto print:bg-white print:p-0 print:static print:overflow-visible">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8 print:max-w-none print:w-full print:my-0 print:shadow-none print:rounded-none">
+            <div className="sticky top-0 z-10 bg-white border-b p-4 flex justify-between items-center print:hidden">
+              <h2 className="text-lg font-semibold">Aperçu d'impression</h2>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setShowPrint(false)}>Fermer</Button>
+                <Button onClick={() => window.print()}>
+                  <Printer className="h-4 w-4 mr-2" />
+                  Imprimer
+                </Button>
+              </div>
+            </div>
+            <DocumentPrint
+              docType="bl"
+              numero={bon.numero_bl || `BL${String(bon.id).padStart(5, '0')}`}
+              dateDoc={bon.date_bl}
+              dateEcheance={bon.date_livraison_prevue || bon.date_livraison}
+              vendeur={bon.cree_par_nom || 'Administrator'}
+              clientNom={bon.client_nom}
+              lignes={Array.isArray(bon.lignes) ? bon.lignes : []}
+              hideTotals={false}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

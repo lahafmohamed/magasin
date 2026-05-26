@@ -6,7 +6,8 @@ export interface User {
   email: string | null;
   password_hash: string;
   nom_complet: string | null;
-  role: 'admin' | 'manager' | 'caissier';
+  role: string;
+  role_id: number;
   actif: boolean;
   must_change_password: boolean;
   dernier_login: Date | null;
@@ -19,13 +20,13 @@ export interface UserCreateInput {
   email?: string;
   password_hash: string;
   nom_complet?: string;
-  role?: 'admin' | 'manager' | 'caissier';
+  role_id?: number;
 }
 
 export interface UserUpdateInput {
   email?: string;
   nom_complet?: string;
-  role?: 'admin' | 'manager' | 'caissier';
+  role_id?: number;
   actif?: boolean;
 }
 
@@ -35,7 +36,10 @@ export class UserModel {
    */
   static async findByUsername(username: string): Promise<User | null> {
     const result = await pool.query(
-      'SELECT * FROM utilisateurs WHERE username = $1',
+      `SELECT u.*, r.nom as role 
+       FROM utilisateurs u 
+       LEFT JOIN roles r ON u.role_id = r.id 
+       WHERE u.username = $1`,
       [username]
     );
     return result.rows[0] || null;
@@ -46,7 +50,10 @@ export class UserModel {
    */
   static async findByEmail(email: string): Promise<User | null> {
     const result = await pool.query(
-      'SELECT * FROM utilisateurs WHERE email = $1',
+      `SELECT u.*, r.nom as role 
+       FROM utilisateurs u 
+       LEFT JOIN roles r ON u.role_id = r.id 
+       WHERE u.email = $1`,
       [email]
     );
     return result.rows[0] || null;
@@ -57,7 +64,11 @@ export class UserModel {
    */
   static async findById(id: number): Promise<User | null> {
     const result = await pool.query(
-      'SELECT id, username, email, password_hash, nom_complet, role, actif, must_change_password, dernier_login, created_at, updated_at FROM utilisateurs WHERE id = $1',
+      `SELECT u.id, u.username, u.email, u.password_hash, u.nom_complet, r.nom as role, u.role_id, 
+              u.actif, u.must_change_password, u.dernier_login, u.created_at, u.updated_at 
+       FROM utilisateurs u
+       LEFT JOIN roles r ON u.role_id = r.id 
+       WHERE u.id = $1`,
       [id]
     );
     return result.rows[0] || null;
@@ -68,10 +79,10 @@ export class UserModel {
    */
   static async create(input: UserCreateInput): Promise<User> {
     const result = await pool.query(
-      `INSERT INTO utilisateurs (username, email, password_hash, nom_complet, role)
+      `INSERT INTO utilisateurs (username, email, password_hash, nom_complet, role_id)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [input.username, input.email || null, input.password_hash, input.nom_complet || null, input.role || 'caissier']
+      [input.username, input.email || null, input.password_hash, input.nom_complet || null, input.role_id || 3] // 3 is caissier id usually
     );
     return result.rows[0];
   }
@@ -94,9 +105,9 @@ export class UserModel {
       params.push(input.nom_complet);
       paramIndex++;
     }
-    if (input.role !== undefined) {
-      fields.push(`role = $${paramIndex}`);
-      params.push(input.role);
+    if (input.role_id !== undefined) {
+      fields.push(`role_id = $${paramIndex}`);
+      params.push(input.role_id);
       paramIndex++;
     }
     if (input.actif !== undefined) {
@@ -142,8 +153,10 @@ export class UserModel {
 
     const [usersResult, countResult] = await Promise.all([
       pool.query(
-        `SELECT id, username, email, nom_complet, role, actif, must_change_password, dernier_login, created_at, updated_at
-         FROM utilisateurs ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+        `SELECT u.id, u.username, u.email, u.nom_complet, r.nom as role, u.role_id, u.actif, u.must_change_password, u.dernier_login, u.created_at, u.updated_at
+         FROM utilisateurs u
+         LEFT JOIN roles r ON u.role_id = r.id
+         ORDER BY u.created_at DESC LIMIT $1 OFFSET $2`,
         [limit, offset]
       ),
       pool.query('SELECT COUNT(*) as total FROM utilisateurs')

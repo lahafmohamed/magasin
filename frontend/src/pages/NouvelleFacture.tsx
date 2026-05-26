@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { factureService, stockLocationService, ventesService } from '../services/api';
+import { factureService, stockLocationService, ventesService, tvaService } from '../services/api';
 import { TiersPicker } from '../components/TiersPicker';
 import { Produit, Tiers } from '../types';
 import { Button } from '@/components/ui/button';
@@ -31,10 +31,9 @@ interface StockLevel {
   quantite_disponible: number;
 }
 
-const formatXOF = (n: number) =>
-  new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Math.round(n)) + ' XOF';
+import { formatFCFA as formatXOF } from '../utils/format';
 
-const TVA_RATE = 0.19;
+const DEFAULT_TVA_RATE = 0.19;
 
 export default function NouvelleFacture() {
   const navigate = useNavigate();
@@ -57,6 +56,21 @@ export default function NouvelleFacture() {
   const [locations, setLocations] = useState<StockLocation[]>([]);
   const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
   const [locationStockMap, setLocationStockMap] = useState<Record<number, number>>({});
+  const [tvaRate, setTvaRate] = useState(DEFAULT_TVA_RATE);
+
+  useEffect(() => {
+    const loadTvaRate = async () => {
+      try {
+        const rates = await tvaService.getActive();
+        if (rates && rates.length > 0) {
+          setTvaRate(Number(rates[0].taux) / 100);
+        }
+      } catch {
+        // Garde le taux par défaut si l'appel échoue
+      }
+    };
+    void loadTvaRate();
+  }, []);
 
   useEffect(() => {
     const loadLocations = async () => {
@@ -165,11 +179,11 @@ export default function NouvelleFacture() {
     const totalCost = lignes.reduce((s, l) => s + l.quantite * l.prix_revient, 0);
     const margin = subtotal - totalCost;
     const marginPct = subtotal > 0 ? (margin / subtotal) * 100 : 0;
-    const tva = subtotal * TVA_RATE;
+    const tva = subtotal * tvaRate;
     const total = subtotal + tva;
     const totalUnits = lignes.reduce((s, l) => s + l.quantite, 0);
     return { subtotal, totalCost, margin, marginPct, tva, total, totalUnits };
-  }, [lignes]);
+  }, [lignes, tvaRate]);
 
   const isValid = !!selectedClient && lignes.length > 0;
   const disabledReason = !selectedClient ? 'Sélectionnez un tiers (client)' : lignes.length === 0 ? 'Ajoutez au moins un produit' : null;
@@ -417,12 +431,16 @@ export default function NouvelleFacture() {
                                 </button>
                                 <input
                                   className="w-10 text-center text-sm border-x py-1 font-mono bg-background focus:outline-none"
-                                  value={l.quantite}
-                                  onChange={(e) =>
-                                    updateLigne(i, {
-                                      quantite: Math.max(1, parseInt(e.target.value, 10) || 1),
-                                    })
-                                  }
+                                  value={l.quantite === 0 ? '' : l.quantite}
+                                  onChange={(e) => {
+                                    const n = parseInt(e.target.value, 10);
+                                    updateLigne(i, { quantite: Number.isNaN(n) ? 0 : n });
+                                  }}
+                                  onBlur={(e) => {
+                                    if (!e.target.value || parseInt(e.target.value, 10) < 1) {
+                                      updateLigne(i, { quantite: 1 });
+                                    }
+                                  }}
                                 />
                                 <button
                                   type="button"
@@ -437,12 +455,11 @@ export default function NouvelleFacture() {
                               <input
                                 type="number"
                                 step="0.01"
-                                value={l.prix_unitaire}
-                                onChange={(e) =>
-                                  updateLigne(i, {
-                                    prix_unitaire: Math.max(0, parseFloat(e.target.value) || 0),
-                                  })
-                                }
+                                value={l.prix_unitaire === 0 ? '' : l.prix_unitaire}
+                                onChange={(e) => {
+                                  const n = parseFloat(e.target.value);
+                                  updateLigne(i, { prix_unitaire: Number.isNaN(n) ? 0 : Math.max(0, n) });
+                                }}
                                 className={`w-28 px-2 py-1 text-right text-sm border rounded font-mono focus:outline-none focus:ring-1 focus:ring-ring ${
                                   priceOverridden ? 'bg-primary/10 border-primary/30' : 'bg-background'
                                 }`}
@@ -519,50 +536,50 @@ export default function NouvelleFacture() {
 
         {/* Right column */}
         <aside className="grid gap-4 lg:sticky lg:top-4">
-          {/* Dark summary card */}
-          <section className="rounded-xl p-5 text-white shadow-md bg-slate-900">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-400 mb-3">
+          {/* Summary card */}
+          <section className="rounded-md border bg-card p-5 shadow-sm">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
               Résumé
             </h2>
 
             <SummaryRow label="Sous-total" value={formatXOF(totals.subtotal)} />
             <SummaryRow
-              label={`TVA (${(TVA_RATE * 100).toFixed(0)}%)`}
+              label={`TVA (${(tvaRate * 100).toFixed(0)}%)`}
               value={formatXOF(totals.tva)}
             />
-            <div className="h-px bg-white/15 my-3" />
+            <div className="h-px bg-border my-3" />
             <SummaryRow label="Total TTC" value={formatXOF(totals.total)} large />
 
             <div
-              className={`mt-4 p-3 rounded-lg border ${
+              className={`mt-4 p-3 rounded-md border ${
                 totals.margin >= 0
-                  ? 'bg-emerald-500/15 border-emerald-500/30'
-                  : 'bg-rose-500/15 border-rose-500/40'
+                  ? 'bg-success-50 border-success-200'
+                  : 'bg-danger-50 border-danger-200'
               }`}
             >
               <div className="flex items-baseline justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-200">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Marge brute
                 </span>
                 <span
-                  className={`font-mono text-[15px] font-bold ${
-                    totals.margin >= 0 ? 'text-emerald-300' : 'text-rose-300'
+                  className={`tabular-nums text-sm font-semibold ${
+                    totals.margin >= 0 ? 'text-success-700' : 'text-danger-700'
                   }`}
                 >
                   {totals.margin >= 0 ? '+' : '−'}
                   {formatXOF(Math.abs(totals.margin))}
                 </span>
               </div>
-              <div className="flex justify-between mt-1 text-[11px] text-slate-300">
-                <span className="font-mono">P. revient {formatXOF(totals.totalCost)}</span>
-                <span className="font-mono">
+              <div className="flex justify-between mt-1 text-xs text-muted-foreground">
+                <span className="tabular-nums">P. revient {formatXOF(totals.totalCost)}</span>
+                <span className="tabular-nums">
                   {totals.marginPct >= 0 ? '+' : ''}
                   {totals.marginPct.toFixed(1)}%
                 </span>
               </div>
             </div>
 
-            <div className="mt-3 px-3 py-2 rounded-md bg-white/10 text-xs text-slate-200">
+            <div className="mt-3 px-3 py-2 rounded-md bg-muted text-xs text-muted-foreground">
               {lignes.length} ligne{lignes.length > 1 ? 's' : ''} · {totals.totalUnits} unité
               {totals.totalUnits > 1 ? 's' : ''}
             </div>
@@ -615,11 +632,11 @@ function SummaryRow({
   return (
     <div
       className={`flex justify-between items-baseline ${
-        large ? 'py-1 text-[16px] font-bold text-white' : 'py-1 text-[13px] text-slate-300'
+        large ? 'py-1 text-base font-semibold text-foreground' : 'py-1 text-sm text-muted-foreground'
       }`}
     >
       <span>{label}</span>
-      <span className="font-mono">{value}</span>
+      <span className="tabular-nums">{value}</span>
     </div>
   );
 }

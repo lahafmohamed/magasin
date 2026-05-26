@@ -33,7 +33,7 @@ export function Pagination({ page, totalPages, total, limit, onPageChange, onLim
           <span className="text-sm text-muted-foreground">Lignes par page</span>
           {onLimitChange && (
             <select
-              className="select select-bordered select-sm"
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
               value={limit}
               onChange={(e) => onLimitChange(parseInt(e.target.value))}
             >

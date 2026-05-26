@@ -2,6 +2,28 @@ import pool from '../db/connection';
 import { caisseMagasinService } from './CaisseMagasinService';
 
 export class POSService {
+  /**
+   * Verify the caller may act on a POS session. Admins/managers have full
+   * access; everyone else may only touch their own session. Throws on violation.
+   */
+  async assertSessionAccess(sessionId: number, userId: number, role?: string): Promise<void> {
+    if (role === 'admin' || role === 'manager') return;
+    const { rows } = await pool.query(
+      'SELECT utilisateur_id FROM pos_sessions WHERE id = $1',
+      [sessionId]
+    );
+    if (rows.length === 0) {
+      const err: any = new Error('Session non trouvée');
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+    if (rows[0].utilisateur_id !== userId) {
+      const err: any = new Error('Accès non autorisé à cette session');
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+  }
+
   private async getPrincipalLocationId(client: any): Promise<number> {
     const { rows } = await client.query(
       'SELECT id FROM stock_locations WHERE est_principal = true AND actif = true LIMIT 1'

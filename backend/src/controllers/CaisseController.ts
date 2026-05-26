@@ -33,6 +33,7 @@ export class CaisseController {
    */
   static async closeSession(req: Request, res: Response): Promise<void> {
     try {
+      const authReq = req as AuthRequest;
       const { sessionId } = req.params;
       const { solde_fermeture, notes } = req.body;
 
@@ -41,6 +42,7 @@ export class CaisseController {
         return;
       }
 
+      await caisseService.assertSessionAccess(parseInt(sessionId), authReq.user!.id, authReq.user!.role);
       const result = await caisseService.closeSession(parseInt(sessionId), solde_fermeture, notes);
       res.json({
         success: true,
@@ -49,6 +51,14 @@ export class CaisseController {
       });
     } catch (error: any) {
       console.error('Erreur POST /api/caisse/:sessionId/close:', error);
+      if (error.code === 'FORBIDDEN') {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      if (error.code === 'NOT_FOUND') {
+        res.status(404).json({ error: error.message });
+        return;
+      }
       res.status(400).json({ error: error.message });
     }
   }
@@ -78,12 +88,18 @@ export class CaisseController {
    */
   static async getZReport(req: Request, res: Response): Promise<void> {
     try {
+      const authReq = req as AuthRequest;
       const { sessionId } = req.params;
+      await caisseService.assertSessionAccess(parseInt(sessionId), authReq.user!.id, authReq.user!.role);
       const report = await caisseService.getSessionZReport(parseInt(sessionId));
       res.json({ success: true, data: report });
     } catch (error: any) {
       console.error('Erreur GET /api/caisse/:sessionId/report:', error);
-      if (error.message === 'Session non trouvée') {
+      if (error.code === 'FORBIDDEN') {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      if (error.code === 'NOT_FOUND' || error.message === 'Session non trouvée') {
         res.status(404).json({ error: 'Session non trouvée' });
         return;
       }
@@ -119,6 +135,7 @@ export class CaisseController {
       const { sessionId } = req.params;
       const movementData = req.body;
 
+      await caisseService.assertSessionAccess(parseInt(sessionId), authReq.user!.id, authReq.user!.role);
       const movement = await caisseService.recordMovement(parseInt(sessionId), {
         ...movementData,
         cree_par: authReq.user!.id
@@ -131,6 +148,14 @@ export class CaisseController {
       });
     } catch (error: any) {
       console.error('Erreur POST /api/caisse/:sessionId/movements:', error);
+      if (error.code === 'FORBIDDEN') {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      if (error.code === 'NOT_FOUND') {
+        res.status(404).json({ error: error.message });
+        return;
+      }
       res.status(400).json({ error: error.message });
     }
   }
@@ -140,11 +165,21 @@ export class CaisseController {
    */
   static async getSessionPaiements(req: Request, res: Response): Promise<void> {
     try {
+      const authReq = req as AuthRequest;
       const { sessionId } = req.params;
+      await caisseService.assertSessionAccess(parseInt(sessionId), authReq.user!.id, authReq.user!.role);
       const paiements = await caisseService.getSessionPaiements(parseInt(sessionId));
       res.json({ success: true, data: paiements });
     } catch (error: any) {
       console.error('Erreur GET /api/caisse/:sessionId/paiements:', error);
+      if (error.code === 'FORBIDDEN') {
+        res.status(403).json({ error: error.message });
+        return;
+      }
+      if (error.code === 'NOT_FOUND') {
+        res.status(404).json({ error: error.message });
+        return;
+      }
       res.status(500).json({ error: 'Erreur serveur' });
     }
   }

@@ -9,7 +9,7 @@ export function cn(...inputs: ClassValue[]) {
  * Format an amount in FCFA with fr-FR locale (space thousands, no decimals)
  */
 export function formatFCFA(amount: number): string {
-  const n = Math.abs(Math.round(amount || 0));
+  const n = Math.round(amount || 0);
   return n.toLocaleString('fr-FR') + ' FCFA';
 }
 

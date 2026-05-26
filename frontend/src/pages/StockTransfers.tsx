@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { stockTransferService, stockLocationService, produitService } from '../services/api';
+import { fuzzyScore } from '../utils/format';
 import { usePermission, Permissions } from '../hooks/usePermission';
 import { toast } from 'sonner';
 import { Plus, Search, ArrowRight, CheckCircle, X, Filter, RefreshCw, Package, ClipboardList, AlertCircle } from 'lucide-react';
@@ -110,15 +111,20 @@ export default function StockTransfers() {
   };
 
   const filteredTransfers = useMemo(() => {
-    return transfers.filter((t) => {
-      const matchSearch =
-        !search ||
-        t.numero_transfer.toLowerCase().includes(search.toLowerCase()) ||
-        t.source_nom.toLowerCase().includes(search.toLowerCase()) ||
-        t.destination_nom.toLowerCase().includes(search.toLowerCase());
-      const matchStatus = statusFilter === 'all' || t.statut === statusFilter;
-      return matchSearch && matchStatus;
-    });
+    const byStatus = transfers.filter((t) => statusFilter === 'all' || t.statut === statusFilter);
+    if (!search.trim()) return byStatus;
+    return byStatus
+      .map((t) => ({
+        t,
+        score: Math.max(
+          fuzzyScore(search, t.numero_transfer),
+          fuzzyScore(search, t.source_nom),
+          fuzzyScore(search, t.destination_nom),
+        ),
+      }))
+      .filter((row) => row.score > 0)
+      .sort((x, y) => y.score - x.score)
+      .map((row) => row.t);
   }, [transfers, search, statusFilter]);
 
   const handleOpenDetail = async (transfer: Transfer) => {
@@ -264,7 +270,7 @@ export default function StockTransfers() {
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
               <select
-                className="select select-bordered select-sm h-10"
+                className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
               >
@@ -452,7 +458,7 @@ export default function StockTransfers() {
                 <div className="space-y-2">
                   <Label>Source *</Label>
                   <select
-                    className="select select-bordered w-full"
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     value={formData.location_source_id}
                     onChange={(e) => setFormData((prev) => ({ ...prev, location_source_id: e.target.value }))}
                     required
@@ -466,7 +472,7 @@ export default function StockTransfers() {
                 <div className="space-y-2">
                   <Label>Destination *</Label>
                   <select
-                    className="select select-bordered w-full"
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                     value={formData.location_destination_id}
                     onChange={(e) => setFormData((prev) => ({ ...prev, location_destination_id: e.target.value }))}
                     required
@@ -509,7 +515,7 @@ export default function StockTransfers() {
                   {formData.lignes.map((ligne, index) => (
                     <div key={index} className="flex gap-2 items-center">
                       <select
-                        className="select select-bordered flex-1 text-sm"
+                        className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                         value={ligne.produit_id}
                         onChange={(e) => updateLine(index, 'produit_id', parseInt(e.target.value))}
                         required

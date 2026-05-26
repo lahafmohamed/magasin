@@ -87,6 +87,7 @@ export class CommandeController {
       const resolvedTiersId = tiers_id ?? fournisseur_id;
 
       if (!lignes || lignes.length === 0) {
+        await client.query('ROLLBACK');
         res.status(400).json({ error: 'La commande doit contenir au moins un produit' });
         return;
       }
@@ -178,6 +179,7 @@ export class CommandeController {
       );
 
       if (commandeRows.length === 0) {
+        await client.query('ROLLBACK');
         res.status(404).json({ error: 'Commande non trouvée' });
         return;
       }

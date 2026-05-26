@@ -13,6 +13,16 @@ vi.mock('../services/api', () => ({
   factureService: {
     create: vi.fn(),
   },
+  ventesService: {
+    getLocations: vi.fn().mockResolvedValue([]),
+    searchFuzzy: vi.fn().mockResolvedValue([]),
+  },
+  stockLocationService: {
+    getStockLevels: vi.fn().mockResolvedValue([]),
+  },
+  tvaService: {
+    getActive: vi.fn().mockResolvedValue([]),
+  },
 }));
 
 // Mock react-router-dom

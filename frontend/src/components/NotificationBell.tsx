@@ -96,7 +96,11 @@ export function NotificationBell() {
             </div>
           ) : (
             notifications.map((notification, index) => {
-              const config = TYPE_CONFIG[notification.type];
+              const config = TYPE_CONFIG[notification.type] ?? {
+                icon: Bell,
+                label: 'Notification',
+                color: 'text-muted-foreground',
+              };
               const Icon = config.icon;
 
               return (

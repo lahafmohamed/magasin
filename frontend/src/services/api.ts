@@ -45,9 +45,16 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    // Unwrap error response too
-    if (error.response?.data && 'success' in error.response.data) {
-      error.response.data = error.response.data;
+    // On token expiry / auth failure, clear the session and bounce to login —
+    // mirrors authService so requests through this instance don't fail silently.
+    const status = error.response?.status;
+    const url: string = error.config?.url || '';
+    const isAuthCall = url.includes('/auth/login');
+    if (status === 401 && !isAuthCall) {
+      localStorage.removeItem('auth_token');
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
@@ -1266,7 +1273,7 @@ export const posService = {
   },
 
   scanBarcode: async (codeBarre: string): Promise<any> => {
-    const { data } = await api.get(`/pos/scan?code_barre=${codeBarre}`);
+    const { data } = await api.get(`/pos/scan?${new URLSearchParams({ code_barre: codeBarre })}`);
     return data;
   },
 
@@ -1366,5 +1373,84 @@ export const demandeService = {
     if (search) params.append('search', search);
     const { data } = await api.get(`/demandes/stock/depot?${params}`);
     return data;
+  },
+};
+
+// ========== ADMIN USER MANAGEMENT ==========
+export const adminUserService = {
+  getAll: async (page = 1, limit = 20): Promise<any> => {
+    const params = new URLSearchParams();
+    params.append('page', page.toString());
+    params.append('limit', limit.toString());
+    const { data } = await api.get(`/admin/users?${params}`);
+    return data;
+  },
+
+  getRoles: async (): Promise<any[]> => {
+    const { data } = await api.get('/admin/users/roles');
+    return data?.data || data;
+  },
+
+  getPermissions: async (): Promise<any[]> => {
+    const { data } = await api.get('/admin/users/permissions');
+    return data?.data || data;
+  },
+
+  create: async (user: any): Promise<any> => {
+    const { data } = await api.post('/admin/users', user);
+    return data;
+  },
+
+  update: async (id: number, user: any): Promise<any> => {
+    const { data } = await api.put(`/admin/users/${id}`, user);
+    return data;
+  },
+
+  getUserPermissions: async (id: number): Promise<any> => {
+    const { data } = await api.get(`/admin/users/${id}/permissions`);
+    return data?.data || data;
+  },
+
+  updateUserPermissions: async (id: number, payload: { customiser_permissions: boolean, permission_ids: number[] }): Promise<any> => {
+    const { data } = await api.post(`/admin/users/${id}/permissions`, payload);
+    return data;
+  },
+};
+
+// ========== TVA RATES (ADMIN) ==========
+export interface TauxTva {
+  id: number;
+  code: string;
+  taux: number;
+  description: string | null;
+  actif: boolean;
+  date_debut?: string;
+  date_fin?: string | null;
+  created_at?: string;
+}
+
+export const tvaService = {
+  getAll: async (): Promise<TauxTva[]> => {
+    const { data } = await api.get('/admin/tva');
+    return data?.data || data;
+  },
+
+  getActive: async (): Promise<TauxTva[]> => {
+    const { data } = await api.get('/tva/active');
+    return data?.data || data;
+  },
+
+  create: async (payload: { code: string; taux: number; description?: string; actif?: boolean }): Promise<TauxTva> => {
+    const { data } = await api.post('/admin/tva', payload);
+    return data?.data || data;
+  },
+
+  update: async (id: number, payload: { taux?: number; description?: string; actif?: boolean }): Promise<TauxTva> => {
+    const { data } = await api.put(`/admin/tva/${id}`, payload);
+    return data?.data || data;
+  },
+
+  remove: async (id: number): Promise<void> => {
+    await api.delete(`/admin/tva/${id}`);
   },
 };

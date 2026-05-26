@@ -3,6 +3,28 @@ import { logAudit } from '../middleware/audit';
 
 export class CaisseService {
   /**
+   * Verify the caller may act on a session. Admins/managers have full access;
+   * everyone else may only touch their own session. Throws on violation.
+   */
+  async assertSessionAccess(sessionId: number, userId: number, role?: string): Promise<void> {
+    if (role === 'admin' || role === 'manager') return;
+    const { rows } = await pool.query(
+      'SELECT utilisateur_id FROM sessions_caisse WHERE id = $1',
+      [sessionId]
+    );
+    if (rows.length === 0) {
+      const err: any = new Error('Session non trouvée');
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+    if (rows[0].utilisateur_id !== userId) {
+      const err: any = new Error('Accès non autorisé à cette session');
+      err.code = 'FORBIDDEN';
+      throw err;
+    }
+  }
+
+  /**
    * Open a new cash register session
    */
   async openSession(utilisateurId: number, soldeOuverture: number, notes?: string): Promise<any> {
@@ -64,7 +86,7 @@ export class CaisseService {
         solde_theorique: soldeTheorique.toFixed(2),
         solde_fermeture: soldeFermeture.toFixed(2),
         ecart: ecart.toFixed(2),
-        message: ecart === 0 ? 'Session fermée - Trésorerie conforme' : `Session fermée - Écart: ${ecart.toFixed(2)} XOF`
+        message: Math.abs(ecart) < 0.01 ? 'Session fermée - Trésorerie conforme' : `Session fermée - Écart: ${ecart.toFixed(2)} XOF`
       };
     } catch (error) {
       await client.query('ROLLBACK');

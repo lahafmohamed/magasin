@@ -7,7 +7,7 @@ import {
   getDefaultMagasinLocationId,
   SALES_DEPOT_ERROR_MESSAGE,
 } from '../services/StockMagasinService';
-import { successResponse, errorResponse } from '../utils/response';
+import { successResponse } from '../utils/response';
 import { AuthRequest } from '../middleware/auth';
 import { logAudit } from '../middleware/audit';
 import { parsePagination } from '../utils/pagination';

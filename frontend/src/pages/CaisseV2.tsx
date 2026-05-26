@@ -34,6 +34,7 @@ import {
   Eye
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatFCFA as formatXOF } from '../utils/format';
 
 interface Magasin {
   id: number;
@@ -350,13 +351,6 @@ export default function CaisseV2() {
     }
   };
 
-  const formatXOF = (montant: number) => {
-    return new Intl.NumberFormat('fr-FR', { 
-      style: 'currency', 
-      currency: 'XOF',
-      maximumFractionDigits: 0
-    }).format(montant || 0);
-  };
 
   const formatDateTime = (date: string) => {
     return new Date(date).toLocaleString('fr-FR', {
@@ -746,17 +740,17 @@ export default function CaisseV2() {
 
             {/* Ecart display */}
             {fondFinal && closurePreview?.ecart !== null && closurePreview && (
-              <div className={`p-3 rounded-lg ${
-                closurePreview.ecart === 0 ? 'bg-green-100 text-green-800' :
-                Math.abs(closurePreview.ecart!) < 5000 ? 'bg-amber-100 text-amber-800' :
-                'bg-red-100 text-red-800'
+              <div className={`p-3 rounded-md border ${
+                closurePreview.ecart === 0 ? 'bg-success-50 border-success-200 text-success-800' :
+                Math.abs(closurePreview.ecart!) < 5000 ? 'bg-warning-50 border-warning-200 text-warning-800' :
+                'bg-danger-50 border-danger-200 text-danger-800'
               }`}>
                 <div className="flex items-center gap-2 font-semibold">
                   <AlertCircle className="h-4 w-4" />
                   Écart espèces : {closurePreview.ecart! > 0 ? '+' : ''}{formatXOF(closurePreview.ecart!)}
                 </div>
                 {closurePreview.ecart === 0 ? (
-                  <p className="text-sm mt-1">Caisse conforme ✓</p>
+                  <p className="text-sm mt-1">Écart nul — clôture conforme.</p>
                 ) : (
                   <p className="text-sm mt-1">Commentaire obligatoire pour expliquer l'écart.</p>
                 )}
@@ -787,7 +781,7 @@ export default function CaisseV2() {
                 || !closurePreview?.can_close
                 || (closurePreview?.ecart !== 0 && closurePreview?.ecart !== null && !commentaireCloture.trim())
               }
-              className="bg-amber-600 hover:bg-amber-700"
+              className="bg-warning-600 hover:bg-warning-700"
             >
               Confirmer la clôture
             </Button>

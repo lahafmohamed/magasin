@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { BaseService } from './BaseService';
 import { logger } from '../utils/logger';
+import { checkPeriodIsOpen } from './PeriodService';
 
 export interface EcritureComptableRecord {
   id: number;
@@ -196,6 +197,9 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
 
     try {
       await client.query('BEGIN');
+
+      // Manual entries must not post into a closed accounting period.
+      await checkPeriodIsOpen(new Date(dateEcriture), client);
 
       // Validate balanced entry
       const totalDebit = lignes.reduce((sum, l) => sum + l.debit, 0);

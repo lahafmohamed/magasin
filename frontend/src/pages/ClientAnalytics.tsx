@@ -8,8 +8,11 @@ import { Badge } from '@/components/ui/badge';
 import { Users, Download, TrendingUp, DollarSign, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { formatFCFA as formatXOF } from '../utils/format';
+import { downloadCsv } from '../utils/csv';
 
-const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#06b6d4'];
+const COLORS = ['#1E3A8A', '#1D4ED8', '#3B82F6', '#60A5FA', '#93C5FD', '#BFDBFE', '#DBEAFE'];
+const CHART_PRIMARY = '#1D4ED8';
 
 export default function ClientAnalytics() {
   const [topClients, setTopClients] = useState<any[]>([]);
@@ -49,13 +52,7 @@ export default function ClientAnalytics() {
       c.nombre_factures,
     ]);
 
-    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'top-clients.csv';
-    a.click();
+    downloadCsv('top-clients.csv', headers, rows);
     toast.success('Export CSV réussi');
   };
 
@@ -67,7 +64,6 @@ export default function ClientAnalytics() {
     );
   }
 
-  const formatXOF = (value: number) => `${value.toFixed(0)} XOF`;
   const totalRevenue = topClients.reduce((sum, c) => sum + c.total_depenses, 0);
   const avgPerClient = topClients.length > 0 ? totalRevenue / topClients.length : 0;
 
@@ -87,10 +83,10 @@ export default function ClientAnalytics() {
           <p className="text-muted-foreground mt-1">Analyse détaillée de votre clientèle</p>
         </div>
         <div className="flex gap-2">
-          <Link to="/clients">
+          <Link to="/tiers">
             <Button variant="outline" className="gap-2">
               <Users className="h-4 w-4" />
-              Gérer les Clients
+              Gérer les Contacts
             </Button>
           </Link>
           <Button onClick={exportToCSV} className="gap-2">
@@ -154,7 +150,7 @@ export default function ClientAnalytics() {
                   <XAxis dataKey="nom" tick={{ fontSize: 11 }} tickFormatter={(value) => `${value.substring(0, 12)}...`} />
                   <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
                   <Tooltip formatter={(value: any) => formatXOF(value)} />
-                  <Bar dataKey="total_depenses" fill="#3b82f6" name="Montant dépensé" />
+                  <Bar dataKey="total_depenses" fill={CHART_PRIMARY} name="Montant dépensé" />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -177,7 +173,7 @@ export default function ClientAnalytics() {
                       labelLine={false}
                       label={({ name, percent }) => `${String(name).substring(0, 15)} (${((percent ?? 0) * 100).toFixed(0)}%)`}
                       outerRadius={80}
-                      fill="#8884d8"
+                      fill={CHART_PRIMARY}
                       dataKey="value"
                     >
                       {pieData.map((_, index) => (

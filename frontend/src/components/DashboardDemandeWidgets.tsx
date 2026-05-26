@@ -65,13 +65,14 @@ export function DashboardDemandeWidgets() {
 
       setStats(newStats);
 
-      // Get recent demandes (last 5)
-      const recent = demandes
+      // Get recent demandes (last 5) — copy before sorting to avoid mutating state
+      const recent = [...demandes]
         .sort((a: any, b: any) => new Date(b.date_creation).getTime() - new Date(a.date_creation).getTime())
         .slice(0, 5);
       setRecentDemandes(recent);
     } catch (error) {
-      // Silent fail - dashboard widgets are non-critical
+      // Dashboard widgets are non-critical, but don't fail completely silently.
+      console.error('DashboardDemandeWidgets load failed', error);
     } finally {
       setLoading(false);
     }

@@ -251,6 +251,10 @@ export class FactureService {
 
       // Verify stock availability
       for (const ligne of lignes) {
+        if (!Number.isInteger(ligne.quantite) || ligne.quantite <= 0) {
+          throw new Error(`Quantité invalide pour le produit ID ${ligne.produit_id} (doit être un entier positif)`);
+        }
+
         const { rows: stockRows } = await client.query(
           `SELECT p.nom, COALESCE(spl.quantite, p.stock) as stock_location
            FROM produits p
@@ -260,12 +264,10 @@ export class FactureService {
         );
 
         if (stockRows.length === 0) {
-          await client.query('ROLLBACK');
           throw new Error(`Produit ID ${ligne.produit_id} non trouvé`);
         }
 
         if (parseInt(stockRows[0].stock_location, 10) < ligne.quantite) {
-          await client.query('ROLLBACK');
           throw new Error(
             `Stock insuffisant pour "${stockRows[0].nom}" dans cette location (disponible: ${stockRows[0].stock_location}, demande: ${ligne.quantite})`
           );
@@ -289,7 +291,6 @@ export class FactureService {
       );
 
       if (clientRows.length === 0) {
-        await client.query('ROLLBACK');
         throw new Error(`Tiers ID ${tiers_id} non trouvé`);
       }
 

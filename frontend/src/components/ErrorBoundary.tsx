@@ -1,4 +1,5 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
+import { AlertCircle } from 'lucide-react';
 
 interface Props {
   children: ReactNode;
@@ -30,17 +31,15 @@ export class ErrorBoundary extends Component<Props, State> {
 
       return (
         <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-center">
-          <div className="alert alert-error max-w-md">
-            <svg xmlns="http://www.w3.org/2000/svg" className="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+          <div className="flex items-start gap-2 rounded-md border border-danger-200 bg-danger-50 p-4 max-w-md text-left">
+            <AlertCircle className="h-5 w-5 mt-0.5 shrink-0 text-danger-700" />
             <div>
-              <h3 className="font-bold">Une erreur est survenue</h3>
-              <p className="text-sm">{this.state.error?.message}</p>
+              <h3 className="font-semibold text-danger-800">Une erreur est survenue</h3>
+              <p className="text-sm text-danger-700">{this.state.error?.message}</p>
             </div>
           </div>
           <button
-            className="btn btn-primary mt-4"
+            className="mt-4 inline-flex items-center justify-center h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
             onClick={() => {
               this.setState({ hasError: false, error: null });
               window.location.reload();

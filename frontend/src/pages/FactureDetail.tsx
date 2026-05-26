@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
 import { factureService, paiementService, acompteService, tiersService } from '../services/api';
 import { FactureComplete, Paiement } from '../types';
 import { PaymentStatusBar } from '../components/PaymentStatusBar';
@@ -11,7 +10,7 @@ import StatusBadge from '@/components/StatusBadge';
 import { formatXOF } from '@/utils/format';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { InvoicePrint } from '@/components/ui/print-layout';
+import { DocumentPrint } from '@/components/ui/print-layout';
 import { ArrowLeft, FileText, User, Calendar, Printer, Download, CreditCard, ArrowLeftRight } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -185,25 +184,9 @@ export default function FactureDetail() {
     );
   }
 
-  const downloadPDF = async () => {
-    try {
-      const response = await axios.get(`/api/factures/${id}/pdf`, {
-        responseType: 'blob',
-      });
-      
-      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `facture-${facture.numero_facture}.pdf`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      toast.success('PDF téléchargé avec succès');
-    } catch (error) {
-      toast.error('Erreur lors du téléchargement du PDF');
-      console.error(error);
-    }
+  const downloadPDF = () => {
+    setShowPrintLayout(true);
+    setTimeout(() => window.print(), 300);
   };
 
   return (
@@ -536,38 +519,29 @@ export default function FactureDetail() {
         total={total}
       />
 
-      {/* Print Layout Modal */}
       {showPrintLayout && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-auto">
-            <div className="sticky top-0 bg-white border-b p-4 flex justify-between items-center">
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-auto print:bg-white print:p-0 print:static print:overflow-visible">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8 print:max-w-none print:w-full print:my-0 print:shadow-none print:rounded-none">
+            <div className="sticky top-0 z-10 bg-white border-b p-4 flex justify-between items-center print:hidden">
               <h2 className="text-lg font-semibold">Aperçu d'impression</h2>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setShowPrintLayout(false)}>
-                  Fermer
-                </Button>
+                <Button variant="outline" onClick={() => setShowPrintLayout(false)}>Fermer</Button>
                 <Button onClick={() => window.print()}>
                   <Printer className="h-4 w-4 mr-2" />
                   Imprimer
                 </Button>
               </div>
             </div>
-            <div className="p-4">
-              <InvoicePrint
-                invoice={facture}
-                client={{
-                  nom: facture.client_nom,
-                  prenom: facture.client_prenom
-                }}
-                lignes={lignes}
-                company={{
-                  name: 'Magasin Info',
-                  address: 'Adresse de l\'entreprise',
-                  phone: '+226 XX XX XX XX',
-                  email: 'contact@magasin.com'
-                }}
-              />
-            </div>
+            <DocumentPrint
+              docType="facture"
+              numero={facture.numero_facture || `F${String(facture.id).padStart(5, '0')}`}
+              dateDoc={facture.date_facture}
+              dateEcheance={(facture as any).date_echeance}
+              vendeur={(facture as any).cree_par_nom || 'Administrator'}
+              clientNom={facture.client_nom}
+              clientPrenom={(facture as any).client_prenom}
+              lignes={lignes as any}
+            />
           </div>
         </div>
       )}

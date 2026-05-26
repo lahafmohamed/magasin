@@ -40,8 +40,8 @@ export function calculateTotals(
       ligneTotal -= ligne.remise_montant;
     }
 
-    // Ensure non-negative per line
-    ligneTotal = Math.max(0, ligneTotal);
+    // Ensure non-negative per line, rounded so stored line totals match reported sums
+    ligneTotal = parseFloat(Math.max(0, ligneTotal).toFixed(2));
     totalLignes.push(ligneTotal);
     sousTotal += ligneTotal;
   }

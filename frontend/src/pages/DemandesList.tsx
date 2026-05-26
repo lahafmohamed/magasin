@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { demandeService, stockLocationService } from '../services/api';
+import { demandeService } from '../services/api';
+import { fuzzyScore } from '../utils/format';
 import { useAuth } from '../lib/AuthContext';
 import { usePermission, Permissions } from '../hooks/usePermission';
 import { RequirePermission } from '../components/RequirePermission';
@@ -61,7 +62,6 @@ export default function DemandesList() {
   const [loading, setLoading] = useState(true);
   const [filterStatut, setFilterStatut] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [_locations, setLocations] = useState<any[]>([]);
   const [stats, setStats] = useState({
     total: 0,
     enAttente: 0,
@@ -74,29 +74,14 @@ export default function DemandesList() {
   const isAdmin = userRole === 'admin';
 
   useEffect(() => {
-    loadLocations();
     loadDemandes();
   }, [filterStatut]);
-
-  const loadLocations = async () => {
-    try {
-      const response = await stockLocationService.getAll();
-      setLocations(response.data || response || []);
-    } catch {
-      // Silent fail
-    }
-  };
 
   const loadDemandes = async () => {
     setLoading(true);
     try {
       const filters: any = {};
       if (filterStatut !== 'all') filters.statut = filterStatut;
-      
-      // For depot staff, default to actionable states
-      if (isDepot && filterStatut === 'all') {
-        // Backend handles default filtering
-      }
 
       const response = await demandeService.getAll(filters);
       const data = response.data || response || [];
@@ -116,16 +101,21 @@ export default function DemandesList() {
     }
   };
 
-  const filteredDemandes = demandes.filter((d) => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      d.numero.toLowerCase().includes(q) ||
-      d.magasin_nom.toLowerCase().includes(q) ||
-      d.depot_nom.toLowerCase().includes(q) ||
-      d.created_by_nom?.toLowerCase().includes(q)
-    );
-  });
+  const filteredDemandes = !searchQuery.trim()
+    ? demandes
+    : demandes
+        .map((d) => ({
+          d,
+          score: Math.max(
+            fuzzyScore(searchQuery, d.numero),
+            fuzzyScore(searchQuery, d.magasin_nom),
+            fuzzyScore(searchQuery, d.depot_nom),
+            fuzzyScore(searchQuery, d.created_by_nom || ''),
+          ),
+        }))
+        .filter((row) => row.score > 0)
+        .sort((x, y) => y.score - x.score)
+        .map((row) => row.d);
 
   const StatusBadge = ({ statut }: { statut: string }) => {
     const config = STATUS_CONFIG[statut] || { label: statut, variant: 'outline', icon: Clock };
@@ -228,7 +218,7 @@ export default function DemandesList() {
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
               <select
-                className="select select-bordered select-sm h-10"
+                className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 value={filterStatut}
                 onChange={(e) => setFilterStatut(e.target.value)}
               >

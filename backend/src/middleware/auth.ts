@@ -48,15 +48,17 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as {
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }) as {
       id: number;
       username: string;
       role: string;
       must_change_password?: boolean;
     };
 
-    // Block all non-auth requests when password change is required
-    if (decoded.must_change_password) {
+    // Block all requests except the change-password endpoint itself when a
+    // password change is required — otherwise the user is permanently locked out.
+    const isChangePasswordRequest = req.path.endsWith('/change-password');
+    if (decoded.must_change_password && !isChangePasswordRequest) {
       res.status(403).json({
         success: false,
         error: 'Vous devez changer votre mot de passe avant de continuer.',
@@ -138,6 +140,55 @@ export const authorize = (...roles: (string | string[])[]) => {
     }
 
     next();
+  };
+};
+
+/**
+ * Middleware to check if user has required permission
+ */
+export const requirePermission = (permissionCode: string) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: 'Non authentifié',
+      });
+      return;
+    }
+
+    // Admin role bypasses permission checks
+    if (req.user.role === 'admin') {
+      next();
+      return;
+    }
+
+    try {
+      // Check if user has permission, taking custom overrides into account
+      const { rows } = await pool.query(
+        `SELECT 1 FROM utilisateurs u
+         LEFT JOIN role_permissions rp ON u.role_id = rp.role_id AND NOT u.customiser_permissions
+         LEFT JOIN user_permissions up ON u.id = up.utilisateur_id AND u.customiser_permissions
+         JOIN permissions p ON p.id = CASE WHEN u.customiser_permissions THEN up.permission_id ELSE rp.permission_id END
+         WHERE u.id = $1 AND p.code = $2`,
+        [req.user.id, permissionCode]
+      );
+
+      if (rows.length === 0) {
+        res.status(403).json({
+          success: false,
+          error: 'Permissions insuffisantes',
+        });
+        return;
+      }
+
+      next();
+    } catch (error) {
+      console.error('Permission check error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Erreur interne du serveur lors de la vérification des permissions',
+      });
+    }
   };
 };
 

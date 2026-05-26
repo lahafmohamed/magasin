@@ -9,13 +9,11 @@ import { useERPShortcuts } from './hooks/useKeyboardShortcuts';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Inventaire = lazy(() => import('./pages/Inventaire'));
-const Clients = lazy(() => import('./pages/Clients'));
 const ClientAnalytics = lazy(() => import('./pages/ClientAnalytics'));
 const Factures = lazy(() => import('./pages/Factures'));
 const FactureDetail = lazy(() => import('./pages/FactureDetail'));
 const NouvelleFacture = lazy(() => import('./pages/NouvelleFacture'));
 const StockValuation = lazy(() => import('./pages/StockValuation'));
-const Fournisseurs = lazy(() => import('./pages/Fournisseurs'));
 const Commandes = lazy(() => import('./pages/Commandes'));
 const CommandeDetail = lazy(() => import('./pages/CommandeDetail'));
 const Login = lazy(() => import('./pages/Login'));
@@ -25,8 +23,6 @@ const Reporting = lazy(() => import('./pages/Reporting'));
 const StockLocations = lazy(() => import('./pages/StockLocations'));
 const StockTransfers = lazy(() => import('./pages/StockTransfers'));
 const AffectationsLocations = lazy(() => import('./pages/AffectationsLocations'));
-const MagasinInternalRequests = lazy(() => import('./pages/MagasinInternalRequests'));
-const DepotInternalRequests = lazy(() => import('./pages/DepotInternalRequests'));
 // New Role-Based Access Demandes
 const DemandesList = lazy(() => import('./pages/DemandesList'));
 const DemandeDetail = lazy(() => import('./pages/DemandeDetail'));
@@ -34,6 +30,9 @@ const DemandeForm = lazy(() => import('./pages/DemandeForm'));
 const FacturesFournisseur = lazy(() => import('./pages/FacturesFournisseur'));
 const GeneralLedger = lazy(() => import('./pages/GeneralLedger'));
 const Employes = lazy(() => import('./pages/Employes'));
+const UserManagement = lazy(() => import('./pages/UserManagement'));
+const PermissionsPage = lazy(() => import('./pages/PermissionsPage'));
+const TvaSettings = lazy(() => import('./pages/TvaSettings'));
 // Phase 5 - New modules
 const Devis = lazy(() => import('./pages/Devis'));
 const NouveauDevis = lazy(() => import('./pages/NouveauDevis'));
@@ -91,19 +90,9 @@ function AppWithShortcuts() {
             <Layout><TiersDetail /></Layout>
           </ProtectedRoute>
         } />
-        <Route path="/clients" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><Clients /></Layout>
-          </ProtectedRoute>
-        } />
         <Route path="/clients/analytics" element={
           <ProtectedRoute requiredRoles={['admin', 'manager']}>
             <Layout><ClientAnalytics /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/fournisseurs" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
-            <Layout><Fournisseurs /></Layout>
           </ProtectedRoute>
         } />
 
@@ -212,16 +201,6 @@ function AppWithShortcuts() {
             <Layout><AffectationsLocations /></Layout>
           </ProtectedRoute>
         } />
-        <Route path="/stock-demandes-magasin" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff', 'caissier']}>
-            <Layout><MagasinInternalRequests /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/stock-demandes-depot" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
-            <Layout><DepotInternalRequests /></Layout>
-          </ProtectedRoute>
-        } />
         <Route path="/demandes" element={
           <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff', 'magasin_staff', 'caissier']}>
             <Layout><DemandesList /></Layout>
@@ -276,6 +255,21 @@ function AppWithShortcuts() {
             <Layout><Employes /></Layout>
           </ProtectedRoute>
         } />
+        <Route path="/admin/users" element={
+          <ProtectedRoute requiredRoles={['admin']}>
+            <Layout><UserManagement /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/admin/permissions" element={
+          <ProtectedRoute requiredRoles={['admin']}>
+            <Layout><PermissionsPage /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/admin/tva" element={
+          <ProtectedRoute requiredRoles={['admin']}>
+            <Layout><TvaSettings /></Layout>
+          </ProtectedRoute>
+        } />
       </Routes>
     </Suspense>
   );
@@ -284,7 +278,7 @@ function AppWithShortcuts() {
 export default function App() {
   return (
     <AuthProvider>
-      <Toaster position="top-right" richColors />
+      <Toaster position="top-right" richColors closeButton />
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AppWithShortcuts />
       </BrowserRouter>

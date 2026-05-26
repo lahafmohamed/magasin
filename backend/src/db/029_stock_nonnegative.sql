@@ -5,4 +5,7 @@
 UPDATE produits SET stock = 0 WHERE stock < 0;
 
 ALTER TABLE produits
+  DROP CONSTRAINT IF EXISTS produits_stock_nonnegative;
+
+ALTER TABLE produits
   ADD CONSTRAINT produits_stock_nonnegative CHECK (stock >= 0);

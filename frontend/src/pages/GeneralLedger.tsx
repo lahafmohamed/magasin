@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
+import { Loader2 } from 'lucide-react';
 import { generalLedgerService } from '../services/api';
 import { toast } from 'sonner';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 interface Compte {
   id: number;
@@ -35,6 +38,30 @@ interface BalanceComptable {
   total_credit: string;
   solde: string;
 }
+
+const SELECT_CLS = 'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
+const BADGE_BASE = 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium';
+
+const JOURNAL_BADGE: Record<string, string> = {
+  ACHATS: 'bg-danger-100 text-danger-700',
+  VENTES: 'bg-success-100 text-success-700',
+  TRESORERIE: 'bg-info-100 text-info-700',
+  OD: 'bg-warning-100 text-warning-800',
+};
+
+const TYPE_BADGE: Record<string, string> = {
+  actif: 'bg-info-100 text-info-700',
+  passif: 'bg-warning-100 text-warning-800',
+  capitaux_propres: 'bg-success-100 text-success-700',
+  charge: 'bg-danger-100 text-danger-700',
+  produit: 'bg-primary-100 text-primary-700',
+};
+
+const formatNum = (s: string) =>
+  new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Math.round(parseFloat(s) || 0));
+
+const TABLE_HEAD = 'px-3 py-2 font-medium';
+const NUM_CELL = 'px-3 py-2 text-right num';
 
 export default function GeneralLedger() {
   const [ecritures, setEcritures] = useState<EcritureComptable[]>([]);
@@ -89,93 +116,50 @@ export default function GeneralLedger() {
     }
   };
 
-  const getJournalBadge = (journal: string) => {
-    const colors: Record<string, string> = {
-      'ACHATS': 'badge-error',
-      'VENTES': 'badge-success',
-      'TRESORERIE': 'badge-info',
-      'OD': 'badge-warning',
-    };
-    return colors[journal] || 'badge-ghost';
-  };
-
-  const getTypeBadge = (type: string) => {
-    const colors: Record<string, string> = {
-      'actif': 'badge-info',
-      'passif': 'badge-warning',
-      'capitaux_propres': 'badge-success',
-      'charge': 'badge-error',
-      'produit': 'badge-primary',
-    };
-    return colors[type] || 'badge-ghost';
-  };
-
   if (loading) {
-    return <div className="flex justify-center p-8"><span className="loading loading-spinner loading-lg"></span></div>;
+    return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
 
   return (
     <div className="container mx-auto p-6">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Grand Livre Comptable</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Grand livre comptable</h1>
       </div>
 
-      {/* Tabs */}
-      <div className="tabs tabs-boxed mb-6">
-        <a
-          className={`tab ${activeTab === 'ecritures' ? 'tab-active' : ''}`}
-          onClick={() => setActiveTab('ecritures')}
-        >
-          Écritures Comptables
-        </a>
-        <a
-          className={`tab ${activeTab === 'chart' ? 'tab-active' : ''}`}
-          onClick={() => setActiveTab('chart')}
-        >
-          Plan Comptable
-        </a>
-        <a
-          className={`tab ${activeTab === 'trial-balance' ? 'tab-active' : ''}`}
-          onClick={() => setActiveTab('trial-balance')}
-        >
-          Balance Comptable
-        </a>
+      <div className="mb-6 inline-flex rounded-md border bg-card p-1">
+        {[
+          { id: 'ecritures', label: 'Écritures' },
+          { id: 'chart', label: 'Plan comptable' },
+          { id: 'trial-balance', label: 'Balance' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+              activeTab === tab.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+            }`}
+            onClick={() => setActiveTab(tab.id as any)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* Filters */}
-      <div className="card bg-base-100 shadow-xl p-4 mb-6">
+      <div className="rounded-md border bg-card shadow-sm p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="form-control">
-            <label className="label">
-              <span className="label-text">Date Début</span>
-            </label>
-            <input
-              type="date"
-              className="input input-bordered"
-              value={dateDebut}
-              onChange={(e) => setDateDebut(e.target.value)}
-            />
+          <div className="space-y-1.5">
+            <Label htmlFor="gl-debut">Date début</Label>
+            <Input id="gl-debut" type="date" value={dateDebut} onChange={(e) => setDateDebut(e.target.value)} />
           </div>
-
-          <div className="form-control">
-            <label className="label">
-              <span className="label-text">Date Fin</span>
-            </label>
-            <input
-              type="date"
-              className="input input-bordered"
-              value={dateFin}
-              onChange={(e) => setDateFin(e.target.value)}
-            />
+          <div className="space-y-1.5">
+            <Label htmlFor="gl-fin">Date fin</Label>
+            <Input id="gl-fin" type="date" value={dateFin} onChange={(e) => setDateFin(e.target.value)} />
           </div>
-
           {activeTab === 'ecritures' && (
-            <div className="form-control">
-              <label className="label">
-                <span className="label-text">Journal</span>
-              </label>
+            <div className="space-y-1.5">
+              <Label htmlFor="gl-journal">Journal</Label>
               <select
-                className="select select-bordered"
+                id="gl-journal"
+                className={SELECT_CLS}
                 value={filterJournal}
                 onChange={(e) => setFilterJournal(e.target.value)}
               >
@@ -183,46 +167,49 @@ export default function GeneralLedger() {
                 <option value="ACHATS">ACHATS</option>
                 <option value="VENTES">VENTES</option>
                 <option value="TRESORERIE">TRESORERIE</option>
-                <option value="OD">OD (Opérations Diverses)</option>
+                <option value="OD">OD (Opérations diverses)</option>
               </select>
             </div>
           )}
         </div>
       </div>
 
-      {/* Écritures Tab */}
       {activeTab === 'ecritures' && (
-        <div className="card bg-base-100 shadow-xl">
-          <div className="card-body">
-            <h2 className="card-title">Écritures Comptables</h2>
+        <div className="rounded-md border bg-card shadow-sm">
+          <div className="p-5">
+            <h2 className="text-lg font-semibold mb-3">Écritures comptables</h2>
             {ecritures.length === 0 ? (
-              <div className="alert alert-info">
-                <span>Aucune écriture pour la période sélectionnée</span>
+              <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">
+                Aucune écriture pour la période sélectionnée
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>N° Pièce</th>
-                      <th>Date</th>
-                      <th>Journal</th>
-                      <th>Compte</th>
-                      <th>Description</th>
-                      <th>Débit</th>
-                      <th>Crédit</th>
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-left">
+                    <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className={TABLE_HEAD}>N° pièce</th>
+                      <th className={TABLE_HEAD}>Date</th>
+                      <th className={TABLE_HEAD}>Journal</th>
+                      <th className={TABLE_HEAD}>Compte</th>
+                      <th className={TABLE_HEAD}>Description</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Débit</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Crédit</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y">
                     {ecritures.map((ecriture) => (
-                      <tr key={ecriture.id}>
-                        <td className="font-medium text-xs">{ecriture.numero_piece}</td>
-                        <td className="text-xs">{new Date(ecriture.date_ecriture).toLocaleDateString('fr-FR')}</td>
-                        <td><span className={`badge ${getJournalBadge(ecriture.journal)}`}>{ecriture.journal}</span></td>
-                        <td className="text-xs">{ecriture.compte_numero} - {ecriture.compte_intitule}</td>
-                        <td className="text-xs">{ecriture.description || '-'}</td>
-                        <td className="font-medium">{parseFloat(ecriture.debit).toFixed(2)}</td>
-                        <td className="font-medium">{parseFloat(ecriture.credit).toFixed(2)}</td>
+                      <tr key={ecriture.id} className="hover:bg-muted/30">
+                        <td className="px-3 py-2 font-medium text-xs num">{ecriture.numero_piece}</td>
+                        <td className="px-3 py-2 text-xs num">{new Date(ecriture.date_ecriture).toLocaleDateString('fr-FR')}</td>
+                        <td className="px-3 py-2">
+                          <span className={`${BADGE_BASE} ${JOURNAL_BADGE[ecriture.journal] || 'bg-muted text-muted-foreground'}`}>
+                            {ecriture.journal}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-xs">{ecriture.compte_numero} — {ecriture.compte_intitule}</td>
+                        <td className="px-3 py-2 text-xs text-muted-foreground">{ecriture.description || '—'}</td>
+                        <td className={NUM_CELL + ' font-medium'}>{formatNum(ecriture.debit)}</td>
+                        <td className={NUM_CELL + ' font-medium'}>{formatNum(ecriture.credit)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -233,30 +220,39 @@ export default function GeneralLedger() {
         </div>
       )}
 
-      {/* Chart of Accounts Tab */}
       {activeTab === 'chart' && (
-        <div className="card bg-base-100 shadow-xl">
-          <div className="card-body">
-            <h2 className="card-title">Plan Comptable</h2>
-            <div className="overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>N°</th>
-                    <th>Intitulé</th>
-                    <th>Type</th>
-                    <th>Catégorie</th>
-                    <th>Statut</th>
+        <div className="rounded-md border bg-card shadow-sm">
+          <div className="p-5">
+            <h2 className="text-lg font-semibold mb-3">Plan comptable</h2>
+            <div className="overflow-x-auto rounded-md border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 text-left">
+                  <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                    <th className={TABLE_HEAD}>N°</th>
+                    <th className={TABLE_HEAD}>Intitulé</th>
+                    <th className={TABLE_HEAD}>Type</th>
+                    <th className={TABLE_HEAD}>Catégorie</th>
+                    <th className={TABLE_HEAD}>Statut</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y">
                   {chartOfAccounts.map((compte) => (
-                    <tr key={compte.id}>
-                      <td className="font-medium">{compte.numero}</td>
-                      <td>{compte.intitule}</td>
-                      <td><span className={`badge ${getTypeBadge(compte.type_compte)}`}>{compte.type_compte}</span></td>
-                      <td>{compte.categorie || '-'}</td>
-                      <td>{compte.actif ? <span className="badge badge-success">Actif</span> : <span className="badge badge-ghost">Inactif</span>}</td>
+                    <tr key={compte.id} className="hover:bg-muted/30">
+                      <td className="px-3 py-2 font-medium num">{compte.numero}</td>
+                      <td className="px-3 py-2">{compte.intitule}</td>
+                      <td className="px-3 py-2">
+                        <span className={`${BADGE_BASE} ${TYPE_BADGE[compte.type_compte] || 'bg-muted text-muted-foreground'}`}>
+                          {compte.type_compte}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">{compte.categorie || '—'}</td>
+                      <td className="px-3 py-2">
+                        <span className={`${BADGE_BASE} ${
+                          compte.actif ? 'bg-success-100 text-success-700' : 'bg-muted text-muted-foreground'
+                        }`}>
+                          {compte.actif ? 'Actif' : 'Inactif'}
+                        </span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -266,36 +262,37 @@ export default function GeneralLedger() {
         </div>
       )}
 
-      {/* Trial Balance Tab */}
       {activeTab === 'trial-balance' && (
-        <div className="card bg-base-100 shadow-xl">
-          <div className="card-body">
-            <h2 className="card-title">Balance Comptable</h2>
+        <div className="rounded-md border bg-card shadow-sm">
+          <div className="p-5">
+            <h2 className="text-lg font-semibold mb-3">Balance comptable</h2>
             {trialBalance.length === 0 ? (
-              <div className="alert alert-info">
-                <span>Aucune donnée pour la période sélectionnée</span>
+              <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">
+                Aucune donnée pour la période sélectionnée
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>N°</th>
-                      <th>Compte</th>
-                      <th>Total Débit</th>
-                      <th>Total Crédit</th>
-                      <th>Solde</th>
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-left">
+                    <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className={TABLE_HEAD}>N°</th>
+                      <th className={TABLE_HEAD}>Compte</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Total débit</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Total crédit</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Solde</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y">
                     {trialBalance.map((balance) => (
-                      <tr key={balance.compte_id}>
-                        <td className="font-medium">{balance.compte_numero}</td>
-                        <td>{balance.compte_intitule}</td>
-                        <td className="font-medium">{parseFloat(balance.total_debit).toFixed(2)}</td>
-                        <td className="font-medium">{parseFloat(balance.total_credit).toFixed(2)}</td>
-                        <td className={`font-bold ${parseFloat(balance.solde) >= 0 ? 'text-success' : 'text-error'}`}>
-                          {parseFloat(balance.solde).toFixed(2)}
+                      <tr key={balance.compte_id} className="hover:bg-muted/30">
+                        <td className="px-3 py-2 font-medium num">{balance.compte_numero}</td>
+                        <td className="px-3 py-2">{balance.compte_intitule}</td>
+                        <td className={NUM_CELL + ' font-medium'}>{formatNum(balance.total_debit)}</td>
+                        <td className={NUM_CELL + ' font-medium'}>{formatNum(balance.total_credit)}</td>
+                        <td className={`${NUM_CELL} font-semibold ${
+                          parseFloat(balance.solde) >= 0 ? 'text-success-700' : 'text-danger-700'
+                        }`}>
+                          {formatNum(balance.solde)}
                         </td>
                       </tr>
                     ))}

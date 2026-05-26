@@ -9,14 +9,19 @@ router.use(authenticate);
 // GET /api/caisses-hierarchy - Get all caisses
 router.get('/', CaisseHierarchyController.getAll);
 
-// GET /api/caisses-hierarchy/:id - Get caisse by ID
-router.get('/:id', CaisseHierarchyController.getById);
-
+// Specific GET routes must be registered before the '/:id' param route,
+// otherwise Express matches them as an id (e.g. '/consolidated-report').
 // GET /api/caisses-hierarchy/principale - Get main caisse
 router.get('/principale/details', CaisseHierarchyController.getPrincipale);
 
 // GET /api/caisses-hierarchy/magasins - Get magasin caisses
 router.get('/magasins/list', CaisseHierarchyController.getMagasinCaisses);
+
+// GET /api/caisses-hierarchy/consolidated-report - Get consolidated cash report
+router.get('/consolidated-report', authorize(['admin', 'manager']), CaisseHierarchyController.getConsolidatedReport);
+
+// GET /api/caisses-hierarchy/:id - Get caisse by ID
+router.get('/:id', CaisseHierarchyController.getById);
 
 // POST /api/caisses-hierarchy - Create caisse (admin only)
 router.post('/', authorize(['admin']), CaisseHierarchyController.create);
@@ -32,9 +37,6 @@ router.post('/transferts', authorize(['admin', 'manager']), CaisseHierarchyContr
 
 // GET /api/caisses-hierarchy/transferts/history - Get transfer history
 router.get('/transferts/history', CaisseHierarchyController.getTransferts);
-
-// GET /api/caisses-hierarchy/consolidated-report - Get consolidated cash report
-router.get('/consolidated-report', authorize(['admin', 'manager']), CaisseHierarchyController.getConsolidatedReport);
 
 // GET /api/caisses-hierarchy/:id/balance - Get caisse balance with recent transfers
 router.get('/:id/balance', CaisseHierarchyController.getBalance);

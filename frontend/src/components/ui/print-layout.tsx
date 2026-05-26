@@ -9,192 +9,385 @@ interface PrintLayoutProps {
 
 export function PrintLayout({ title: _title, children, onPrint }: PrintLayoutProps) {
   const handlePrint = () => {
-    if (onPrint) {
-      onPrint();
-    } else {
-      window.print();
-    }
+    if (onPrint) onPrint();
+    else window.print();
   };
 
   return (
     <div className="space-y-4">
-      {/* Print button - hidden when printing */}
       <div className="print:hidden">
         <Button onClick={handlePrint} className="gap-2">
           <Printer className="h-4 w-4" />
           Imprimer
         </Button>
       </div>
-
-      {/* Print content */}
-      <div className="print:shadow-none print:border-none">
-        {children}
-      </div>
+      <div className="print:shadow-none print:border-none">{children}</div>
     </div>
   );
 }
 
+// ============================================================
+// Generic document print template
+// Matches "Devis - S00002.pdf" model — works for Devis / Facture / BL
+// ============================================================
+
+export type DocType = 'devis' | 'facture' | 'bl' | 'avoir';
+
+interface PrintLigne {
+  produit_nom?: string;
+  produit_reference?: string;
+  description?: string;
+  quantite: number | string;
+  quantite_livree?: number | string;
+  prix_unitaire: number | string;
+  tva_taux?: number | string;
+}
+
+interface DocumentPrintProps {
+  docType: DocType;
+  numero: string;
+  dateDoc?: string | Date | null;
+  dateEcheance?: string | Date | null;
+  vendeur?: string;
+  clientNom?: string;
+  clientPrenom?: string;
+  lignes: PrintLigne[];
+  tvaIncluded?: boolean;
+  hideTotals?: boolean;
+}
+
+const titleLabel: Record<DocType, string> = {
+  devis: 'Devis',
+  facture: 'Facture',
+  bl: 'Bon de Livraison',
+  avoir: 'Avoir',
+};
+
+const dateLabels: Record<DocType, { date: string; echeance: string }> = {
+  devis: { date: 'Date du devis', echeance: 'Échéance' },
+  facture: { date: 'Date de la facture', echeance: 'Échéance' },
+  bl: { date: 'Date du bon', echeance: 'Date de livraison' },
+  avoir: { date: "Date de l'avoir", echeance: '—' },
+};
+
+const fmtDate = (d?: string | Date | null) => {
+  if (!d) return '-';
+  try {
+    return new Date(d).toLocaleDateString('fr-FR');
+  } catch {
+    return '-';
+  }
+};
+
+const fmtMoney = (n: number) =>
+  new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(n) + ' FCFA';
+
+const fmtQty = (n: number) =>
+  new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+
+export function DocumentPrint({
+  docType,
+  numero,
+  dateDoc,
+  dateEcheance,
+  vendeur,
+  clientNom,
+  clientPrenom,
+  lignes,
+  tvaIncluded = true,
+  hideTotals = false,
+}: DocumentPrintProps) {
+  const rows = lignes.map((l) => {
+    const qte = Number(docType === 'bl' ? (l.quantite_livree ?? l.quantite) : l.quantite) || 0;
+    const pu = Number(l.prix_unitaire) || 0;
+    const tva = l.tva_taux !== undefined ? Number(l.tva_taux) : (tvaIncluded ? 18 : 0);
+    const montant = qte * pu;
+    return { ...l, qte, pu, tva, montant };
+  });
+
+  const sousTotal = rows.reduce((s, r) => s + r.montant, 0);
+  const totalTva = rows.reduce((s, r) => s + r.montant * (r.tva / 100), 0);
+  const total = sousTotal + totalTva;
+  const hasTva = totalTva > 0;
+  const tvaPctDisplay = rows.find((r) => r.tva > 0)?.tva ?? 18;
+
+  const labels = dateLabels[docType];
+  const clientFull = [clientNom, clientPrenom].filter(Boolean).join(' ').trim();
+
+  return (
+    <div className="pbd-print-doc">
+      <div className="pbd-print-page">
+        {/* Header: logo + company addr */}
+        <div className="pbd-header">
+          <img src="/logo.png" alt="Logo" className="pbd-logo" />
+          <div className="pbd-company">
+            <div>Hitek-CI</div>
+            <div>[ADRESSE DE LA SOCIETE]</div>
+            <div>[VILLE - PAYS]</div>
+          </div>
+        </div>
+
+        {/* Client name centered */}
+        <div className="pbd-client">{clientFull || '-'}</div>
+
+        {/* Title */}
+        <h1 className="pbd-title">
+          {titleLabel[docType]} # {numero}
+        </h1>
+
+        {/* Meta cols */}
+        <div className="pbd-meta">
+          <div>
+            <div className="pbd-meta-label">{labels.date}</div>
+            <div>{fmtDate(dateDoc)}</div>
+          </div>
+          <div>
+            <div className="pbd-meta-label">{labels.echeance}</div>
+            <div>{fmtDate(dateEcheance)}</div>
+          </div>
+          <div>
+            <div className="pbd-meta-label">Vendeur</div>
+            <div>{vendeur || 'Administrator'}</div>
+          </div>
+        </div>
+
+        {/* Items table */}
+        <table className="pbd-table">
+          <thead>
+            <tr>
+              <th className="pbd-col-desc">Description</th>
+              <th className="pbd-col-qte">Quantité</th>
+              <th className="pbd-col-pu">Prix unitaire</th>
+              {docType !== 'bl' && <th className="pbd-col-tva">TVA</th>}
+              <th className="pbd-col-mt">Montant</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const refTag = r.produit_reference ? `[${r.produit_reference}] ` : '';
+              const mainName = r.produit_nom || r.description || '';
+              const subDesc = r.produit_reference && r.description && r.description !== r.produit_nom
+                ? r.description
+                : '';
+              return (
+                <tr key={i}>
+                  <td className="pbd-col-desc">
+                    <div>{refTag}{mainName}</div>
+                    {subDesc && <div className="pbd-subdesc">{subDesc}</div>}
+                  </td>
+                  <td className="pbd-col-qte">
+                    {fmtQty(r.qte)}<br />
+                    <span className="pbd-unite">Unité(s)</span>
+                  </td>
+                  <td className="pbd-col-pu">{fmtQty(r.pu)}</td>
+                  {docType !== 'bl' && (
+                    <td className="pbd-col-tva">{r.tva > 0 ? `${r.tva}%` : '-'}</td>
+                  )}
+                  <td className="pbd-col-mt">{fmtMoney(r.montant)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {/* Totals */}
+        {!hideTotals && (
+          <div className="pbd-totals">
+            <div className="pbd-totals-box">
+              <div className="pbd-total-row">
+                <span>Montant hors taxes</span>
+                <span>{fmtMoney(sousTotal)}</span>
+              </div>
+              {hasTva && (
+                <div className="pbd-total-row">
+                  <span>T.V.A. {tvaPctDisplay}%</span>
+                  <span>{fmtMoney(totalTva)}</span>
+                </div>
+              )}
+              <div className="pbd-total-row pbd-total-grand">
+                <span>Total</span>
+                <span>{fmtMoney(total)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="pbd-footer">
+          <span>
+            [ADRESSE POSTALE / TELEPHONE / EMAIL / BANQUE]
+          </span>
+          <span className="pbd-page">Page 1 / 1</span>
+        </div>
+      </div>
+
+      <style>{`
+        .pbd-print-doc {
+          background: #fff;
+          color: #111;
+          font-family: 'Helvetica Neue', Arial, sans-serif;
+        }
+        .pbd-print-page {
+          max-width: 800px;
+          margin: 0 auto;
+          padding: 32px 40px 80px;
+          position: relative;
+          min-height: 1050px;
+        }
+        .pbd-header {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          margin-bottom: 60px;
+        }
+        .pbd-logo {
+          width: 130px;
+          height: auto;
+          object-fit: contain;
+        }
+        .pbd-company {
+          font-size: 12px;
+          line-height: 1.5;
+          color: #222;
+        }
+        .pbd-client {
+          text-align: center;
+          font-size: 13px;
+          margin-bottom: 20px;
+          min-height: 18px;
+        }
+        .pbd-title {
+          font-size: 32px;
+          font-weight: 300;
+          color: #9a9a9a;
+          margin: 0 0 28px;
+        }
+        .pbd-meta {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 12px;
+          margin-bottom: 32px;
+          font-size: 12px;
+        }
+        .pbd-meta-label {
+          font-weight: 700;
+          color: #111;
+          margin-bottom: 2px;
+        }
+        .pbd-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 12px;
+          margin-bottom: 24px;
+        }
+        .pbd-table thead th {
+          text-align: left;
+          font-weight: 400;
+          color: #444;
+          border-bottom: 1px solid #ddd;
+          padding: 8px 6px;
+        }
+        .pbd-table .pbd-col-qte,
+        .pbd-table .pbd-col-pu,
+        .pbd-table .pbd-col-tva,
+        .pbd-table .pbd-col-mt {
+          text-align: right;
+        }
+        .pbd-table tbody td {
+          padding: 10px 6px;
+          vertical-align: top;
+          border-bottom: 1px solid #f2f2f2;
+        }
+        .pbd-subdesc {
+          color: #666;
+          font-size: 11px;
+          margin-top: 2px;
+        }
+        .pbd-unite {
+          color: #888;
+          font-size: 11px;
+        }
+        .pbd-totals {
+          display: flex;
+          justify-content: flex-end;
+          margin-top: 12px;
+        }
+        .pbd-totals-box {
+          width: 55%;
+          font-size: 12px;
+        }
+        .pbd-total-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 6px 6px;
+          border-bottom: 1px solid #f0f0f0;
+        }
+        .pbd-total-grand {
+          color: #9a9a9a;
+          font-weight: 500;
+          border-bottom: none;
+          padding-top: 10px;
+        }
+        .pbd-total-grand span:last-child {
+          color: #9a9a9a;
+        }
+        .pbd-footer {
+          position: absolute;
+          bottom: 24px;
+          left: 40px;
+          right: 40px;
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          font-size: 10px;
+          color: #555;
+          border-top: 1px solid #eee;
+          padding-top: 10px;
+        }
+        .pbd-page {
+          white-space: nowrap;
+        }
+        @media print {
+          @page { size: A4; margin: 0; }
+          html, body { background: #fff !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+          body * { visibility: hidden !important; }
+          .pbd-print-doc, .pbd-print-doc * { visibility: visible !important; }
+          .pbd-print-doc {
+            position: absolute !important;
+            left: 0; top: 0; right: 0;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          .print\\:hidden { display: none !important; }
+          .pbd-print-page { box-shadow: none !important; min-height: 100vh; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ============================================================
+// Backwards-compat shim — older FactureDetail still imports InvoicePrint
+// ============================================================
 interface InvoicePrintProps {
   invoice: any;
   client: any;
   lignes: any[];
-  company?: {
-    name: string;
-    address: string;
-    phone: string;
-    email: string;
-  };
+  company?: any;
 }
 
-export function InvoicePrint({ invoice, client, lignes, company }: InvoicePrintProps) {
-  const subtotal = lignes.reduce((sum, ligne) => sum + (ligne.quantite * ligne.prix_unitaire), 0);
-  const tax = subtotal * 0.18; // 18% TVA
-  const total = subtotal + tax;
-
+export function InvoicePrint({ invoice, client, lignes }: InvoicePrintProps) {
   return (
-    <PrintLayout title={`Facture ${invoice.numero_facture}`}>
-      <div className="max-w-4xl mx-auto bg-white p-8 print:p-6 print:max-w-none">
-        {/* Header */}
-        <div className="border-b-2 border-gray-900 pb-4 mb-6">
-          <div className="flex justify-between items-start">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">FACTURE</h1>
-              <p className="text-lg font-semibold text-gray-700 mt-1">
-                N° {invoice.numero_facture}
-              </p>
-            </div>
-            <div className="text-right">
-              <p className="text-sm text-gray-600">Date:</p>
-              <p className="font-semibold">
-                {new Date(invoice.date_facture).toLocaleDateString('fr-FR')}
-              </p>
-              <p className="text-sm text-gray-600 mt-2">Échéance:</p>
-              <p className="font-semibold">
-                {new Date(invoice.date_echeance).toLocaleDateString('fr-FR')}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Company and Client Info */}
-        <div className="grid grid-cols-2 gap-8 mb-6">
-          <div>
-            <h3 className="font-semibold text-gray-900 mb-2">De:</h3>
-            <div className="text-sm text-gray-700">
-              <p className="font-semibold">{company?.name || 'Magasin Info'}</p>
-              <p>{company?.address || 'Adresse de l\'entreprise'}</p>
-              <p>Tél: {company?.phone || '+226 XX XX XX XX'}</p>
-              <p>Email: {company?.email || 'contact@magasin.com'}</p>
-            </div>
-          </div>
-          <div>
-            <h3 className="font-semibold text-gray-900 mb-2">Client:</h3>
-            <div className="text-sm text-gray-700">
-              <p className="font-semibold">
-                {client?.nom} {client?.prenom}
-              </p>
-              <p>{client?.adresse || 'Adresse du client'}</p>
-              <p>Tél: {client?.telephone || client?.email || 'Non spécifié'}</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Items Table */}
-        <div className="mb-6">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="border-b-2 border-gray-900">
-                <th className="text-left py-2 text-sm font-semibold">Description</th>
-                <th className="text-center py-2 text-sm font-semibold">Quantité</th>
-                <th className="text-right py-2 text-sm font-semibold">Prix Unit.</th>
-                <th className="text-right py-2 text-sm font-semibold">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lignes.map((ligne, index) => (
-                <tr key={index} className="border-b border-gray-300">
-                  <td className="py-3 text-sm">
-                    <div>
-                      <p className="font-medium">{ligne.produit_nom}</p>
-                      <p className="text-gray-600 text-xs">{ligne.produit_reference}</p>
-                    </div>
-                  </td>
-                  <td className="text-center py-3 text-sm">{ligne.quantite}</td>
-                  <td className="text-right py-3 text-sm">
-                    {parseFloat(ligne.prix_unitaire).toFixed(2)} XOF
-                  </td>
-                  <td className="text-right py-3 text-sm font-medium">
-                    {(ligne.quantite * parseFloat(ligne.prix_unitaire)).toFixed(2)} XOF
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Totals */}
-        <div className="flex justify-end mb-6">
-          <div className="w-64">
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Sous-total:</span>
-                <span>{subtotal.toFixed(2)} XOF</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span>TVA (18%):</span>
-                <span>{tax.toFixed(2)} XOF</span>
-              </div>
-              <div className="flex justify-between font-bold text-lg border-t-2 border-gray-900 pt-2">
-                <span>Total:</span>
-                <span>{total.toFixed(2)} XOF</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="border-t border-gray-300 pt-4 mt-8">
-          <div className="text-center text-sm text-gray-600">
-            <p>Merci pour votre confiance!</p>
-            <p className="mt-2">Conditions de paiement: Paiement à réception</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Print Styles */}
-      <style>{`
-        @media print {
-          @page {
-            margin: 1cm;
-            size: A4;
-          }
-          
-          body {
-            print-color-adjust: exact;
-            -webkit-print-color-adjust: exact;
-          }
-          
-          .print\\:hidden {
-            display: none !important;
-          }
-          
-          .print\\:p-6 {
-            padding: 1.5rem !important;
-          }
-          
-          .print\\:shadow-none {
-            box-shadow: none !important;
-          }
-          
-          .print\\:border-none {
-            border: none !important;
-          }
-          
-          .print\\:max-w-none {
-            max-width: none !important;
-          }
-        }
-      `}</style>
-    </PrintLayout>
+    <DocumentPrint
+      docType="facture"
+      numero={invoice?.numero_facture || invoice?.numero || String(invoice?.id ?? '')}
+      dateDoc={invoice?.date_facture}
+      dateEcheance={invoice?.date_echeance}
+      vendeur={invoice?.cree_par_nom || invoice?.vendeur_nom}
+      clientNom={client?.nom || client?.raison_sociale}
+      clientPrenom={client?.prenom}
+      lignes={lignes || []}
+    />
   );
 }

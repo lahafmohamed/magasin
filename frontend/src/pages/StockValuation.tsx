@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { produitService } from '../services/api';
+import { formatFCFA as formatXOF } from '../utils/format';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
@@ -7,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Package, DollarSign, TrendingUp, BarChart3, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { downloadCsv } from '../utils/csv';
 
 export default function StockValuation() {
   const [valuation, setValuation] = useState<any>(null);
@@ -58,14 +60,8 @@ export default function StockValuation() {
       cat.valeur_vente.toFixed(2),
       (cat.valeur_vente - cat.valeur_achat).toFixed(2),
     ]);
-    
-    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'stock-valuation.csv';
-    a.click();
+
+    downloadCsv('stock-valuation.csv', headers, rows);
     toast.success('Export CSV réussi');
   };
 
@@ -77,7 +73,6 @@ export default function StockValuation() {
     );
   }
 
-  const formatXOF = (value: number) => `${value.toFixed(0)} XOF`;
   const margePercent = valuation ? ((valuation.marge_potentielle / valuation.valeur_achat) * 100).toFixed(1) : 0;
 
   return (

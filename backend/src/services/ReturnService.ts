@@ -48,7 +48,6 @@ export class ReturnService {
         );
 
         if (factureRows.length === 0) {
-          await client.query('ROLLBACK');
           throw new Error(`Facture ${ligne.facture_id} non trouvée ou ne appartient pas à ce client`);
         }
 
@@ -67,18 +66,19 @@ export class ReturnService {
           [ligne.produit_id, client_id, ligne.facture_id]
         );
 
-        const maxReturnable = invoicedRows[0].total_qte - returnedRows[0].total_retour;
+        const totalInvoiced = parseFloat(invoicedRows[0].total_qte);
+        const totalReturned = parseFloat(returnedRows[0].total_retour);
+        const maxReturnable = totalInvoiced - totalReturned;
         if (ligne.quantite > maxReturnable) {
-          await client.query('ROLLBACK');
           throw new Error(
-            `Quantité excessive pour le produit ${ligne.produit_id} (facturé: ${invoicedRows[0].total_qte}, déjà retourné: ${returnedRows[0].total_retour}, disponible: ${maxReturnable})`
+            `Quantité excessive pour le produit ${ligne.produit_id} (facturé: ${totalInvoiced}, déjà retourné: ${totalReturned}, disponible: ${maxReturnable})`
           );
         }
       }
 
-      // Generate return number
-      const { rows: countRows } = await client.query("SELECT COALESCE(MAX(CAST(SUBSTRING(numero_retour FROM '[0-9]+$') AS INTEGER)), 0) as max_num FROM retours");
-      const numeroRetour = `RET-${new Date().getFullYear()}-${String(countRows[0].max_num + 1).padStart(5, '0')}`;
+      // Generate return number from a dedicated sequence (race-safe under concurrency)
+      const { rows: seqRows } = await client.query("SELECT nextval('retour_numero_seq') as num");
+      const numeroRetour = `RET-${new Date().getFullYear()}-${String(seqRows[0].num).padStart(5, '0')}`;
 
       // Calculate refund total
       let totalRemboursement = 0;

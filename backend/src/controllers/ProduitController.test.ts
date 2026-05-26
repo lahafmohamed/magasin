@@ -31,11 +31,12 @@ describe('Produits API (Integration)', () => {
 
   describe('POST /api/produits', () => {
     it('should create a new product', async () => {
+      const reference = `PROD-${Date.now()}`;
       const res = await request(app)
         .post('/api/produits')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          reference: `PROD-${Date.now()}`,
+          reference,
           nom: 'Test Laptop HP',
           description: 'Laptop HP 15 pouces',
           categorie: 'Laptops',
@@ -48,7 +49,7 @@ describe('Produits API (Integration)', () => {
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       expect(res.body.data).toHaveProperty('id');
-      expect(res.body.data.reference).toBe(`PROD-${Date.now()}`);
+      expect(res.body.data.reference).toBe(reference);
       expect(res.body.data.nom).toBe('Test Laptop HP');
       expect(res.body.data.stock).toBe(50);
 

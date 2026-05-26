@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import StatusBadge from '@/components/StatusBadge';
+import { DocumentPrint } from '@/components/ui/print-layout';
 import { formatXOF, formatDate } from '@/utils/format';
 import { ArrowLeft, FileText, User, Calendar, Printer } from 'lucide-react';
 import { toast } from 'sonner';
@@ -15,6 +16,7 @@ export default function AvoirDetail() {
   const navigate = useNavigate();
   const [avoir, setAvoir] = useState<AvoirComplete | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showPrintLayout, setShowPrintLayout] = useState(false);
 
   useEffect(() => {
     loadAvoir();
@@ -80,7 +82,7 @@ export default function AvoirDetail() {
         </div>
         <div className="flex gap-2">
           <StatusBadge type="avoir" statut={avoir.statut} />
-          <Button variant="outline" onClick={() => window.print()} className="gap-2">
+          <Button variant="outline" onClick={() => setShowPrintLayout(true)} className="gap-2">
             <Printer className="h-4 w-4" />
             Imprimer
           </Button>
@@ -197,6 +199,31 @@ export default function AvoirDetail() {
             <p className="text-muted-foreground whitespace-pre-wrap">{avoir.notes}</p>
           </CardContent>
         </Card>
+      )}
+
+      {showPrintLayout && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-auto print:bg-white print:p-0 print:static print:overflow-visible">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8 print:max-w-none print:w-full print:my-0 print:shadow-none print:rounded-none">
+            <div className="sticky top-0 z-10 bg-white border-b p-4 flex justify-between items-center print:hidden">
+              <h2 className="text-lg font-semibold">Aperçu d'impression</h2>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setShowPrintLayout(false)}>Fermer</Button>
+                <Button onClick={() => window.print()}>
+                  <Printer className="h-4 w-4 mr-2" />
+                  Imprimer
+                </Button>
+              </div>
+            </div>
+            <DocumentPrint
+              docType="avoir"
+              numero={avoir.numero_avoir || `AV${String(avoir.id).padStart(5, '0')}`}
+              dateDoc={avoir.date_avoir}
+              clientNom={avoir.client_nom}
+              clientPrenom={(avoir as any).client_prenom}
+              lignes={lignes as any}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

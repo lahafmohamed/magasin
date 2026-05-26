@@ -19,14 +19,11 @@ import {
   User, 
   Menu, 
   X, 
-  MapPin, 
-  ArrowLeftRight, 
-  Store,
-  Warehouse,
-  FileBarChart, 
-  BookOpen, 
-  UserCheck, 
-  GitMerge,
+  MapPin,
+  ArrowLeftRight,
+  FileBarChart,
+  BookOpen,
+  UserCheck,
   FilePlus,
   FileCheck,
   FileX,
@@ -34,7 +31,9 @@ import {
   Receipt,
   ChevronDown,
   ClipboardList,
-  ShieldCheck
+  ShieldCheck,
+  KeyRound,
+  Percent
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { NotificationBell } from './NotificationBell';
@@ -88,14 +87,12 @@ export default function Navbar() {
       ],
     }] : []),
 
-    // Tiers: admin, manager only
+    // Contacts (tiers): admin, manager only
     ...((isAdminOrManager) ? [{
-      label: 'Tiers',
+      label: 'Contacts',
       icon: Users,
       items: [
-        { path: '/tiers', label: 'Tiers', icon: UserCheck },
-        { path: '/clients', label: 'Clients', icon: Users },
-        { path: '/fournisseurs', label: 'Fournisseurs', icon: Truck },
+        { path: '/tiers', label: 'Contacts', icon: UserCheck },
         { path: '/employes', label: 'Employés', icon: UserCheck },
       ],
     }] : []),
@@ -135,11 +132,22 @@ export default function Navbar() {
         ] : []),
       ],
     },
+
+    // Admin: admin only
+    ...((hasRole('admin')) ? [{
+      label: 'Admin',
+      icon: ShieldCheck,
+      items: [
+        { path: '/admin/users', label: 'Utilisateurs', icon: Users },
+        { path: '/admin/permissions', label: 'Permissions', icon: KeyRound },
+        { path: '/admin/tva', label: 'Taux de TVA', icon: Percent },
+      ],
+    }] : []),
   ].filter(cat => cat.items.length > 0);
 
   return (
     <>
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <header className="sticky top-0 z-50 w-full border-b bg-background">
         <div className="flex h-12 sm:h-14 items-center gap-1.5 px-2 sm:px-4">
           {/* Mobile menu toggle */}
           <Button
@@ -151,11 +159,13 @@ export default function Navbar() {
             {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
           </Button>
 
-          <Link to="/" className="flex items-center space-x-1.5">
-            <div className="flex h-6 w-6 sm:h-7 sm:w-7 items-center justify-center rounded bg-primary text-primary-foreground">
-              <span className="text-sm sm:text-base font-bold">M</span>
-            </div>
-            <span className="font-semibold text-sm sm:text-base hidden sm:inline-block">Magasin Info</span>
+          <Link to="/" className="flex items-center space-x-2">
+            <img
+              src="/logo.png"
+              alt="Logo"
+              className="h-8 sm:h-10 w-auto object-contain"
+            />
+            <span className="font-semibold text-sm sm:text-base hidden sm:inline-block">Hitek-CI</span>
           </Link>
 
           {/* Desktop navigation */}
@@ -219,12 +229,14 @@ export default function Navbar() {
           {user && (
             <div className="flex items-center gap-1">
               <NotificationBell />
-              <div className="flex items-center gap-1 px-1.5 py-0.5 text-xs">
-                <User className="h-3 w-3" />
+              <div className="flex items-center gap-1.5 px-1.5 py-0.5 text-xs">
+                <User className="h-3.5 w-3.5" />
                 <span className="hidden lg:inline text-xs">{user.username}</span>
-                <span className="badge badge-xs badge-outline text-[10px]">{user.role}</span>
+                <span className="inline-flex items-center rounded-full border px-1.5 py-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  {user.role}
+                </span>
               </div>
-              <Button variant="ghost" size="sm" onClick={logout} className="gap-1 text-error px-1.5 h-8">
+              <Button variant="ghost" size="sm" onClick={logout} className="gap-1 text-danger-600 hover:text-danger-700 hover:bg-danger-50 px-2 h-8">
                 <LogOut className="h-3.5 w-3.5" />
                 <span className="hidden lg:inline text-xs">Déconnexion</span>
               </Button>

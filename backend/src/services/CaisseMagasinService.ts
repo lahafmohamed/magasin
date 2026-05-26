@@ -80,7 +80,7 @@ export class CaisseMagasinService {
   async getUserMagasinRole(userId: number, magasinId: number): Promise<'magasin_staff' | 'admin' | 'none'> {
     // Check if admin
     const { rows: userRows } = await pool.query(
-      'SELECT role FROM utilisateurs WHERE id = $1',
+      'SELECT r.nom AS role FROM utilisateurs u LEFT JOIN roles r ON u.role_id = r.id WHERE u.id = $1',
       [userId]
     );
     
@@ -534,14 +534,49 @@ export class CaisseMagasinService {
    * Get list of magasins for a user
    */
   async getMagasinsForUser(userId: number, userRole: string): Promise<any[]> {
-    // For now, show all active magasins to all authenticated users
-    // In production, you might want to filter by user assignments
+    // Admins/managers see every active magasin.
+    if (userRole === 'admin' || userRole === 'manager') {
+      const { rows } = await pool.query(
+        `SELECT m.*, sl.nom as location_nom
+         FROM magasins m
+         LEFT JOIN stock_locations sl ON m.location_id = sl.id
+         WHERE m.actif = true
+         ORDER BY m.code`
+      );
+      return rows;
+    }
+
+    // Everyone else only sees magasins for locations they are assigned to.
+    // Gather assigned location ids from both assignment tables (graceful if one is missing).
+    const locationIds = new Set<number>();
+    try {
+      const { rows } = await pool.query(
+        'SELECT location_id FROM user_location_roles WHERE utilisateur_id = $1',
+        [userId]
+      );
+      rows.forEach((r) => r.location_id != null && locationIds.add(r.location_id));
+    } catch {
+      /* table may not exist in some environments */
+    }
+    try {
+      const { rows } = await pool.query(
+        'SELECT location_id FROM utilisateur_locations WHERE utilisateur_id = $1',
+        [userId]
+      );
+      rows.forEach((r) => r.location_id != null && locationIds.add(r.location_id));
+    } catch {
+      /* table may not exist in some environments */
+    }
+
+    if (locationIds.size === 0) return [];
+
     const { rows } = await pool.query(
       `SELECT m.*, sl.nom as location_nom
        FROM magasins m
        LEFT JOIN stock_locations sl ON m.location_id = sl.id
-       WHERE m.actif = true
-       ORDER BY m.code`
+       WHERE m.actif = true AND m.location_id = ANY($1::int[])
+       ORDER BY m.code`,
+      [[...locationIds]]
     );
     return rows;
   }

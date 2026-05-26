@@ -752,7 +752,7 @@ export class DemandeService {
         }
     }
 
-    async cancel(demandeId: number, userId?: number, req?: any): Promise<void> {
+    async cancel(demandeId: number, userId?: number, role?: string, req?: any): Promise<void> {
         const client = await pool.connect();
 
         try {
@@ -760,7 +760,7 @@ export class DemandeService {
 
             // Can only cancel in brouillon or envoyee
             const { rows: checkRows } = await client.query(
-                `SELECT statut, created_by_user_id FROM demandes_reapprovisionnement 
+                `SELECT statut, created_by_user_id FROM demandes_reapprovisionnement
                  WHERE id = $1 FOR UPDATE`,
                 [demandeId]
             );
@@ -774,10 +774,11 @@ export class DemandeService {
                 throw new Error('Une demande ne peut être annulée qu\'en état brouillon ou envoyée');
             }
 
-            // Verify ownership (magasin staff can only cancel their own)
-            if (current.created_by_user_id !== userId) {
-                // Admin can cancel any, magasin staff only their own
-                // This check is done at controller level too
+            // Ownership: only the creator or an admin may cancel.
+            if (role !== 'admin' && current.created_by_user_id !== userId) {
+                const err: any = new Error('Vous ne pouvez annuler que vos propres demandes');
+                err.code = 'FORBIDDEN';
+                throw err;
             }
 
             // Soft delete approach: mark as cancelled

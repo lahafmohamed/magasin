@@ -9,7 +9,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
-import { Plus, Search, Pencil, Trash2, Users, Mail, Phone, Eye, Wallet, ArrowUpDown, Calendar, Banknote } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Users, Mail, Phone, Eye, Wallet, ArrowUpDown, Calendar, Banknote, Loader2 } from 'lucide-react';
+import { normalizeSearch } from '@/utils/format';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { formatFCFA, formatDateFR } from '@/lib/utils';
@@ -68,7 +69,7 @@ export default function Clients() {
     setLoading(true);
     try {
       const response = await clientService.getAllWithBalance(
-        search,
+        normalizeSearch(search),
         page,
         limit,
         sort,
@@ -339,7 +340,7 @@ export default function Clients() {
       {/* Tableau */}
       {loading ? (
         <div className="flex justify-center items-center py-12">
-          <span className="loading loading-spinner loading-lg"></span>
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
         <Card>
@@ -485,7 +486,7 @@ export default function Clients() {
 
           {accountLoading ? (
             <div className="flex justify-center items-center py-12">
-              <span className="loading loading-spinner loading-lg"></span>
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : accountBalance ? (
             <div className="space-y-6">

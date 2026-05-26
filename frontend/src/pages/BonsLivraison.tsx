@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { fuzzyScore } from '@/utils/format';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,10 +65,16 @@ export default function BonsLivraison() {
     }
   };
 
-  const filteredBons = bons.filter(b =>
-    (b.numero_bl || '').toLowerCase().includes(search.toLowerCase()) ||
-    (b.client_nom || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredBons = search.trim()
+    ? bons
+        .map((b) => ({
+          b,
+          score: Math.max(fuzzyScore(search, b.numero_bl || ''), fuzzyScore(search, b.client_nom || '')),
+        }))
+        .filter((row) => row.score > 0)
+        .sort((x, y) => y.score - x.score)
+        .map((row) => row.b)
+    : bons;
 
   return (
     <div className="container mx-auto py-6">

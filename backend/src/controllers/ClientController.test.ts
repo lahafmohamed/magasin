@@ -31,13 +31,14 @@ describe('Clients API (Integration)', () => {
 
   describe('POST /api/clients', () => {
     it('should create a new client', async () => {
+      const email = `jean.dupont-${Date.now()}@example.com`;
       const res = await request(app)
         .post('/api/clients')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
           nom: 'Dupont',
           prenom: 'Jean',
-          email: `jean.dupont-${Date.now()}@example.com`,
+          email,
           telephone: '0612345678',
           adresse: '123 Rue Test, Dakar',
           nif: '123456789',
@@ -48,7 +49,7 @@ describe('Clients API (Integration)', () => {
       expect(res.body.data).toHaveProperty('id');
       expect(res.body.data.nom).toBe('Dupont');
       expect(res.body.data.prenom).toBe('Jean');
-      expect(res.body.data.email).toBe(`jean.dupont-${Date.now()}@example.com`);
+      expect(res.body.data.email).toBe(email);
 
       createdClientIds.push(res.body.data.id);
     });

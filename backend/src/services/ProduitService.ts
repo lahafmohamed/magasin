@@ -120,12 +120,14 @@ export class ProduitService extends BaseService<ProduitRecord> {
     const rawSort = (pagination.sort || 'nom').replace(/^p\./, '');
     const safeSortColumn = ALLOWED_SORT.includes(rawSort) ? `p.${rawSort}` : 'p.nom';
     const safeSortOrder = pagination.order === 'DESC' ? 'DESC' : 'ASC';
-    const offset = (pagination.page - 1) * pagination.limit;
+    const safeLimit = Number.isFinite(pagination.limit) ? Math.max(1, Math.min(1000, Math.trunc(pagination.limit))) : 50;
+    const safePage = Number.isFinite(pagination.page) ? Math.max(1, Math.trunc(pagination.page)) : 1;
+    const safeOffset = (safePage - 1) * safeLimit;
 
-    const finalDataQuery = `${dataQuery} ORDER BY ${safeSortColumn} ${safeSortOrder} LIMIT ${pagination.limit} OFFSET ${offset}`;
+    const finalDataQuery = `${dataQuery} ORDER BY ${safeSortColumn} ${safeSortOrder} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
 
     const [dataResult, countResult] = await Promise.all([
-      pool.query(finalDataQuery, params),
+      pool.query(finalDataQuery, [...params, safeLimit, safeOffset]),
       pool.query(countQuery, params)
     ]);
 

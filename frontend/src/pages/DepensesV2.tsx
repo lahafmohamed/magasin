@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { formatFCFA as formatXOF } from '../utils/format';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -295,13 +296,6 @@ export default function DepensesV2() {
     });
   };
 
-  const formatXOF = (montant: number) => {
-    return new Intl.NumberFormat('fr-FR', { 
-      style: 'currency', 
-      currency: 'XOF',
-      maximumFractionDigits: 0
-    }).format(montant || 0);
-  };
 
   const getMethodBadge = (methode: string) => {
     const colors: Record<string, string> = {

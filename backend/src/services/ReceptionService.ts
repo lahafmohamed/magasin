@@ -218,10 +218,11 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
           );
         }
 
-        // Update purchase price if this is a new cost
+        // Update purchase price to the latest reception cost (keeps valuation current
+        // instead of freezing at the first non-zero cost).
         if (ligne.cout_unitaire > 0) {
           await client.query(
-            'UPDATE produits SET prix_achat = $1 WHERE id = $2 AND prix_achat = 0',
+            'UPDATE produits SET prix_achat = $1 WHERE id = $2',
             [ligne.cout_unitaire, ligne.produit_id]
           );
         }
@@ -348,11 +349,34 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
       );
 
       for (const ligne of lignesRows) {
+        const { rows: stockBefore } = await client.query(
+          'SELECT quantite FROM stock_par_location WHERE produit_id = $1 AND location_id = $2',
+          [ligne.produit_id, effectiveLocationId]
+        );
+        const stockAvant = stockBefore.length > 0 ? parseInt(stockBefore[0].quantite) : 0;
+        const stockApres = Math.max(0, stockAvant - ligne.quantite_recue);
+
         await client.query(
           `UPDATE stock_par_location
            SET quantite = GREATEST(0, quantite - $1)
            WHERE produit_id = $2 AND location_id = $3`,
           [ligne.quantite_recue, ligne.produit_id, effectiveLocationId]
+        );
+
+        // Record a compensating stock movement so the ledger matches stock_par_location.
+        await client.query(
+          `INSERT INTO mouvements_stock
+             (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)
+           VALUES ($1, 'ajustement', $2, $3, $4, $5, $6, $7)`,
+          [
+            ligne.produit_id,
+            stockApres - stockAvant,
+            stockAvant,
+            stockApres,
+            `Annulation réception #${id}`,
+            `RECEPTION-DELETE-${id}`,
+            effectiveLocationId,
+          ]
         );
       }
 

@@ -166,15 +166,15 @@ export class StockLocationService extends BaseService<StockLocationRecord> {
   }
 
   /**
-   * Update stock for a product at a location
+   * Adjust stock for a product at a location by a (signed) delta — additive, not absolute.
    */
-  async updateStock(productId: number, locationId: number, quantity: number): Promise<void> {
+  async adjustStock(productId: number, locationId: number, delta: number): Promise<void> {
     await pool.query(
       `INSERT INTO stock_par_location (produit_id, location_id, quantite)
        VALUES ($1, $2, $3)
        ON CONFLICT (produit_id, location_id)
        DO UPDATE SET quantite = stock_par_location.quantite + $3, updated_at = CURRENT_TIMESTAMP`,
-      [productId, locationId, quantity]
+      [productId, locationId, delta]
     );
   }
 }

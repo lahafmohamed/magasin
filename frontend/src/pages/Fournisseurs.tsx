@@ -6,7 +6,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Pencil, Trash2, Truck, Mail, Phone } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Truck, Mail, Phone, Loader2 } from 'lucide-react';
+import { normalizeSearch } from '@/utils/format';
 import { toast } from 'sonner';
 import { Pagination } from '@/components/ui/pagination';
 
@@ -35,7 +36,7 @@ export default function Fournisseurs() {
   const loadFournisseurs = async () => {
     setLoading(true);
     try {
-      const result = await fournisseurService.getAll(search, pagination.page, pagination.limit);
+      const result = await fournisseurService.getAll(normalizeSearch(search), pagination.page, pagination.limit);
       setFournisseurs(result.data);
       setPagination(result.pagination);
     } catch (error) {
@@ -220,7 +221,7 @@ export default function Fournisseurs() {
       {/* Tableau */}
       {loading ? (
         <div className="flex justify-center items-center py-12">
-          <span className="loading loading-spinner loading-lg"></span>
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
         <Card>

@@ -88,10 +88,6 @@ export function DemandeDecisionDialog({ demande, onClose, onSubmit, loading }: D
   const handleSubmit = () => {
     if (!decision) return;
 
-    if (decision === 'refusee' && !raisonRefus && !isAllRefused()) {
-      // Refusal requires reason
-    }
-
     const payload: any = {
       decision,
     };

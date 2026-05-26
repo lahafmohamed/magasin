@@ -22,7 +22,6 @@ import comptesClientsRoutes from './routes/comptes-clients';
 import acomptesRoutes from './routes/acomptes';
 import stockLocationsRoutes from './routes/stock-locations';
 import stockTransfersRoutes from './routes/stock-transfers';
-import internalStockRequestsRoutes from './routes/internal-stock-requests';
 import userLocationAssignmentsRoutes from './routes/user-location-assignments';
 import demandesRoutes from './routes/demandes';
 import facturesFournisseurRoutes from './routes/factures-fournisseur';
@@ -34,6 +33,9 @@ import depensesRoutes from './routes/depenses';
 import caissesHierarchyRoutes from './routes/caisses-hierarchy';
 import avoirsRoutes from './routes/avoirs';
 import adminAllocationRoutes from './routes/admin-allocation';
+import adminUsersRoutes from './routes/admin-users';
+import adminTvaRoutes from './routes/admin-tva';
+import tvaRoutes from './routes/tva';
 import { logger, requestLogger } from './utils/logger';
 
 dotenv.config();
@@ -100,7 +102,6 @@ app.use('/api/reports/cash-variance', cashVarianceRoutes);
 // ERP Modules
 app.use('/api/stock-locations', stockLocationsRoutes);
 app.use('/api/stock-transfers', stockTransfersRoutes);
-app.use('/api/internal-stock-requests', internalStockRequestsRoutes);
 app.use('/api/user-location-assignments', userLocationAssignmentsRoutes);
 app.use('/api/demandes', demandesRoutes);
 app.use('/api/factures-fournisseur', facturesFournisseurRoutes);
@@ -114,6 +115,9 @@ app.use('/api/depenses', depensesRoutes);
 app.use('/api/caisses-hierarchy', caissesHierarchyRoutes);
 app.use('/api/avoirs', avoirsRoutes);
 app.use('/api/admin/allocation', adminAllocationRoutes);
+app.use('/api/admin/users', adminUsersRoutes);
+app.use('/api/admin/tva', adminTvaRoutes);
+app.use('/api/tva', tvaRoutes);
 
 // Health check (no rate limit)
 app.get('/api/health', (_req, res) => {

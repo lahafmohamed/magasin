@@ -1,4 +1,5 @@
 import pool from '../db/connection';
+import { ClientAllocationService } from './ClientAllocationService';
 
 export class CompteClientService {
   private getEffectiveRemainingDueExpr(alias: string): string {
@@ -268,76 +269,40 @@ export class CompteClientService {
     try {
       await client.query('BEGIN');
 
-      // Get advance
+      // Validate the advance is available and belongs to the client.
       const { rows: acompteRows } = await client.query(
-        'SELECT * FROM acomptes_clients WHERE id = $1 AND tiers_id = $2 AND statut = $3',
+        'SELECT id FROM acomptes_clients WHERE id = $1 AND tiers_id = $2 AND statut = $3 FOR UPDATE',
         [acompteId, clientId, 'disponible']
       );
-
       if (acompteRows.length === 0) {
         throw new Error('Acompte non disponible');
       }
 
-      const acompte = acompteRows[0];
-      const montantAcompte = parseFloat(acompte.montant);
-
-      // Get invoice
+      // Validate the invoice exists for this client.
       const { rows: factureRows } = await client.query(
-        `SELECT *, ${this.getEffectiveRemainingDueExpr('factures')} as remaining_due_effective
-         FROM factures
-         WHERE id = $1 AND tiers_id = $2 AND ${this.getEffectiveRemainingDueExpr('factures')} > 0`,
+        'SELECT id FROM factures WHERE id = $1 AND tiers_id = $2 AND deleted_at IS NULL',
         [factureId, clientId]
       );
-
       if (factureRows.length === 0) {
-        throw new Error('Facture non trouvée ou déjà payée');
+        throw new Error('Facture non trouvée');
       }
 
-      const facture = factureRows[0];
-      const remainingDue = parseFloat(facture.remaining_due_effective);
-
-      // Calculate amount to apply
-      const montantApplique = Math.min(montantAcompte, remainingDue);
-
-      // Record payment
-      await client.query(
-        `INSERT INTO paiements (facture_id, montant, methode_paiement, date_paiement, notes)
-         VALUES ($1, $2, 'acompte', CURRENT_TIMESTAMP, 'Acompte #${acompteId}')`,
-        [factureId, montantApplique]
-      );
-
-      // Update advance status
-      if (montantApplique >= montantAcompte) {
-        await client.query(
-          `UPDATE acomptes_clients 
-           SET statut = 'utilise', facture_id_applique = $1, date_utilisation = CURRENT_TIMESTAMP
-           WHERE id = $2`,
-          [factureId, acompteId]
-        );
-      }
-
-      // Insert ledger line
-      const { rows: balanceRows } = await client.query(
-        'SELECT solde_client_actuel FROM tiers WHERE id = $1',
-        [clientId]
-      );
-      const soldeAvant = parseFloat(balanceRows[0].solde_client_actuel);
-      const soldeApres = soldeAvant - montantApplique;
-
-      await client.query(
-        `INSERT INTO compte_client_lignes
-         (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, solde_avant, solde_apres)
-         VALUES ($1, 'paiement', $2, $3, 0, $4, $5, $6)`,
-        [clientId, factureId, facture.numero_facture, montantApplique, soldeAvant, soldeApres]
-      );
+      // FIFO recompute is the single source of truth for balances and allocations.
+      // It allocates the client's available advances (and payments) to their invoices
+      // oldest-first, updates montant_paye/remaining_due/statut, marks advances as used,
+      // and syncs tiers.solde_client_actuel. We intentionally do NOT insert a separate
+      // paiements row for the advance (that double-counted the funds) or hand-mutate the
+      // balance — the engine owns all of it.
+      const result = await ClientAllocationService.recomputeClientAllocations(clientId, {
+        transaction: client,
+      });
 
       await client.query('COMMIT');
 
       return {
         acompte_id: acompteId,
         facture_id: factureId,
-        montant_applique: montantApplique,
-        reste_acompte: montantAcompte - montantApplique,
+        ...result,
       };
     } catch (error) {
       await client.query('ROLLBACK');

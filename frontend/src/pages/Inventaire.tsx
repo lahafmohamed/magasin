@@ -13,9 +13,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Pagination } from '@/components/ui/pagination';
 import { InlineEdit } from '@/components/ui/inline-edit';
 import { QuickQuantityAdjust } from '@/components/ui/quick-quantity-adjust';
-import { Plus, Search, Pencil, Trash2, AlertCircle, CheckCircle, XCircle, Package, ChevronUp, ChevronDown, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, AlertCircle, CheckCircle, XCircle, Package, ChevronUp, ChevronDown, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { normalizeSearch } from '@/utils/format';
+import { downloadCsv } from '@/utils/csv';
 
 interface StockLocation {
   id: number;
@@ -45,9 +46,6 @@ export default function Inventaire() {
   
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  
-  // Stock adjust quantity input
-  const [_adjustQuantities, _setAdjustQuantities] = useState<Record<number, string>>({});
   
   // Bulk operations state
   const [bulkAdjustQuantity, setBulkAdjustQuantity] = useState('');
@@ -163,7 +161,6 @@ export default function Inventaire() {
       const categorie = categorieFilter === 'all' ? undefined : categorieFilter;
       const locationId = selectedAdjustLocationId ? parseInt(selectedAdjustLocationId, 10) : undefined;
       const response = await produitService.getAll(debouncedSearch, categorie, lowStockOnly, page, limit, sort, order, locationId);
-      console.log('🔍 Produits response:', response);
       const produitsData = response?.data ?? response ?? [];
       setProduits(Array.isArray(produitsData) ? produitsData : []);
       setTotal(response.pagination?.total ?? 0);
@@ -464,13 +461,7 @@ export default function Inventaire() {
       ];
     });
     
-    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `inventaire_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
+    downloadCsv(`inventaire_${new Date().toISOString().split('T')[0]}.csv`, headers, rows);
     toast.success('Export CSV réussi');
   };
 
@@ -515,7 +506,7 @@ export default function Inventaire() {
               <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-muted-foreground" />
                 <select
-                  className="select select-bordered select-sm h-10"
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={categorieFilter}
                   onChange={(e) => { setCategorieFilter(e.target.value); setPage(1); }}
                 >
@@ -541,7 +532,7 @@ export default function Inventaire() {
                 <Label htmlFor="adjust-location" className="text-xs text-muted-foreground">Depot:</Label>
                 <select
                   id="adjust-location"
-                  className="select select-bordered select-sm h-10"
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={selectedAdjustLocationId}
                   onChange={(e) => setSelectedAdjustLocationId(e.target.value)}
                 >
@@ -679,7 +670,7 @@ export default function Inventaire() {
                 <Label htmlFor="fournisseur">Fournisseur</Label>
                 <select
                   id="fournisseur"
-                  className="select select-bordered w-full"
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={formData.fournisseur_id || ''}
                   onChange={(e) => setFormData({ ...formData, fournisseur_id: e.target.value ? parseInt(e.target.value) : null })}
                 >
@@ -706,7 +697,7 @@ export default function Inventaire() {
                     <Label htmlFor="location_id">Depot cible</Label>
                     <select
                       id="location_id"
-                      className="select select-bordered w-full"
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                       value={formData.location_id}
                       onChange={(e) => setFormData({ ...formData, location_id: e.target.value })}
                     >
@@ -782,7 +773,7 @@ export default function Inventaire() {
       {/* Tableau */}
       {loading ? (
         <div className="flex justify-center items-center py-12">
-          <span className="loading loading-spinner loading-lg"></span>
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
         <Card>
@@ -795,7 +786,7 @@ export default function Inventaire() {
                       type="checkbox"
                       checked={selectedIds.length === produits.length && produits.length > 0}
                       onChange={selectAll}
-                      className="checkbox checkbox-sm"
+                      className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
                     />
                   </TableHead>
                   <TableHead className="cursor-pointer hover:bg-muted" onClick={() => handleSort('reference')}>
@@ -835,7 +826,7 @@ export default function Inventaire() {
                         type="checkbox"
                         checked={selectedIds.includes(p.id)}
                         onChange={() => toggleSelection(p.id)}
-                        className="checkbox checkbox-sm"
+                        className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
                       />
                     </TableCell>
                     <TableCell className="font-mono text-sm">{p.reference}</TableCell>
@@ -865,7 +856,7 @@ export default function Inventaire() {
                       {' XOF'}
                     </TableCell>
                     <TableCell className="text-right">
-                      <span className={`text-sm font-medium text-gray-600 dark:text-gray-400`}>
+                      <span className="text-sm font-medium text-muted-foreground">
                         +{margePercent}%
                       </span>
                     </TableCell>
@@ -902,7 +893,7 @@ export default function Inventaire() {
                           disabled={deleting === p.id}
                         >
                           {deleting === p.id ? (
-                            <span className="loading loading-spinner loading-xs"></span>
+                            <Loader2 className="h-3 w-3 animate-spin" />
                           ) : (
                             <Trash2 className="h-4 w-4" />
                           )}

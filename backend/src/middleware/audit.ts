@@ -8,6 +8,35 @@ import { logger } from '../utils/logger';
  */
 export type AuditAction = string;
 
+const SENSITIVE_KEYS = [
+  'password',
+  'password_hash',
+  'mot_de_passe',
+  'new_password',
+  'old_password',
+  'current_password',
+  'token',
+  'secret',
+];
+
+/**
+ * Redact sensitive fields before persisting a body to the audit log.
+ */
+const redactSensitive = (value: any): any => {
+  if (!value || typeof value !== 'object') return value;
+  const clone: any = Array.isArray(value) ? [] : {};
+  for (const [key, val] of Object.entries(value)) {
+    if (SENSITIVE_KEYS.some((k) => key.toLowerCase().includes(k))) {
+      clone[key] = '[REDACTED]';
+    } else if (val && typeof val === 'object') {
+      clone[key] = redactSensitive(val);
+    } else {
+      clone[key] = val;
+    }
+  }
+  return clone;
+};
+
 /**
  * Middleware factory to create audit log entries
  * Attaches an audit callback to the response for controllers to call after successful operations
@@ -35,7 +64,7 @@ export const audit = (tableName: string, action: AuditAction, getIdFn?: (req: Re
               recordId,
               req.ip,
               req.get('user-agent'),
-              req.body ? JSON.stringify(req.body) : null,
+              req.body ? JSON.stringify(redactSensitive(req.body)) : null,
             ]
           ).catch((err) => {
             logger.error({ err }, 'Audit logging failed');
@@ -73,8 +102,8 @@ export const logAudit = async (params: {
         params.record_id,
         params.req?.ip || null,
         params.req?.get('user-agent') || null,
-        params.old_values ? JSON.stringify(params.old_values) : null,
-        params.new_values ? JSON.stringify(params.new_values) : null,
+        params.old_values ? JSON.stringify(redactSensitive(params.old_values)) : null,
+        params.new_values ? JSON.stringify(redactSensitive(params.new_values)) : null,
       ]
     );
   } catch (error) {

@@ -16,8 +16,26 @@ export class ClientAllocationService {
    * Updates factures.montant_paye and factures.statut based on FIFO rule
    */
   static async recomputeClientAllocations(clientId: number, options: { transaction?: any } = {}): Promise<AllocationResult> {
-    const client = options.transaction || pool;
-    
+    // This routine resets every invoice's montant_paye to 0 before re-allocating.
+    // It MUST run inside a transaction; otherwise a mid-run failure leaves all the
+    // client's invoices showing zero paid. When no transaction is supplied, manage one here.
+    if (!options.transaction) {
+      const conn = await pool.connect();
+      try {
+        await conn.query('BEGIN');
+        const result = await this.recomputeClientAllocations(clientId, { transaction: conn });
+        await conn.query('COMMIT');
+        return result;
+      } catch (error) {
+        await conn.query('ROLLBACK');
+        throw error;
+      } finally {
+        conn.release();
+      }
+    }
+
+    const client = options.transaction;
+
     try {
       // 1. Load non-cancelled factures for client, sorted by date ASC, id ASC
       const { rows: factures } = await client.query(

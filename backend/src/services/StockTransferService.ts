@@ -138,16 +138,15 @@ export class StockTransferService extends BaseService<TransferRecord> {
 
       // Insert line items
       for (const ligne of lignes) {
-        // Check source stock availability
+        // Check source stock availability, locking the row to prevent concurrent overdraw
         const { rows: stockRows } = await client.query(
-          'SELECT quantite FROM stock_par_location WHERE produit_id = $1 AND location_id = $2',
+          'SELECT quantite FROM stock_par_location WHERE produit_id = $1 AND location_id = $2 FOR UPDATE',
           [ligne.produit_id, location_source_id]
         );
 
         const availableStock = stockRows.length > 0 ? parseInt(stockRows[0].quantite) : 0;
 
         if (ligne.quantite_demandee > availableStock) {
-          await client.query('ROLLBACK');
           throw new Error(`Stock insuffisant pour le produit ${ligne.produit_id}: disponible ${availableStock}, demandé ${ligne.quantite_demandee}`);
         }
 
@@ -209,13 +208,18 @@ export class StockTransferService extends BaseService<TransferRecord> {
 
       // Update stock: decrease from source, increase at destination
       for (const ligne of lignesRows) {
-        // Capture stock before for movement records
+        // Capture stock before for movement records, locking the source row
         const { rows: srcBefore } = await client.query(
           `SELECT COALESCE(quantite, 0) as quantite FROM stock_par_location
-           WHERE produit_id = $1 AND location_id = $2`,
+           WHERE produit_id = $1 AND location_id = $2 FOR UPDATE`,
           [ligne.produit_id, transfer.location_source_id]
         );
         const srcAvant = srcBefore.length > 0 ? parseInt(srcBefore[0].quantite) : 0;
+
+        // Re-validate availability at completion time (stock may have changed since create)
+        if (ligne.quantite_demandee > srcAvant) {
+          throw new Error(`Stock insuffisant pour le produit ${ligne.produit_id}: disponible ${srcAvant}, demandé ${ligne.quantite_demandee}`);
+        }
 
         const { rows: dstBefore } = await client.query(
           `SELECT COALESCE(quantite, 0) as quantite FROM stock_par_location

@@ -1,9 +1,16 @@
 import { useState, useEffect } from 'react';
+import { X, Loader2, Plus } from 'lucide-react';
 import { factureFournisseurService, receptionService, produitService, acompteFournisseurService } from '../services/api';
 import { TiersPicker } from '../components/TiersPicker';
 import { Tiers } from '../types';
 import { toast } from 'sonner';
 import { MoneyInput } from '../components/ui/money-input';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { formatFCFA } from '../utils/format';
 
 
 interface Reception {
@@ -52,6 +59,19 @@ interface Product {
   reference: string;
   nom: string;
 }
+
+const SELECT_CLS = 'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
+const BADGE_BASE = 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium';
+
+const STATUT_BADGE: Record<string, string> = {
+  en_attente: 'bg-warning-100 text-warning-800',
+  validee: 'bg-info-100 text-info-700',
+  partiellement_payee: 'bg-primary-100 text-primary-700',
+  payee: 'bg-success-100 text-success-700',
+  annulee: 'bg-muted text-muted-foreground',
+};
+
+const TABLE_HEAD = 'px-3 py-2 font-medium';
 
 export default function FacturesFournisseur() {
   const [factures, setFactures] = useState<FactureFournisseur[]>([]);
@@ -177,7 +197,7 @@ export default function FacturesFournisseur() {
         notes: formData.notes || undefined,
       });
 
-      toast.success('Facture fournisseur créée avec succès');
+      toast.success('Facture fournisseur créée');
       setShowCreateForm(false);
       setSelectedFournisseur(null);
       setFormData({
@@ -240,7 +260,7 @@ export default function FacturesFournisseur() {
         methode_paiement: paymentData.methode_paiement,
         reference: paymentData.reference || undefined,
       });
-      toast.success('Paiement enregistré avec succès');
+      toast.success('Paiement enregistré');
       setShowPaymentForm(false);
       setPaymentData({ montant: '', methode_paiement: 'virement', reference: '' });
       handleSelectFacture(selectedFacture);
@@ -252,28 +272,17 @@ export default function FacturesFournisseur() {
     }
   };
 
-  const getStatutBadge = (statut: string) => {
-    const badges: Record<string, string> = {
-      'en_attente': 'badge-warning',
-      'validee': 'badge-info',
-      'partiellement_payee': 'badge-primary',
-      'payee': 'badge-success',
-      'annulee': 'badge-ghost',
-    };
-    return badges[statut] || 'badge-ghost';
-  };
-
   if (loading) {
-    return <div className="flex justify-center p-8"><span className="loading loading-spinner loading-lg"></span></div>;
+    return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
 
   return (
     <div className="container mx-auto p-6">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Factures Fournisseur</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Factures fournisseur</h1>
         <div className="flex gap-2">
           <select
-            className="select select-bordered"
+            className={SELECT_CLS + ' w-auto'}
             value={filterStatut}
             onChange={(e) => setFilterStatut(e.target.value)}
           >
@@ -284,264 +293,293 @@ export default function FacturesFournisseur() {
             <option value="payee">Payée</option>
             <option value="annulee">Annulée</option>
           </select>
-          <button className="btn btn-primary" onClick={() => setShowCreateForm(true)}>
-            + Nouvelle Facture
-          </button>
+          <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            Nouvelle facture
+          </Button>
         </div>
       </div>
 
-      {/* Create Form Modal */}
-      {showCreateForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="card bg-base-100 shadow-xl p-6 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold mb-4">Nouvelle Facture Fournisseur</h2>
-            <form onSubmit={handleSubmit}>
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="form-control col-span-2">
-                  <label className="label">
-                    <span className="label-text">Fournisseur *</span>
-                  </label>
-                  <TiersPicker role="fournisseur" value={selectedFournisseur} onChange={setSelectedFournisseur} />
-                </div>
-
-                <div className="form-control">
-                  <label className="label">
-                    <span className="label-text">N° Facture Fournisseur *</span>
-                  </label>
-                  <input
-                    type="text"
-                    className="input input-bordered"
-                    value={formData.numero_facture_fournisseur}
-                    onChange={(e) => setFormData({ ...formData, numero_facture_fournisseur: e.target.value })}
-                    required
-                  />
-                </div>
-
-                <div className="form-control">
-                  <label className="label">
-                    <span className="label-text">Date Facture *</span>
-                  </label>
-                  <input
-                    type="date"
-                    className="input input-bordered"
-                    value={formData.date_facture}
-                    onChange={(e) => setFormData({ ...formData, date_facture: e.target.value })}
-                    required
-                  />
-                </div>
-
-                <div className="form-control">
-                  <label className="label">
-                    <span className="label-text">Date Échéance</span>
-                  </label>
-                  <input
-                    type="date"
-                    className="input input-bordered"
-                    value={formData.date_echeance}
-                    onChange={(e) => setFormData({ ...formData, date_echeance: e.target.value })}
-                  />
-                </div>
-
-                <div className="form-control">
-                  <label className="label">
-                    <span className="label-text">Réception liée</span>
-                  </label>
-                  <select
-                    className="select select-bordered"
-                    value={formData.reception_id}
-                    onChange={(e) => setFormData({ ...formData, reception_id: e.target.value })}
-                  >
-                    <option value="">Aucune</option>
-                    {receptions.map((r) => (
-                      <option key={r.id} value={r.id}>{r.numero_reception}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="form-control">
-                  <label className="label">
-                    <span className="label-text">Condition de paiement</span>
-                  </label>
-                  <input
-                    type="text"
-                    className="input input-bordered"
-                    value={formData.condition_paiement}
-                    onChange={(e) => setFormData({ ...formData, condition_paiement: e.target.value })}
-                    placeholder="ex: 30 jours"
-                  />
-                </div>
+      <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Nouvelle facture fournisseur</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 space-y-1.5">
+                <Label>Fournisseur *</Label>
+                <TiersPicker role="fournisseur" value={selectedFournisseur} onChange={setSelectedFournisseur} />
               </div>
 
-              <div className="mb-4">
-                <div className="flex justify-between items-center mb-2">
-                  <label className="font-semibold">Lignes de facture</label>
-                  <button type="button" className="btn btn-sm btn-outline" onClick={addLine}>
-                    + Ajouter
-                  </button>
-                </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ff-num">N° facture fournisseur *</Label>
+                <Input id="ff-num" value={formData.numero_facture_fournisseur} onChange={(e) => setFormData({ ...formData, numero_facture_fournisseur: e.target.value })} required />
+              </div>
 
+              <div className="space-y-1.5">
+                <Label htmlFor="ff-date">Date facture *</Label>
+                <Input id="ff-date" type="date" value={formData.date_facture} onChange={(e) => setFormData({ ...formData, date_facture: e.target.value })} required />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="ff-ech">Date échéance</Label>
+                <Input id="ff-ech" type="date" value={formData.date_echeance} onChange={(e) => setFormData({ ...formData, date_echeance: e.target.value })} />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="ff-rec">Réception liée</Label>
+                <select
+                  id="ff-rec"
+                  className={SELECT_CLS}
+                  value={formData.reception_id}
+                  onChange={(e) => setFormData({ ...formData, reception_id: e.target.value })}
+                >
+                  <option value="">Aucune</option>
+                  {receptions.map((r) => (
+                    <option key={r.id} value={r.id}>{r.numero_reception}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="ff-cond">Condition de paiement</Label>
+                <Input id="ff-cond" value={formData.condition_paiement} onChange={(e) => setFormData({ ...formData, condition_paiement: e.target.value })} placeholder="ex: 30 jours" />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <Label>Lignes de facture</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addLine} className="gap-1.5">
+                  <Plus className="h-4 w-4" />
+                  Ajouter
+                </Button>
+              </div>
+
+              <div className="space-y-2">
                 {formData.lignes.map((ligne, index) => (
-                  <div key={index} className="grid grid-cols-12 gap-2 mb-2">
+                  <div key={index} className="grid grid-cols-12 gap-2">
                     <select
-                      className="select select-bordered col-span-4"
+                      className={SELECT_CLS + ' col-span-4'}
                       value={ligne.produit_id || ''}
                       onChange={(e) => updateLine(index, 'produit_id', e.target.value ? parseInt(e.target.value) : null)}
                     >
-                      <option value="">Produit...</option>
+                      <option value="">Produit…</option>
                       {products.map((p) => (
                         <option key={p.id} value={p.id}>{p.nom}</option>
                       ))}
                     </select>
-                    <input
+                    <Input
                       type="number"
-                      className="input input-bordered col-span-2"
+                      className="col-span-2 num"
                       placeholder="Qté"
                       value={ligne.quantite}
                       min={1}
                       onChange={(e) => updateLine(index, 'quantite', parseInt(e.target.value))}
                     />
-                    <input
+                    <Input
                       type="number"
-                      className="input input-bordered col-span-2"
+                      className="col-span-2 num"
                       placeholder="Prix unit."
                       value={ligne.prix_unitaire}
                       step={0.01}
                       onChange={(e) => updateLine(index, 'prix_unitaire', parseFloat(e.target.value))}
                     />
-                    <input
+                    <Input
                       type="number"
-                      className="input input-bordered col-span-2"
+                      className="col-span-2 num"
                       placeholder="TVA %"
                       value={ligne.tva_taux}
                       onChange={(e) => updateLine(index, 'tva_taux', parseFloat(e.target.value))}
                     />
-                    <button type="button" className="btn btn-sm btn-error col-span-1" onClick={() => removeLine(index)}>
-                      ✕
-                    </button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="col-span-1 h-9 w-9 p-0 text-danger-600 hover:bg-danger-50 hover:text-danger-700"
+                      onClick={() => removeLine(index)}
+                      aria-label="Supprimer la ligne"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
                   </div>
                 ))}
               </div>
+            </div>
 
-              <div className="form-control mb-4">
-                <label className="label">
-                  <span className="label-text">Notes</span>
-                </label>
-                <textarea
-                  className="textarea textarea-bordered"
-                  value={formData.notes}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ff-notes">Notes</Label>
+              <Textarea id="ff-notes" value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} />
+            </div>
 
-              <div className="flex gap-2 justify-end">
-                <button type="button" className="btn btn-ghost" onClick={() => setShowCreateForm(false)}>
-                  Annuler
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? <span className="loading loading-spinner"></span> : 'Créer'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setShowCreateForm(false)}>Annuler</Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Création…
+                  </>
+                ) : 'Créer'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-      {/* Payment Form Modal */}
-      {showPaymentForm && selectedFacture && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="card bg-base-100 shadow-xl p-6 w-full max-w-md">
-            <h2 className="text-xl font-bold mb-4">Enregistrer Paiement</h2>
-            <form onSubmit={handlePayment}>
-              <div className="form-control mb-4">
-                <label className="label">
-                  <span className="label-text">Montant *</span>
-                </label>
+      <Dialog open={showPaymentForm && !!selectedFacture} onOpenChange={(open) => { if (!open) setShowPaymentForm(false); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Enregistrer paiement</DialogTitle>
+          </DialogHeader>
+          {selectedFacture && (
+            <form onSubmit={handlePayment} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label>Montant *</Label>
                 <MoneyInput
                   value={paymentData.montant}
                   onChange={(v) => setPaymentData({ ...paymentData, montant: v })}
                   required
                 />
-                <label className="label">
-                  <span className="label-text text-xs">Reste dû: {selectedFacture.reste_due} XOF</span>
-                </label>
+                <p className="text-xs text-muted-foreground num">Reste dû: {formatFCFA(selectedFacture.reste_due)}</p>
               </div>
 
-              <div className="form-control mb-4">
-                <label className="label">
-                  <span className="label-text">Méthode de paiement *</span>
-                </label>
+              <div className="space-y-1.5">
+                <Label htmlFor="pay-meth">Méthode de paiement *</Label>
                 <select
-                  className="select select-bordered"
+                  id="pay-meth"
+                  className={SELECT_CLS}
                   value={paymentData.methode_paiement}
                   onChange={(e) => setPaymentData({ ...paymentData, methode_paiement: e.target.value })}
                   required
                 >
                   <option value="virement">Virement</option>
                   <option value="cheque">Chèque</option>
-                  <option value="espece">Espèce</option>
+                  <option value="espece">Espèces</option>
                   <option value="carte">Carte</option>
                 </select>
               </div>
 
-              <div className="form-control mb-4">
-                <label className="label">
-                  <span className="label-text">Référence</span>
-                </label>
-                <input
-                  type="text"
-                  className="input input-bordered"
-                  value={paymentData.reference}
-                  onChange={(e) => setPaymentData({ ...paymentData, reference: e.target.value })}
-                />
+              <div className="space-y-1.5">
+                <Label htmlFor="pay-ref">Référence</Label>
+                <Input id="pay-ref" value={paymentData.reference} onChange={(e) => setPaymentData({ ...paymentData, reference: e.target.value })} />
               </div>
 
-              <div className="flex gap-2 justify-end">
-                <button type="button" className="btn btn-ghost" onClick={() => setShowPaymentForm(false)}>
-                  Annuler
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? <span className="loading loading-spinner"></span> : 'Enregistrer'}
-                </button>
-              </div>
+              <DialogFooter>
+                <Button type="button" variant="ghost" onClick={() => setShowPaymentForm(false)}>Annuler</Button>
+                <Button type="submit" disabled={submitting}>
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Enregistrement…
+                    </>
+                  ) : 'Enregistrer'}
+                </Button>
+              </DialogFooter>
             </form>
-          </div>
-        </div>
-      )}
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAcompteApply && !!selectedFacture} onOpenChange={(open) => { if (!open) setShowAcompteApply(false); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedFacture && `Appliquer acompte sur facture ${selectedFacture.numero_facture_interne}`}
+            </DialogTitle>
+          </DialogHeader>
+          {selectedFacture && (
+            acomptesDispo.length === 0 ? (
+              <>
+                <p className="text-sm text-muted-foreground">Aucun acompte disponible pour ce fournisseur.</p>
+                <DialogFooter>
+                  <Button variant="ghost" onClick={() => setShowAcompteApply(false)}>Fermer</Button>
+                </DialogFooter>
+              </>
+            ) : (
+              <form onSubmit={handleAcompteApply} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="ac-id">Acompte *</Label>
+                  <select
+                    id="ac-id"
+                    className={SELECT_CLS}
+                    value={acompteApplyForm.acompte_id}
+                    onChange={e => {
+                      const ac = acomptesDispo.find(a => a.id === parseInt(e.target.value));
+                      setAcompteApplyForm({
+                        acompte_id: e.target.value,
+                        montant: ac ? String(Math.min(parseFloat(ac.montant_restant), parseFloat(selectedFacture.reste_due))) : '',
+                      });
+                    }}
+                    required
+                  >
+                    <option value="">— Sélectionner —</option>
+                    {acomptesDispo.map(a => (
+                      <option key={a.id} value={a.id}>
+                        #{a.id} — {new Date(a.date_acompte).toLocaleDateString('fr-FR')} — restant {formatFCFA(a.montant_restant)} ({a.methode_paiement})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Montant à appliquer *</Label>
+                  <MoneyInput
+                    value={acompteApplyForm.montant}
+                    onChange={v => setAcompteApplyForm(p => ({ ...p, montant: v }))}
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground num">
+                    Reste dû facture: {formatFCFA(selectedFacture.reste_due)}
+                  </p>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="ghost" onClick={() => setShowAcompteApply(false)}>Annuler</Button>
+                  <Button type="submit" disabled={submitting}>
+                    {submitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Application…
+                      </>
+                    ) : 'Appliquer'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            )
+          )}
+        </DialogContent>
+      </Dialog>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Factures List */}
-        <div className="card bg-base-100 shadow-xl">
-          <div className="card-body">
-            <h2 className="card-title">Factures</h2>
+        <div className="rounded-md border bg-card shadow-sm">
+          <div className="p-5">
+            <h2 className="text-lg font-semibold mb-3">Factures</h2>
             {factures.length === 0 ? (
-              <div className="alert alert-info">
-                <span>Aucune facture fournisseur</span>
-              </div>
+              <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">Aucune facture fournisseur</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>N° Interne</th>
-                      <th>Fournisseur</th>
-                      <th>Date</th>
-                      <th>Total</th>
-                      <th>Statut</th>
-                      <th>Action</th>
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-left">
+                    <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className={TABLE_HEAD}>N° interne</th>
+                      <th className={TABLE_HEAD}>Fournisseur</th>
+                      <th className={TABLE_HEAD}>Date</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Total</th>
+                      <th className={TABLE_HEAD}>Statut</th>
+                      <th className={TABLE_HEAD}>Action</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y">
                     {factures.map((facture) => (
-                      <tr key={facture.id}>
-                        <td className="font-medium text-xs">{facture.numero_facture_interne}</td>
-                        <td>{facture.fournisseur_nom}</td>
-                        <td className="text-xs">{new Date(facture.date_facture).toLocaleDateString('fr-FR')}</td>
-                        <td className="font-medium">{parseFloat(facture.total).toFixed(2)} XOF</td>
-                        <td><span className={`badge ${getStatutBadge(facture.statut)}`}>{facture.statut}</span></td>
-                        <td>
-                          <button className="btn btn-sm" onClick={() => handleSelectFacture(facture)}>
-                            Voir
-                          </button>
+                      <tr key={facture.id} className="hover:bg-muted/30">
+                        <td className="px-3 py-2 font-medium text-xs num">{facture.numero_facture_interne}</td>
+                        <td className="px-3 py-2">{facture.fournisseur_nom}</td>
+                        <td className="px-3 py-2 text-xs num">{new Date(facture.date_facture).toLocaleDateString('fr-FR')}</td>
+                        <td className="px-3 py-2 text-right font-medium num">{formatFCFA(facture.total)}</td>
+                        <td className="px-3 py-2">
+                          <span className={`${BADGE_BASE} ${STATUT_BADGE[facture.statut] || 'bg-muted text-muted-foreground'}`}>{facture.statut}</span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <Button variant="outline" size="sm" onClick={() => handleSelectFacture(facture)}>Voir</Button>
                         </td>
                       </tr>
                     ))}
@@ -552,40 +590,39 @@ export default function FacturesFournisseur() {
           </div>
         </div>
 
-        {/* Facture Details */}
         {selectedFacture && (
-          <div className="card bg-base-100 shadow-xl">
-            <div className="card-body">
-              <h2 className="card-title">{selectedFacture.numero_facture_interne}</h2>
-              <div className="mb-4 space-y-1">
-                <p className="text-sm">Fournisseur: <strong>{selectedFacture.fournisseur_nom}</strong></p>
-                <p className="text-sm">N° Facture: <strong>{selectedFacture.numero_facture_fournisseur}</strong></p>
-                <p className="text-sm">Date: <strong>{new Date(selectedFacture.date_facture).toLocaleDateString('fr-FR')}</strong></p>
+          <div className="rounded-md border bg-card shadow-sm">
+            <div className="p-5">
+              <h2 className="text-lg font-semibold mb-3">{selectedFacture.numero_facture_interne}</h2>
+              <div className="mb-4 space-y-1 text-sm">
+                <p>Fournisseur: <strong>{selectedFacture.fournisseur_nom}</strong></p>
+                <p>N° facture: <strong>{selectedFacture.numero_facture_fournisseur}</strong></p>
+                <p>Date: <strong>{new Date(selectedFacture.date_facture).toLocaleDateString('fr-FR')}</strong></p>
                 {selectedFacture.date_echeance && (
-                  <p className="text-sm">Échéance: <strong>{new Date(selectedFacture.date_echeance).toLocaleDateString('fr-FR')}</strong></p>
+                  <p>Échéance: <strong>{new Date(selectedFacture.date_echeance).toLocaleDateString('fr-FR')}</strong></p>
                 )}
-                <p className="text-sm">Statut: <span className={`badge ${getStatutBadge(selectedFacture.statut)}`}>{selectedFacture.statut}</span></p>
+                <p>Statut: <span className={`${BADGE_BASE} ${STATUT_BADGE[selectedFacture.statut] || 'bg-muted text-muted-foreground'}`}>{selectedFacture.statut}</span></p>
               </div>
 
-              <div className="overflow-x-auto mb-4">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Produit</th>
-                      <th>Qté</th>
-                      <th>Prix Unit.</th>
-                      <th>TVA%</th>
-                      <th>Total</th>
+              <div className="overflow-x-auto rounded-md border mb-4">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-left">
+                    <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className={TABLE_HEAD}>Produit</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Qté</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Prix unit.</th>
+                      <th className={TABLE_HEAD + ' text-right'}>TVA %</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Total</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y">
                     {selectedFacture.lignes.map((ligne) => (
                       <tr key={ligne.id}>
-                        <td>{ligne.produit_nom || ligne.description}</td>
-                        <td>{ligne.quantite}</td>
-                        <td>{parseFloat(ligne.prix_unitaire).toFixed(2)}</td>
-                        <td>{ligne.tva_taux}%</td>
-                        <td className="font-medium">{parseFloat(ligne.total_ligne).toFixed(2)}</td>
+                        <td className="px-3 py-2">{ligne.produit_nom || ligne.description}</td>
+                        <td className="px-3 py-2 text-right num">{ligne.quantite}</td>
+                        <td className="px-3 py-2 text-right num">{formatFCFA(ligne.prix_unitaire)}</td>
+                        <td className="px-3 py-2 text-right num">{ligne.tva_taux}%</td>
+                        <td className="px-3 py-2 text-right font-medium num">{formatFCFA(ligne.total_ligne)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -595,73 +632,15 @@ export default function FacturesFournisseur() {
               <div className="flex gap-2">
                 {selectedFacture.statut !== 'payee' && (
                   <>
-                    <button className="btn btn-success" onClick={() => setShowPaymentForm(true)}>
-                      Enregistrer Paiement
-                    </button>
-                    <button className="btn btn-outline" onClick={openAcompteApply}>
+                    <Button onClick={() => setShowPaymentForm(true)} className="bg-success-600 hover:bg-success-700 text-white">
+                      Enregistrer paiement
+                    </Button>
+                    <Button variant="outline" onClick={openAcompteApply}>
                       Appliquer acompte
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>
-            </div>
-          </div>
-        )}
-
-        {showAcompteApply && selectedFacture && (
-          <div className="modal modal-open">
-            <div className="modal-box">
-              <h3 className="font-bold text-lg mb-4">Appliquer acompte sur facture {selectedFacture.numero_facture_interne}</h3>
-              {acomptesDispo.length === 0 ? (
-                <p className="text-sm text-gray-500">Aucun acompte disponible pour ce fournisseur.</p>
-              ) : (
-                <form onSubmit={handleAcompteApply} className="space-y-3">
-                  <div>
-                    <label className="label"><span className="label-text">Acompte *</span></label>
-                    <select
-                      className="select select-bordered w-full"
-                      value={acompteApplyForm.acompte_id}
-                      onChange={e => {
-                        const ac = acomptesDispo.find(a => a.id === parseInt(e.target.value));
-                        setAcompteApplyForm({
-                          acompte_id: e.target.value,
-                          montant: ac ? String(Math.min(parseFloat(ac.montant_restant), parseFloat(selectedFacture.reste_due))) : '',
-                        });
-                      }}
-                      required
-                    >
-                      <option value="">-- Sélectionner --</option>
-                      {acomptesDispo.map(a => (
-                        <option key={a.id} value={a.id}>
-                          #{a.id} — {new Date(a.date_acompte).toLocaleDateString()} — restant {parseFloat(a.montant_restant).toFixed(2)} ({a.methode_paiement})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label"><span className="label-text">Montant à appliquer *</span></label>
-                    <MoneyInput
-                      value={acompteApplyForm.montant}
-                      onChange={v => setAcompteApplyForm(p => ({ ...p, montant: v }))}
-                      required
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Reste dû facture : {parseFloat(selectedFacture.reste_due).toFixed(2)}
-                    </p>
-                  </div>
-                  <div className="modal-action">
-                    <button type="button" className="btn btn-ghost" onClick={() => setShowAcompteApply(false)}>Annuler</button>
-                    <button type="submit" className="btn btn-primary" disabled={submitting}>
-                      {submitting ? 'Application...' : 'Appliquer'}
-                    </button>
-                  </div>
-                </form>
-              )}
-              {acomptesDispo.length === 0 && (
-                <div className="modal-action">
-                  <button className="btn btn-ghost" onClick={() => setShowAcompteApply(false)}>Fermer</button>
-                </div>
-              )}
             </div>
           </div>
         )}
