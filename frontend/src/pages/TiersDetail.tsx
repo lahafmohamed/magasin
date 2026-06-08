@@ -327,8 +327,21 @@ export default function TiersDetail() {
                 <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground text-sm">Aucun mouvement</TableCell></TableRow>
               ) : mouvements.map((m: any, i: number) => {
                 const meta = TYPE_LABELS[m.type] || { label: m.type, color: '' };
+                const getDocumentLink = (movement: any): string | null => {
+                  switch (movement.type) {
+                    case 'facture_client': return `/factures/${movement.document_id}`;
+                    case 'avoir_client': return `/avoirs/${movement.document_id}`;
+                    case 'facture_fourn': return `/factures-fournisseur`;
+                    default: return null;
+                  }
+                };
+                const link = getDocumentLink(m);
                 return (
-                  <TableRow key={i} className="text-sm">
+                  <TableRow
+                    key={i}
+                    className={`text-sm ${link ? 'cursor-pointer hover:bg-muted/80 transition-colors' : ''}`}
+                    onClick={link ? () => navigate(link) : undefined}
+                  >
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{m.date ? m.date.substring(0,10) : '—'}</TableCell>
                     <TableCell>
                       <span className={`text-xs px-1.5 py-0.5 rounded ${m.role === 'Client' ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'}`}>
@@ -336,7 +349,7 @@ export default function TiersDetail() {
                       </span>
                     </TableCell>
                     <TableCell className={`text-xs font-medium ${meta.color}`}>{meta.label}</TableCell>
-                    <TableCell className="text-xs font-mono">{m.reference || m.libelle}</TableCell>
+                    <TableCell className={`text-xs font-mono ${link ? 'text-primary underline' : ''}`}>{m.reference || m.libelle}</TableCell>
                     <TableCell className="text-right text-xs text-red-600">{m.debit > 0 ? formatFCFA(m.debit) : ''}</TableCell>
                     <TableCell className="text-right text-xs text-green-600">{m.credit > 0 ? formatFCFA(m.credit) : ''}</TableCell>
                   </TableRow>

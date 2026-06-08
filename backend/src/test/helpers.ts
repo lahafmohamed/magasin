@@ -40,8 +40,8 @@ export class TestDB {
     }> = {}
   ): Promise<number> {
     const { rows } = await pool.query(
-      `INSERT INTO clients (nom, prenom, email, telephone, adresse, nif, credit_max, solde_actuel, delai_paiement)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO tiers (raison_sociale, prenom, email, telephone, adresse, nif, credit_max, solde_client_actuel, delai_paiement, est_client, est_fournisseur)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, false)
        RETURNING id`,
       [
         overrides.nom || 'Test Client',
@@ -104,7 +104,7 @@ export class TestDB {
    * Soft-delete all test clients (cleanup)
    */
   static async cleanupClients(): Promise<void> {
-    await pool.query("UPDATE clients SET deleted_at = CURRENT_TIMESTAMP WHERE nom LIKE 'Test Client%' AND deleted_at IS NULL");
+    await pool.query("UPDATE tiers SET deleted_at = CURRENT_TIMESTAMP WHERE raison_sociale LIKE 'Test Client%' AND deleted_at IS NULL");
   }
 
   /**

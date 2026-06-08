@@ -135,9 +135,11 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   res.status(500).json({ error: 'Erreur interne du serveur' });
 });
 
-app.listen(PORT, () => {
-  logger.info(`Backend démarré sur http://localhost:${PORT}`);
-  logger.info(`API Health: http://localhost:${PORT}/api/health`);
-});
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    logger.info(`Backend démarré sur http://localhost:${PORT}`);
+    logger.info(`API Health: http://localhost:${PORT}/api/health`);
+  });
+}
 
 export default app;

@@ -19,6 +19,7 @@ async function createTestFournisseur(): Promise<number> {
     .send({
       raison_sociale: `API Test Fourn ${Date.now()}`,
       est_fournisseur: true,
+      est_client: false,
       telephone: '00000000',
     });
   return res.body.data?.id;

@@ -250,7 +250,7 @@ export class TiersService extends BaseService<TiersRecord> {
         WHERE ($2::date IS NULL OR date::date >= $2::date)
           AND ($3::date IS NULL OR date::date <= $3::date)
       )
-      SELECT date::text, type, ref as reference, libelle, debit, credit
+      SELECT date::text, type, ref as reference, libelle, debit, credit, id as document_id
       FROM filtered
       ORDER BY date ASC, ordre ASC, id ASC`;
 
@@ -290,6 +290,7 @@ export class TiersService extends BaseService<TiersRecord> {
         libelle: r.libelle,
         debit: parseFloat(r.debit),
         credit: parseFloat(r.credit),
+        document_id: r.document_id,
         role: r.type.endsWith('_client') || r.type === 'avoir_client' ? 'Client' : 'Fournisseur',
       })),
     };

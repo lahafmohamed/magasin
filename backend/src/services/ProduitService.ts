@@ -106,7 +106,7 @@ export class ProduitService extends BaseService<ProduitRecord> {
     const dataQuery = `
       SELECT p.id, p.reference, p.nom, p.description, p.categorie, 
              p.prix_achat, p.prix_vente, 
-             COALESCE(SUM(spl.quantite), 0) as stock,
+             COALESCE(SUM(spl.quantite), 0)::integer as stock,
              p.stock_min, p.created_at, p.updated_at
       ${baseQuery}
       GROUP BY p.id
@@ -275,6 +275,10 @@ export class ProduitService extends BaseService<ProduitRecord> {
       }
     }
 
+    // Check if product exists
+    const { rows: existsRows } = await pool.query('SELECT id FROM produits WHERE id = $1 AND deleted_at IS NULL', [id]);
+    if (!existsRows[0]) return null;
+
     // Get current stock at location (default to MAIN location if not specified)
     const stockQuery = locationId
       ? 'SELECT get_stock_at_location($1, $2) as stock'
@@ -373,6 +377,10 @@ export class ProduitService extends BaseService<ProduitRecord> {
     raison?: string,
     reference_liee?: string
   ): Promise<{ stock: number } | null> {
+    // Check if product exists
+    const { rows: existsRows } = await pool.query('SELECT id FROM produits WHERE id = $1 AND deleted_at IS NULL', [produitId]);
+    if (!existsRows[0]) return null;
+
     // Get current stock at location
     const stockBefore = locationId 
       ? await pool.query('SELECT get_stock_at_location($1, $2) as stock', [produitId, locationId])

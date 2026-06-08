@@ -249,14 +249,15 @@ export class FactureService {
         throw new Error('La facture doit contenir au moins un produit');
       }
 
-      // Verify stock availability
+      // Verify stock availability and collect purchase prices
+      const purchasePricesMap = new Map<number, number>();
       for (const ligne of lignes) {
         if (!Number.isInteger(ligne.quantite) || ligne.quantite <= 0) {
           throw new Error(`Quantité invalide pour le produit ID ${ligne.produit_id} (doit être un entier positif)`);
         }
 
         const { rows: stockRows } = await client.query(
-          `SELECT p.nom, COALESCE(spl.quantite, p.stock) as stock_location
+          `SELECT p.nom, COALESCE(p.prix_achat, 0.00) as prix_achat, COALESCE(spl.quantite, p.stock) as stock_location
            FROM produits p
            LEFT JOIN stock_par_location spl ON spl.produit_id = p.id AND spl.location_id = $2
            WHERE p.id = $1 AND p.deleted_at IS NULL`,
@@ -272,6 +273,8 @@ export class FactureService {
             `Stock insuffisant pour "${stockRows[0].nom}" dans cette location (disponible: ${stockRows[0].stock_location}, demande: ${ligne.quantite})`
           );
         }
+
+        purchasePricesMap.set(ligne.produit_id, parseFloat(stockRows[0].prix_achat || '0.00'));
       }
 
       // Generate invoice number
@@ -348,12 +351,14 @@ export class FactureService {
       const quantities: number[] = [];
       const prices: number[] = [];
       const totals: number[] = [];
+      const purchasePrices: number[] = [];
 
       for (const ligne of lignes) {
         produitIds.push(ligne.produit_id);
         quantities.push(ligne.quantite);
         prices.push(ligne.prix_unitaire);
         totals.push(ligne.quantite * ligne.prix_unitaire);
+        purchasePrices.push(purchasePricesMap.get(ligne.produit_id) ?? 0.00);
 
         // Check stock availability before deduction
         const { rows: productRows } = await client.query(
@@ -420,11 +425,11 @@ export class FactureService {
         );
       }
 
-      // Batch insert invoice lines without tax
+      // Batch insert invoice lines without tax, capturing purchase price
       await client.query(
-        `INSERT INTO document_lignes (document_type, document_id, produit_id, quantite, prix_unitaire, total_ligne)
-         SELECT 'facture', $1, unnest($2::int[]), unnest($3::int[]), unnest($4::numeric[]), unnest($5::numeric[])`,
-        [factureId, produitIds, quantities, prices, totals]
+        `INSERT INTO document_lignes (document_type, document_id, produit_id, quantite, prix_unitaire, total_ligne, prix_achat_unitaire)
+         SELECT 'facture', $1, unnest($2::int[]), unnest($3::int[]), unnest($4::numeric[]), unnest($5::numeric[]), unnest($6::numeric[])`,
+        [factureId, produitIds, quantities, prices, totals, purchasePrices]
       );
 
       // Customer ledger: debit entry for new invoice

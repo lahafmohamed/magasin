@@ -92,6 +92,21 @@ export class ReportingController {
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
+
+  static async getMarginsReport(req: Request, res: Response): Promise<void> {
+    try {
+      const { date_debut, date_fin } = req.query;
+      if (!date_debut || !date_fin) {
+        res.status(400).json({ success: false, error: 'date_debut et date_fin requis' });
+        return;
+      }
+      const data = await reportingService.getMarginsReport(date_debut as string, date_fin as string);
+      res.json({ success: true, data });
+    } catch (error) {
+      consoleError('GET /api/reports/margins', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
 }
 
 function consoleError(context: string, error: any) {

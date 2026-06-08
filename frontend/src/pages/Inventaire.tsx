@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
 import { InlineEdit } from '@/components/ui/inline-edit';
-import { QuickQuantityAdjust } from '@/components/ui/quick-quantity-adjust';
+
 import { Plus, Search, Pencil, Trash2, AlertCircle, CheckCircle, XCircle, Package, ChevronUp, ChevronDown, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { normalizeSearch } from '@/utils/format';
@@ -416,16 +416,7 @@ export default function Inventaire() {
     }
   };
 
-  const handleQuickStockAdjust = async (id: number, delta: number) => {
-    try {
-      const locationId = selectedAdjustLocationId ? parseInt(selectedAdjustLocationId, 10) : undefined;
-      await produitService.adjustStock(id, delta, locationId);
-      loadProduits();
-      toast.success(delta > 0 ? `Stock augmenté de ${delta}` : `Stock réduit de ${Math.abs(delta)}`);
-    } catch (error) {
-      toast.error('Erreur lors de l\'ajustement du stock');
-    }
-  };
+
 
   const openHistory = async (produit: Produit) => {
     setSelectedProductForHistory(produit);
@@ -805,7 +796,7 @@ export default function Inventaire() {
                   <TableHead className="cursor-pointer hover:bg-muted" onClick={() => handleSort('stock')}>
                     <div className="flex items-center gap-1">Stock <SortIcon column="stock" /></div>
                   </TableHead>
-                  <TableHead>Ajuster</TableHead>
+
                   <TableHead className="text-right">Historique</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -861,14 +852,7 @@ export default function Inventaire() {
                       </span>
                     </TableCell>
                     <TableCell>{getStockBadge(stock, stockMin)}</TableCell>
-                    <TableCell>
-                      <QuickQuantityAdjust
-                        currentStock={stock}
-                        onAdjust={(delta) => handleQuickStockAdjust(p.id, delta)}
-                        size="sm"
-                        showStockLevel={false}
-                      />
-                    </TableCell>
+
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
@@ -905,7 +889,7 @@ export default function Inventaire() {
                 })}
                 {produits?.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-12">
+                    <TableCell colSpan={9} className="text-center py-12">
                       <div className="flex flex-col items-center gap-2">
                         <Package className="h-12 w-12 text-muted-foreground/50" />
                         <p className="text-muted-foreground">Aucun produit trouvé</p>

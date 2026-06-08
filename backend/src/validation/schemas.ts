@@ -127,8 +127,23 @@ export const createCompensationSchema = z.object({
 });
 
 // Legacy aliases kept for backward compat with existing routes during transition
-export const createClientSchema = createTiersSchema;
-export const updateClientSchema = updateTiersSchema;
+export const createClientSchema = z.object({
+  nom: z.string().min(1, 'Nom requis').max(100),
+  prenom: z.string().max(100).optional().or(z.literal('')),
+  telephone: z.string().max(20).optional().or(z.literal('')),
+  email: z.string().email('Email invalide').max(255).optional().or(z.literal('')).optional().or(z.null()),
+  adresse: z.string().max(1000).optional().or(z.literal('')),
+  nif: z.string().max(50).optional().or(z.literal('')),
+});
+
+export const updateClientSchema = z.object({
+  nom: z.string().min(1).max(100).optional(),
+  prenom: z.string().max(100).optional().or(z.literal('')).optional(),
+  telephone: z.string().max(20).optional().or(z.literal('')).optional(),
+  email: z.string().email('Email invalide').max(255).optional().or(z.literal('')).optional().or(z.null()),
+  adresse: z.string().max(1000).optional().or(z.literal('')).optional(),
+  nif: z.string().max(50).optional().or(z.literal('')).optional(),
+});
 
 // ============================================
 // Facture schemas
@@ -140,15 +155,29 @@ export const factureLigneSchema = z.object({
 });
 
 export const createFactureSchema = z.object({
-  tiers_id: z.coerce.number().int().positive('Tiers ID requis'),
+  tiers_id: z.coerce.number().int().positive('Tiers ID requis').optional(),
+  client_id: z.coerce.number().int().positive('Client ID requis').optional(),
   location_id: z.coerce.number().int().positive('Location ID invalide').optional(),
   date_facture: z.string().datetime().optional().or(z.literal('')),
   notes: z.string().max(2000).optional().or(z.literal('')),
   lignes: z.array(factureLigneSchema).min(1, 'Au moins une ligne requise'),
+}).superRefine((data, ctx) => {
+  if (data.tiers_id === undefined && data.client_id === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['tiers_id'],
+      message: 'Tiers ID ou Client ID requis',
+    });
+  }
+}).transform((data) => {
+  return {
+    ...data,
+    tiers_id: data.tiers_id ?? data.client_id!,
+  };
 });
 
 export const updateFactureStatutSchema = z.object({
-  statut: z.enum(['en_attente', 'annulee']),
+  statut: z.enum(['payee', 'partielle', 'en_attente', 'annulee']),
 });
 
 // ============================================

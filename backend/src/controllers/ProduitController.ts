@@ -191,6 +191,10 @@ export class ProduitController {
   static async update(req: Request, res: Response): Promise<void> {
     try {
       const authReq = req as AuthRequest;
+      if (!req.body || Object.keys(req.body).length === 0) {
+        res.status(400).json({ success: false, error: 'Aucun champ à mettre à jour' });
+        return;
+      }
       const produit = await produitService.update(parseInt(req.params.id), {
         ...req.body,
         modifie_par: authReq.user?.id,

@@ -79,10 +79,10 @@ describe('FactureService', () => {
       expect(fetched.lignes[0].quantite).toBe(2);
       expect(fetched.statut).toBe('en_attente');
 
-      // Verify TVA calculation (19%)
+      // Verify TVA calculation (0%)
       const sousTotal = 2 * 5000; // 10000
-      const expectedTva = sousTotal * 0.19; // 1900
-      const expectedTotal = sousTotal + expectedTva; // 11900
+      const expectedTva = 0;
+      const expectedTotal = sousTotal;
       expect(parseFloat(fetched.sous_total)).toBe(sousTotal);
       expect(parseFloat(fetched.tva)).toBe(expectedTva);
       expect(parseFloat(fetched.total)).toBe(expectedTotal);
@@ -107,7 +107,7 @@ describe('FactureService', () => {
 
       // Verify totals: (1*5000) + (2*10000) = 25000
       const sousTotal = 5000 + 20000;
-      const expectedTotal = sousTotal + sousTotal * 0.19;
+      const expectedTotal = sousTotal;
       expect(parseFloat(fetched.total)).toBe(expectedTotal);
     });
 
@@ -276,7 +276,7 @@ describe('FactureService', () => {
       };
 
       await pool.query(
-        `UPDATE clients
+        `UPDATE tiers
          SET delai_paiement = 'net_60'
          WHERE id = $1`,
         [testClientId]
@@ -413,15 +413,15 @@ describe('FactureService', () => {
       });
       createdInvoiceIds.push(result.id);
 
-      const updated = await factureService.updateStatut(result.id, 'payee');
+      const updated = await factureService.updateStatut(result.id, 'annulee');
       expect(updated).toBe(true);
 
       const fetched = await factureService.getById(result.id);
-      expect(fetched.statut).toBe('payee');
+      expect(fetched.statut).toBe('annulee');
     });
 
     it('should return false for non-existent invoice', async () => {
-      const updated = await factureService.updateStatut(999999, 'payee');
+      const updated = await factureService.updateStatut(999999, 'annulee');
       expect(updated).toBe(false);
     });
 
@@ -434,7 +434,7 @@ describe('FactureService', () => {
 
       await factureService.delete(result.id);
 
-      const updated = await factureService.updateStatut(result.id, 'payee');
+      const updated = await factureService.updateStatut(result.id, 'annulee');
       expect(updated).toBe(false);
     });
   });

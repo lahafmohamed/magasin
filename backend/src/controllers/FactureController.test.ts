@@ -86,7 +86,7 @@ describe('Factures API (Integration)', () => {
         .post('/api/factures')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          client_id: createdClientId,
+          tiers_id: createdClientId,
           lignes: [
             { produit_id: produitId, quantite: 2, prix_unitaire: 5000 },
           ],
@@ -106,7 +106,7 @@ describe('Factures API (Integration)', () => {
       const res = await request(app)
         .post('/api/factures')
         .send({
-          client_id: createdClientId,
+          tiers_id: createdClientId,
           lignes: [{ produit_id: 1, quantite: 1, prix_unitaire: 5000 }],
         });
 
@@ -118,7 +118,7 @@ describe('Factures API (Integration)', () => {
         .post('/api/factures')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          client_id: createdClientId,
+          tiers_id: createdClientId,
           lignes: [],
         });
 
@@ -134,7 +134,7 @@ describe('Factures API (Integration)', () => {
         .post('/api/factures')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          client_id: createdClientId,
+          tiers_id: createdClientId,
           lignes: [
             { produit_id: produitId, quantite: 100, prix_unitaire: 5000 },
           ],
@@ -145,7 +145,7 @@ describe('Factures API (Integration)', () => {
       expect(res.body.error).toMatch(/Stock insuffisant/);
     });
 
-    it('should reject invoice with invalid client_id', async () => {
+    it('should reject invoice with invalid tiers_id', async () => {
       const produitId = await createTestProduct(50);
       createdProduitIds.push(produitId);
 
@@ -153,7 +153,7 @@ describe('Factures API (Integration)', () => {
         .post('/api/factures')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          client_id: 999999,
+          tiers_id: 999999,
           lignes: [
             { produit_id: produitId, quantite: 1, prix_unitaire: 5000 },
           ],
@@ -177,7 +177,7 @@ describe('Factures API (Integration)', () => {
           .post('/api/factures')
           .set('Authorization', `Bearer ${authToken}`)
           .send({
-            client_id: createdClientId,
+            tiers_id: createdClientId,
             lignes: [{ produit_id: produitId, quantite: 1, prix_unitaire: 5000 }],
           });
         createdFactureIds.push(res.body.data.id);
@@ -245,7 +245,7 @@ describe('Factures API (Integration)', () => {
         .post('/api/factures')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          client_id: createdClientId,
+          tiers_id: createdClientId,
           lignes: [{ produit_id: produitId, quantite: 1, prix_unitaire: 5000 }],
         });
       testFactureId = res.body.data.id;
@@ -287,18 +287,18 @@ describe('Factures API (Integration)', () => {
         .post('/api/factures')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          client_id: createdClientId,
+          tiers_id: createdClientId,
           lignes: [{ produit_id: produitId, quantite: 1, prix_unitaire: 5000 }],
         });
       testFactureId = res.body.data.id;
       createdFactureIds.push(testFactureId);
     });
 
-    it('should update invoice status', async () => {
+     it('should update invoice status', async () => {
       const res = await request(app)
         .put(`/api/factures/${testFactureId}/statut`)
         .set('Authorization', `Bearer ${authToken}`)
-        .send({ statut: 'payee' });
+        .send({ statut: 'annulee' });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -319,7 +319,7 @@ describe('Factures API (Integration)', () => {
       const res = await request(app)
         .put('/api/factures/999999/statut')
         .set('Authorization', `Bearer ${authToken}`)
-        .send({ statut: 'payee' });
+        .send({ statut: 'annulee' });
 
       expect(res.status).toBe(404);
     });
@@ -336,7 +336,7 @@ describe('Factures API (Integration)', () => {
         .post('/api/factures')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          client_id: createdClientId,
+          tiers_id: createdClientId,
           lignes: [{ produit_id: produitId, quantite: 1, prix_unitaire: 5000 }],
         });
       const factureId = createRes.body.data.id;

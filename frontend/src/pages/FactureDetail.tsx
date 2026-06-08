@@ -160,6 +160,19 @@ export default function FactureDetail() {
   const remainingDue = facture ? parseFloat(facture.remaining_due as any) || total : 0;
   const lignes = facture ? facture.lignes || [] : [];
 
+  const userStr = localStorage.getItem('auth_user');
+  const user = userStr ? JSON.parse(userStr) : null;
+  const isManagerOrAdmin = user?.role === 'admin' || user?.role === 'manager';
+
+  const totalCost = lignes.reduce((sum, line) => {
+    const prixAchat = parseFloat((line as any).prix_achat_unitaire) || 0;
+    const quantite = typeof line.quantite === 'string' ? parseInt(line.quantite) : line.quantite;
+    return sum + (prixAchat * quantite);
+  }, 0);
+
+  const profit = total - totalCost;
+  const marginPercentage = total > 0 ? parseFloat(((profit / total) * 100).toFixed(2)) : 0;
+
   if (loading) {
     return (
       <div className="flex justify-center items-center min-h-[400px]">
@@ -359,26 +372,54 @@ export default function FactureDetail() {
       </Card>
 
       {/* Summary */}
-      <Card className="bg-primary text-primary-foreground">
-        <CardContent className="pt-6">
-          <div className="space-y-3">
-            <div className="flex justify-between text-lg">
-              <span className="text-primary-foreground/80">Sous-total</span>
-              <span className="font-semibold">{formatXOF(sousTotal)}</span>
-            </div>
-            <div className="flex justify-between text-lg">
-              <span className="text-primary-foreground/80">TVA (19%)</span>
-              <span className="font-semibold">{formatXOF(tva)}</span>
-            </div>
-            <div className="border-t border-primary-foreground/20 pt-3">
-              <div className="flex justify-between text-2xl font-bold">
-                <span>Total TTC</span>
-                <span>{formatXOF(total)}</span>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card className="bg-primary text-primary-foreground">
+          <CardContent className="pt-6">
+            <div className="space-y-3">
+              <div className="flex justify-between text-lg">
+                <span className="text-primary-foreground/80">Sous-total</span>
+                <span className="font-semibold">{formatXOF(sousTotal)}</span>
+              </div>
+              <div className="flex justify-between text-lg">
+                <span className="text-primary-foreground/80">TVA (19%)</span>
+                <span className="font-semibold">{formatXOF(tva)}</span>
+              </div>
+              <div className="border-t border-primary-foreground/20 pt-3">
+                <div className="flex justify-between text-2xl font-bold">
+                  <span>Total TTC</span>
+                  <span>{formatXOF(total)}</span>
+                </div>
               </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+
+        {isManagerOrAdmin && (
+          <Card className="border-success-300 bg-success-50 text-success-900">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-semibold uppercase tracking-wider text-success-800">
+                Analyse de rentabilité (Restreint)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex justify-between text-lg">
+                <span className="text-success-800">Coût total d'achat:</span>
+                <span className="font-semibold">{formatXOF(totalCost)}</span>
+              </div>
+              <div className="flex justify-between text-lg">
+                <span className="text-success-800">Marge brute:</span>
+                <span className="font-bold text-success-700">{formatXOF(profit)}</span>
+              </div>
+              <div className="border-t border-success-200 pt-2">
+                <div className="flex justify-between text-xl font-bold">
+                  <span>Taux de marge:</span>
+                  <span>{marginPercentage}%</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
 
       {/* Notes */}
       {facture.notes && (

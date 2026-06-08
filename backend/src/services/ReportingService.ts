@@ -10,17 +10,17 @@ export class ReportingService {
         -- Revenue (line-level so the 1-to-many invoice/line join does not multiply invoice totals)
         COALESCE(SUM(dl.total_ligne) FILTER (WHERE f.statut != 'annulee'), 0) as chiffre_affaires,
 
-        -- Cost of goods sold (based on purchase price * quantity sold)
-        COALESCE(SUM(dl.quantite * p.prix_achat) FILTER (WHERE f.statut != 'annulee'), 0) as cout_ventes,
+        -- Cost of goods sold (based on historical purchase price * quantity sold)
+        COALESCE(SUM(dl.quantite * dl.prix_achat_unitaire) FILTER (WHERE f.statut != 'annulee'), 0) as cout_ventes,
 
         -- Gross margin
-        COALESCE(SUM(dl.total_ligne - (dl.quantite * p.prix_achat)) FILTER (WHERE f.statut != 'annulee'), 0) as marge_brute,
+        COALESCE(SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) FILTER (WHERE f.statut != 'annulee'), 0) as marge_brute,
 
         -- Gross margin percentage
         CASE
           WHEN COALESCE(SUM(dl.total_ligne) FILTER (WHERE f.statut != 'annulee'), 0) = 0 THEN 0
           ELSE ROUND(
-            (COALESCE(SUM(dl.total_ligne - (dl.quantite * p.prix_achat)) FILTER (WHERE f.statut != 'annulee'), 0) /
+            (COALESCE(SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) FILTER (WHERE f.statut != 'annulee'), 0) /
              COALESCE(SUM(dl.total_ligne) FILTER (WHERE f.statut != 'annulee'), 0)) * 100, 2
           )
         END as marge_pourcentage,
@@ -32,7 +32,6 @@ export class ReportingService {
         COALESCE(SUM(dl.quantite) FILTER (WHERE f.statut != 'annulee'), 0) as produits_vendus
        FROM factures f
        LEFT JOIN document_lignes dl ON dl.document_type = 'facture' AND f.id = dl.document_id
-       LEFT JOIN produits p ON dl.produit_id = p.id
        WHERE f.date_facture BETWEEN $1 AND $2
          AND f.deleted_at IS NULL`,
       [dateDebut, dateFin]
@@ -121,8 +120,8 @@ export class ReportingService {
         COUNT(DISTINCT f.id) as nombre_factures,
         SUM(dl.quantite) as unites_vendues,
         SUM(dl.total_ligne) as chiffre_affaires,
-        SUM(dl.quantite * p.prix_achat) as cout_ventes,
-        SUM(dl.total_ligne - (dl.quantite * p.prix_achat)) as marge_brute
+        SUM(dl.quantite * dl.prix_achat_unitaire) as cout_ventes,
+        SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) as marge_brute
        FROM factures f
        LEFT JOIN document_lignes dl ON dl.document_type = 'facture' AND f.id = dl.document_id
        LEFT JOIN produits p ON dl.produit_id = p.id
@@ -151,11 +150,11 @@ export class ReportingService {
         p.prix_vente,
         SUM(dl.quantite) as unites_vendues,
         SUM(dl.total_ligne) as chiffre_affaires,
-        SUM(dl.quantite * p.prix_achat) as cout_ventes,
-        SUM(dl.total_ligne - (dl.quantite * p.prix_achat)) as marge_brute,
+        SUM(dl.quantite * dl.prix_achat_unitaire) as cout_ventes,
+        SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) as marge_brute,
         CASE 
           WHEN SUM(dl.total_ligne) = 0 THEN 0
-          ELSE ROUND((SUM(dl.total_ligne - (dl.quantite * p.prix_achat)) / SUM(dl.total_ligne)) * 100, 2)
+          ELSE ROUND((SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) / SUM(dl.total_ligne)) * 100, 2)
         END as marge_pourcentage
        FROM document_lignes dl
        LEFT JOIN produits p ON dl.produit_id = p.id
@@ -178,6 +177,7 @@ export class ReportingService {
   async getDashboardKPIs(): Promise<any> {
     const [
       revenueResult,
+      marginResult,
       receivablesResult,
       inventoryResult,
       turnoverResult,
@@ -191,6 +191,17 @@ export class ReportingService {
          WHERE statut != 'annulee' AND deleted_at IS NULL
            AND EXTRACT(MONTH FROM date_facture) = EXTRACT(MONTH FROM CURRENT_DATE)
            AND EXTRACT(YEAR FROM date_facture) = EXTRACT(YEAR FROM CURRENT_DATE)`
+      ),
+      // Monthly Margin
+      pool.query(
+        `SELECT
+          COALESCE(SUM(dl.total_ligne), 0) as revenue,
+          COALESCE(SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)), 0) as profit
+         FROM factures f
+         JOIN document_lignes dl ON dl.document_type = 'facture' AND f.id = dl.document_id
+         WHERE f.statut != 'annulee' AND f.deleted_at IS NULL
+           AND EXTRACT(MONTH FROM f.date_facture) = EXTRACT(MONTH FROM CURRENT_DATE)
+           AND EXTRACT(YEAR FROM f.date_facture) = EXTRACT(YEAR FROM CURRENT_DATE)`
       ),
       // Outstanding receivables
       pool.query(
@@ -228,13 +239,128 @@ export class ReportingService {
       ),
     ]);
 
+    const revenueMois = revenueResult.rows[0];
+    const marginMoisRows = marginResult.rows[0];
+    const marginMoisPct = marginMoisRows.revenue > 0 
+      ? parseFloat(((marginMoisRows.profit / marginMoisRows.revenue) * 100).toFixed(2))
+      : 0;
+
     return {
-      revenue_mois: revenueResult.rows[0],
+      revenue_mois: revenueMois,
       creances: receivablesResult.rows[0],
       valeur_stock: inventoryResult.rows[0],
       taux_rotation: parseFloat(turnoverResult.rows[0].taux || 0),
       alertes_stock: parseInt(lowStockResult.rows[0].count),
       commandes_en_cours: parseInt(pendingOrdersResult.rows[0].count),
+      marge_mois: {
+        marge_brute: parseFloat(marginMoisRows.profit),
+        marge_pourcentage: marginMoisPct
+      }
+    };
+  }
+
+  /**
+   * Detailed margins report
+   */
+  async getMarginsReport(dateDebut: string, dateFin: string): Promise<any> {
+    const [monthlyTrend, topTiers, topCategories, topProducts] = await Promise.all([
+      // Margin trend by month
+      pool.query(
+        `SELECT
+          DATE_TRUNC('month', f.date_facture)::date as mois,
+          SUM(dl.total_ligne) as chiffre_affaires,
+          SUM(dl.quantite * dl.prix_achat_unitaire) as cout_ventes,
+          SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) as marge_brute,
+          CASE
+            WHEN SUM(dl.total_ligne) = 0 THEN 0
+            ELSE ROUND((SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) / SUM(dl.total_ligne)) * 100, 2)
+          END as marge_pourcentage
+         FROM factures f
+         JOIN document_lignes dl ON dl.document_type = 'facture' AND f.id = dl.document_id
+         WHERE f.date_facture BETWEEN $1 AND $2
+           AND f.statut != 'annulee'
+           AND f.deleted_at IS NULL
+         GROUP BY DATE_TRUNC('month', f.date_facture)
+         ORDER BY mois ASC`,
+        [dateDebut, dateFin]
+      ),
+      // Margins by client (top 10)
+      pool.query(
+        `SELECT
+          t.id as tiers_id,
+          t.raison_sociale as nom,
+          SUM(dl.total_ligne) as chiffre_affaires,
+          SUM(dl.quantite * dl.prix_achat_unitaire) as cout_ventes,
+          SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) as marge_brute,
+          CASE
+            WHEN SUM(dl.total_ligne) = 0 THEN 0
+            ELSE ROUND((SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) / SUM(dl.total_ligne)) * 100, 2)
+          END as marge_pourcentage
+         FROM factures f
+         JOIN document_lignes dl ON dl.document_type = 'facture' AND f.id = dl.document_id
+         JOIN tiers t ON f.tiers_id = t.id
+         WHERE f.date_facture BETWEEN $1 AND $2
+           AND f.statut != 'annulee'
+           AND f.deleted_at IS NULL
+         GROUP BY t.id, t.raison_sociale
+         ORDER BY marge_brute DESC
+         LIMIT 10`,
+        [dateDebut, dateFin]
+      ),
+      // Margins by product category
+      pool.query(
+        `SELECT
+          COALESCE(p.categorie, 'Sans catégorie') as categorie,
+          SUM(dl.total_ligne) as chiffre_affaires,
+          SUM(dl.quantite * dl.prix_achat_unitaire) as cout_ventes,
+          SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) as marge_brute,
+          CASE
+            WHEN SUM(dl.total_ligne) = 0 THEN 0
+            ELSE ROUND((SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) / SUM(dl.total_ligne)) * 100, 2)
+          END as marge_pourcentage
+         FROM factures f
+         JOIN document_lignes dl ON dl.document_type = 'facture' AND f.id = dl.document_id
+         JOIN produits p ON dl.produit_id = p.id
+         WHERE f.date_facture BETWEEN $1 AND $2
+           AND f.statut != 'annulee'
+           AND f.deleted_at IS NULL
+         GROUP BY p.categorie
+         ORDER BY marge_brute DESC`,
+        [dateDebut, dateFin]
+      ),
+      // Margins by product (top 15)
+      pool.query(
+        `SELECT
+          p.id as produit_id,
+          p.nom,
+          p.reference,
+          SUM(dl.quantite) as unites_vendues,
+          SUM(dl.total_ligne) as chiffre_affaires,
+          SUM(dl.quantite * dl.prix_achat_unitaire) as cout_ventes,
+          SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) as marge_brute,
+          CASE
+            WHEN SUM(dl.total_ligne) = 0 THEN 0
+            ELSE ROUND((SUM(dl.total_ligne - (dl.quantite * dl.prix_achat_unitaire)) / SUM(dl.total_ligne)) * 100, 2)
+          END as marge_pourcentage
+         FROM factures f
+         JOIN document_lignes dl ON dl.document_type = 'facture' AND f.id = dl.document_id
+         JOIN produits p ON dl.produit_id = p.id
+         WHERE f.date_facture BETWEEN $1 AND $2
+           AND f.statut != 'annulee'
+           AND f.deleted_at IS NULL
+           AND p.deleted_at IS NULL
+         GROUP BY p.id, p.nom, p.reference
+         ORDER BY marge_brute DESC
+         LIMIT 15`,
+        [dateDebut, dateFin]
+      ),
+    ]);
+
+    return {
+      monthly_trend: monthlyTrend.rows,
+      top_tiers: topTiers.rows,
+      top_categories: topCategories.rows,
+      top_products: topProducts.rows,
     };
   }
 }
