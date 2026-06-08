@@ -28,7 +28,12 @@ export class FactureController {
 
   static async getById(req: Request, res: Response): Promise<void> {
     try {
-      const facture = await factureService.getById(parseInt(req.params.id));
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        res.status(400).json({ success: false, error: 'Identifiant invalide' });
+        return;
+      }
+      const facture = await factureService.getById(id);
       if (!facture) {
         res.status(404).json({ success: false, error: 'Facture non trouvée' });
         return;
@@ -62,8 +67,13 @@ export class FactureController {
   static async updateStatut(req: Request, res: Response): Promise<void> {
     try {
       const authReq = req as AuthRequest;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        res.status(400).json({ success: false, error: 'Identifiant invalide' });
+        return;
+      }
       const updated = await factureService.updateStatut(
-        parseInt(req.params.id),
+        id,
         req.body.statut,
         authReq.user?.id,
         req
@@ -85,8 +95,13 @@ export class FactureController {
     try {
       const authReq = req as AuthRequest;
       const { restaurer_stock }: { restaurer_stock?: boolean } = req.body;
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) {
+        res.status(400).json({ success: false, error: 'Identifiant invalide' });
+        return;
+      }
       const deleted = await factureService.delete(
-        parseInt(req.params.id),
+        id,
         restaurer_stock,
         authReq.user?.id,
         req
@@ -152,8 +167,13 @@ export class FactureController {
   static async generatePDF(req: Request, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const buffer = await pdfService.generateInvoicePDF(parseInt(id));
-      const facture = await factureService.getById(parseInt(id));
+      const numId = parseInt(id);
+      if (isNaN(numId)) {
+        res.status(400).json({ success: false, error: 'Identifiant invalide' });
+        return;
+      }
+      const buffer = await pdfService.generateInvoicePDF(numId);
+      const facture = await factureService.getById(numId);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="facture-${facture?.numero_facture || id}.pdf"`);
       res.send(buffer);
