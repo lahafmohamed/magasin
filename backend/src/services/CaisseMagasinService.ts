@@ -471,6 +471,11 @@ export class CaisseMagasinService {
    * Runs inside the caller's transaction so a failure rolls back the whole movement.
    */
   private async postMouvementToGL(client: any, input: CreateMouvementInput): Promise<void> {
+    // Opt-in per deployment: only post caisse movements to the GL when the chart of
+    // accounts has been mapped for this client (set CAISSE_GL_POSTING=true). Default
+    // off so it never posts to mismatched/absent accounts on existing installs.
+    if (process.env.CAISSE_GL_POSTING !== 'true') return;
+
     const MOBILE = ['mobile_money', 'orange_money', 'mtn_money', 'wave'];
     const cashAccount = MOBILE.includes(input.methode_paiement) ? '54' : '53';
 
