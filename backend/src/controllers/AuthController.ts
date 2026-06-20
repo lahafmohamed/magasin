@@ -64,11 +64,14 @@ export class AuthController {
       }, req);
 
       // Log audit
-      await pool.query(
-        `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [user.id, 'login', 'utilisateurs', user.id, req.ip, req.get('user-agent')]
-      );
+      // Audit logging must never break authentication — best-effort only.
+      try {
+        await pool.query(
+          `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [user.id, 'login', 'utilisateurs', user.id, req.ip, req.get('user-agent')]
+        );
+      } catch (e) { logger.warn({ err: e }, 'audit log insert failed (non-fatal)'); }
 
       // Primary auth transport: httpOnly cookie (not readable by JS → XSS-safe).
       // The token is still returned in the body for transitional/native clients.
@@ -219,11 +222,14 @@ export class AuthController {
       });
 
       // Log audit
-      await pool.query(
-        `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [req.user!.id, 'create', 'utilisateurs', user.id, req.ip, req.get('user-agent')]
-      );
+      // Audit logging must never break authentication — best-effort only.
+      try {
+        await pool.query(
+          `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [req.user!.id, 'create', 'utilisateurs', user.id, req.ip, req.get('user-agent')]
+        );
+      } catch (e) { logger.warn({ err: e }, 'audit log insert failed (non-fatal)'); }
 
       res.status(201).json({
         success: true,
@@ -393,11 +399,14 @@ export class AuthController {
       });
 
       // Log audit
-      await pool.query(
-        `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [req.user!.id, 'update', 'utilisateurs', userId, req.ip, req.get('user-agent')]
-      );
+      // Audit logging must never break authentication — best-effort only.
+      try {
+        await pool.query(
+          `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [req.user!.id, 'update', 'utilisateurs', userId, req.ip, req.get('user-agent')]
+        );
+      } catch (e) { logger.warn({ err: e }, 'audit log insert failed (non-fatal)'); }
 
       res.json({
         success: true,
