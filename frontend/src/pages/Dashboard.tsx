@@ -5,6 +5,7 @@ import {
   produitService,
   commandeService,
   paiementService,
+  reportService,
 } from '../services/api';
 import { StatsDashboard } from '../types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -118,6 +119,40 @@ function Delta({ value }: { value: number | null }) {
   );
 }
 
+function AlertBanner({ alerts }: { alerts: { low_stock: any[]; overdue_invoices: any[]; pending_orders: any[] } }) {
+  const totalAlerts = alerts.low_stock.length + alerts.overdue_invoices.length + alerts.pending_orders.length;
+  if (totalAlerts === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+      <div className="flex items-center gap-2 text-amber-800 font-semibold text-sm">
+        <AlertTriangle className="h-4 w-4" />
+        Alertes ({totalAlerts})
+      </div>
+      <div className="flex flex-wrap gap-3 text-xs">
+        {alerts.low_stock.length > 0 && (
+          <Link to="/inventaire" className="inline-flex items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-amber-700 hover:bg-amber-100 transition-colors">
+            <Package className="h-3.5 w-3.5" />
+            Stock faible: {alerts.low_stock.length} produit(s)
+          </Link>
+        )}
+        {alerts.overdue_invoices.length > 0 && (
+          <Link to="/factures" className="inline-flex items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-amber-700 hover:bg-amber-100 transition-colors">
+            <FileText className="h-3.5 w-3.5" />
+            Factures impayées (+30j): {alerts.overdue_invoices.length}
+          </Link>
+        )}
+        {alerts.pending_orders.length > 0 && (
+          <Link to="/commandes" className="inline-flex items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-amber-700 hover:bg-amber-100 transition-colors">
+            <ShoppingCart className="h-3.5 w-3.5" />
+            Commandes en retard: {alerts.pending_orders.length}
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [stats, setStats] = useState<StatsDashboard | null>(null);
   const [loading, setLoading] = useState(true);
@@ -133,6 +168,9 @@ export default function Dashboard() {
   const [paiementStats, setPaiementStats] = useState<any>(null);
   const [lowStockProducts, setLowStockProducts] = useState<any[]>([]);
   const [recentInvoices, setRecentInvoices] = useState<any[]>([]);
+  const [alertsData, setAlertsData] = useState<{ low_stock: any[]; overdue_invoices: any[]; pending_orders: any[] } | null>(null);
+  const [yoyData, setYoyData] = useState<any>(null);
+  const [forecastData, setForecastData] = useState<any>(null);
   const [containerWidth, setContainerWidth] = useState(800);
 
   useLayoutEffect(() => {
@@ -163,6 +201,9 @@ export default function Dashboard() {
         paiementsData,
         lowStockData,
         recentInvoicesData,
+        alertsResult,
+        yoyResult,
+        forecastResult,
       ] = await Promise.all([
         factureService.getStats(),
         factureService.getRevenueTrends(period * 2),
@@ -177,8 +218,12 @@ export default function Dashboard() {
         factureService
           .getAll(undefined, undefined, 1, 5, 'date_facture', 'desc')
           .catch(() => ({ data: [] })),
+        reportService.getAlerts().catch(() => null),
+        reportService.getYoYComparison?.(3) || Promise.resolve(null),
+        reportService.getRevenueForecast?.() || Promise.resolve(null),
       ]);
 
+      setAlertsData(alertsResult?.data || null);
       setStats(statsData);
 
       const formatted: RevenuePoint[] = trendsData.map((item: any) => {
@@ -231,6 +276,8 @@ export default function Dashboard() {
       setPaiementStats(paiementsData);
       setLowStockProducts(lowStockData?.data || lowStockData || []);
       setRecentInvoices(recentInvoicesData?.data || recentInvoicesData || []);
+      setYoyData(yoyResult);
+      setForecastData(forecastResult);
     } catch (error) {
       toast.error('Erreur lors du chargement du dashboard');
       console.error(error);
@@ -352,74 +399,83 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Alert Banner */}
+        {alertsData && (
+          <AlertBanner alerts={alertsData} />
+        )}
+
         {/* KPI Cards w/ sparklines + deltas */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          <Card className="hover:shadow-md transition-shadow overflow-hidden">
-            <CardContent className="pt-5">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  CA {period} derniers jours
-                </p>
-                <Receipt className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-2xl font-bold tracking-tight">{formatXOF(currentCA)}</span>
-              </div>
-              <div className="mt-1 flex items-center justify-between">
-                <Delta value={caDelta} />
-                <span className="text-[10px] text-muted-foreground">vs. période préc.</span>
-              </div>
-              <div className="-mx-1 -mb-1 mt-2 h-10">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={sparkRevenue}>
-                    <Area
-                      type="monotone"
-                      dataKey="v"
-                      stroke={CHART_PRIMARY}
-                      fill={CHART_PRIMARY}
-                      fillOpacity={0.2}
-                      strokeWidth={1.5}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
+          <Link to="/reporting" className="block">
+            <Card className="hover:shadow-md transition-shadow overflow-hidden cursor-pointer">
+              <CardContent className="pt-5">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    CA {period} derniers jours
+                  </p>
+                  <Receipt className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold tracking-tight">{formatXOF(currentCA)}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between">
+                  <Delta value={caDelta} />
+                  <span className="text-[10px] text-muted-foreground">vs. période préc.</span>
+                </div>
+                <div className="-mx-1 -mb-1 mt-2 h-10">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={sparkRevenue}>
+                      <Area
+                        type="monotone"
+                        dataKey="v"
+                        stroke={CHART_PRIMARY}
+                        fill={CHART_PRIMARY}
+                        fillOpacity={0.2}
+                        strokeWidth={1.5}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
 
-          <Card className="hover:shadow-md transition-shadow overflow-hidden">
-            <CardContent className="pt-5">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Factures du mois
+          <Link to="/factures" className="block">
+            <Card className="hover:shadow-md transition-shadow overflow-hidden cursor-pointer">
+              <CardContent className="pt-5">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Factures du mois
+                  </p>
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-bold tracking-tight">
+                    {stats?.factures_mois.count || 0}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {formatXOF(parseFloat((stats?.factures_mois.montant as any) || 0))}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Total: {stats?.total_factures.count || 0} factures
                 </p>
-                <FileText className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-2xl font-bold tracking-tight">
-                  {stats?.factures_mois.count || 0}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {formatXOF(parseFloat((stats?.factures_mois.montant as any) || 0))}
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Total: {stats?.total_factures.count || 0} factures
-              </p>
-              <div className="-mx-1 -mb-1 mt-2 h-10">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={sparkCountStub}>
-                    <Line
-                      type="monotone"
-                      dataKey="v"
-                      stroke="#1E3A8A"
-                      strokeWidth={1.5}
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
+                <div className="-mx-1 -mb-1 mt-2 h-10">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={sparkCountStub}>
+                      <Line
+                        type="monotone"
+                        dataKey="v"
+                        stroke="#1E3A8A"
+                        strokeWidth={1.5}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </Link>
 
           <Card className="hover:shadow-md transition-shadow overflow-hidden">
             <CardContent className="pt-5">
@@ -487,6 +543,49 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Forecast */}
+        {forecastData && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Activity className="h-4 w-4 text-primary" />
+                Prévision mois prochain
+              </CardTitle>
+              <CardDescription className="text-xs">Moyenne mobile sur 3 mois</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="rounded-lg border p-3 bg-muted/30">
+                  <p className="text-xs text-muted-foreground">Prévision</p>
+                  <p className="text-lg font-bold mt-1">{formatXOF(forecastData.forecast?.prevision)}</p>
+                </div>
+                <div className="rounded-lg border p-3 bg-muted/30">
+                  <p className="text-xs text-muted-foreground">Min estimé</p>
+                  <p className="text-lg font-bold mt-1 text-amber-600">{formatXOF(forecastData.forecast?.min)}</p>
+                </div>
+                <div className="rounded-lg border p-3 bg-muted/30">
+                  <p className="text-xs text-muted-foreground">Max estimé</p>
+                  <p className="text-lg font-bold mt-1 text-green-600">{formatXOF(forecastData.forecast?.max)}</p>
+                </div>
+              </div>
+              {forecastData.historique?.length > 1 && (
+                <div className="mt-3">
+                  <ResponsiveContainer width="100%" height={120}>
+                    <AreaChart data={[
+                      ...forecastData.historique.map((h: any) => ({ mois: h.mois?.slice(5,7) || '', value: parseFloat(h.chiffre_affaires) || 0 })),
+                      { mois: 'Prévi', value: forecastData.forecast?.prevision || 0 },
+                    ]}>
+                      <Area type="monotone" dataKey="value" stroke={CHART_PRIMARY} fill={CHART_PRIMARY} fillOpacity={0.2} strokeWidth={2} />
+                      <Tooltip formatter={(v: any) => formatXOF(v)} />
+                      <XAxis dataKey="mois" tick={{ fontSize: 10 }} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Objectif + Funnel */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -634,6 +733,37 @@ export default function Dashboard() {
                     fill="url(#caGrad)"
                   />
                 </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* YoY Comparison */}
+        {yoyData && yoyData.current_year?.length > 0 && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-primary" />
+                Comparaison Année sur Année
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Variation: {yoyData.variation_pct > 0 ? '+' : ''}{yoyData.variation_pct?.toFixed(1)}% vs. année précédente
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={chartHeight}>
+                <BarChart data={yoyData.current_year.map((c: any, i: number) => ({
+                  mois: c.mois_nom?.trim().slice(0, 3) || '',
+                  current: parseFloat(c.chiffre_affaires) || 0,
+                  previous: parseFloat(yoyData.previous_year?.[i]?.chiffre_affaires || 0),
+                }))}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mois" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(value: any) => formatXOF(value)} />
+                  <Bar dataKey="current" fill={CHART_PRIMARY} name="Cette année" radius={[4,4,0,0]} />
+                  <Bar dataKey="previous" fill="#94a3b8" name="Année préc." radius={[4,4,0,0]} />
+                </BarChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>

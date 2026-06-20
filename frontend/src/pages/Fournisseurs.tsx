@@ -117,7 +117,7 @@ export default function Fournisseurs() {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Rechercher un fournisseur..."
-              className="pl-10"
+              className="pl-10 sm:pl-10"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -261,14 +261,14 @@ export default function Fournisseurs() {
                     <TableCell>{f.delai_livraison || 7} jours</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(f)}>
+                        <Button variant="ghost" size="sm" onClick={() => handleEdit(f)} aria-label="Modifier ce fournisseur">
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <Button
-                          variant="ghost"
+                          variant="destructive"
                           size="sm"
-                          className="text-destructive hover:text-destructive"
                           onClick={() => handleDelete(f.id)}
+                          aria-label="Supprimer ce fournisseur"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>

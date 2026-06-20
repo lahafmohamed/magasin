@@ -32,12 +32,33 @@ const JWT_EXPIRATION = process.env.JWT_EXPIRATION || '7d';
 export { JWT_SECRET, JWT_EXPIRATION };
 
 /**
+ * Extract the JWT from the request: httpOnly `auth_token` cookie (primary) or
+ * `Authorization: Bearer` header (fallback for native/transitional clients).
+ * Cookies are parsed from the raw header to avoid a cookie-parser dependency.
+ */
+export const extractToken = (req: { headers: { cookie?: string; authorization?: string } }): string | null => {
+  const cookieHeader = req.headers.cookie;
+  if (cookieHeader) {
+    const match = cookieHeader
+      .split(';')
+      .map((c) => c.trim())
+      .find((c) => c.startsWith('auth_token='));
+    if (match) return decodeURIComponent(match.slice('auth_token='.length));
+  }
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.split(' ')[1];
+  }
+  return null;
+};
+
+/**
  * Middleware to verify JWT token and attach user to request
  */
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-  const authHeader = req.headers.authorization;
+  const token = extractToken(req);
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  if (!token) {
     res.status(401).json({
       success: false,
       error: 'Token d\'authentification manquant',
@@ -45,7 +66,6 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     return;
   }
 
-  const token = authHeader.split(' ')[1];
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }) as {
@@ -163,15 +183,27 @@ export const requirePermission = (permissionCode: string) => {
     }
 
     try {
-      // Check if user has permission, taking custom overrides into account
-      const { rows } = await pool.query(
-        `SELECT 1 FROM utilisateurs u
-         LEFT JOIN role_permissions rp ON u.role_id = rp.role_id AND NOT u.customiser_permissions
-         LEFT JOIN user_permissions up ON u.id = up.utilisateur_id AND u.customiser_permissions
-         JOIN permissions p ON p.id = CASE WHEN u.customiser_permissions THEN up.permission_id ELSE rp.permission_id END
-         WHERE u.id = $1 AND p.code = $2`,
-        [req.user.id, permissionCode]
+      // Per-user overrides REPLACE role permissions when customiser_permissions is set.
+      // Branch explicitly (the old single-query CASE/LEFT-JOIN form was fragile).
+      const { rows: userRows } = await pool.query(
+        'SELECT COALESCE(customiser_permissions, false) AS custom FROM utilisateurs WHERE id = $1',
+        [req.user.id]
       );
+      const useOverrides = userRows[0]?.custom === true;
+
+      const rows = useOverrides
+        ? (await pool.query(
+            `SELECT 1 FROM user_permissions up
+             JOIN permissions p ON p.id = up.permission_id
+             WHERE up.utilisateur_id = $1 AND p.code = $2`,
+            [req.user.id, permissionCode]
+          )).rows
+        : (await pool.query(
+            `SELECT 1 FROM role_permissions rp
+             JOIN permissions p ON p.id = rp.permission_id
+             WHERE rp.role_id = (SELECT role_id FROM utilisateurs WHERE id = $1) AND p.code = $2`,
+            [req.user.id, permissionCode]
+          )).rows;
 
       if (rows.length === 0) {
         res.status(403).json({

@@ -1,98 +1,105 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useForm, useFieldArray, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { toast } from 'sonner';
 import { ArrowLeft, Check, Plus, X } from 'lucide-react';
 import { creditNoteService } from '@/services/api';
+import { useDraft } from '@/hooks/useDraft';
 import { TiersPicker } from '@/components/TiersPicker';
 import { Tiers } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
-interface AvoirLigne {
-  description: string;
-  quantite: number;
-  prix_unitaire: number;
-}
+const ligneSchema = z.object({
+  description: z.string().trim().min(1, 'Chaque ligne doit contenir une description'),
+  quantite: z.number().positive('Quantité ou prix invalide'),
+  prix_unitaire: z.number().min(0, 'Quantité ou prix invalide'),
+});
+
+const avoirSchema = z.object({
+  tiers: z
+    .custom<Tiers | null>()
+    .refine((t) => !!t?.id, 'Le tiers (client) est obligatoire'),
+  factureId: z
+    .string()
+    .refine((v) => Number(v) > 0, "La facture d origine est obligatoire"),
+  notes: z.string().optional(),
+  lignes: z.array(ligneSchema).min(1, 'Ajoutez au moins une ligne'),
+});
+
+type AvoirFormValues = z.infer<typeof avoirSchema>;
 
 export default function NouvelAvoir() {
   const navigate = useNavigate();
-  const [selectedTiers, setSelectedTiers] = useState<Tiers | null>(null);
-  const [factureId, setFactureId] = useState('');
-  const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [lignes, setLignes] = useState<AvoirLigne[]>([
-    { description: '', quantite: 1, prix_unitaire: 0 },
-  ]);
 
-  const addLine = () => {
-    setLignes((prev) => [...prev, { description: '', quantite: 1, prix_unitaire: 0 }]);
-  };
+  const {
+    control,
+    register,
+    handleSubmit,
+    watch,
+    reset,
+    formState: { errors, isDirty },
+  } = useForm<AvoirFormValues>({
+    resolver: zodResolver(avoirSchema),
+    defaultValues: {
+      tiers: null,
+      factureId: '',
+      notes: '',
+      lignes: [{ description: '', quantite: 1, prix_unitaire: 0 }],
+    },
+  });
 
-  const removeLine = (index: number) => {
-    setLignes((prev) => prev.filter((_, i) => i !== index));
-  };
+  // --- Draft autosave + unsaved-changes guard ------------------------------
+  const { draft, save, clear, hasDraft } = useDraft<AvoirFormValues>('avoir:new');
+  const [showDraftBanner, setShowDraftBanner] = useState(hasDraft);
 
-  const updateLine = (index: number, field: keyof AvoirLigne, value: string | number) => {
-    setLignes((prev) => {
-      const copy = [...prev];
-      copy[index] = { ...copy[index], [field]: value };
-      return copy;
-    });
-  };
+  useEffect(() => {
+    const sub = watch((v) => save(v as AvoirFormValues));
+    return () => sub.unsubscribe();
+  }, [watch, save]);
 
-  const total = lignes.reduce(
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
+  const { fields, append, remove } = useFieldArray({ control, name: 'lignes' });
+
+  // Total HT calculé en direct depuis les valeurs surveillées (identique).
+  const watchedLignes = watch('lignes');
+  const total = (watchedLignes ?? []).reduce(
     (sum, ligne) => sum + Number(ligne.quantite || 0) * Number(ligne.prix_unitaire || 0),
     0
   );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const clientIdNum = selectedTiers?.id;
-    const factureIdNum = Number(factureId);
-
-    if (!clientIdNum) {
-      toast.error('Le tiers (client) est obligatoire');
-      return;
-    }
-
-    if (!factureIdNum || factureIdNum <= 0) {
-      toast.error('La facture d origine est obligatoire');
-      return;
-    }
-
-    if (lignes.length === 0) {
-      toast.error('Ajoutez au moins une ligne');
-      return;
-    }
-
-    for (const ligne of lignes) {
-      if (!ligne.description.trim()) {
-        toast.error('Chaque ligne doit contenir une description');
-        return;
-      }
-      if (ligne.quantite <= 0 || ligne.prix_unitaire < 0) {
-        toast.error('Quantité ou prix invalide');
-        return;
-      }
-    }
-
+  const onValid = async (values: AvoirFormValues) => {
     setSubmitting(true);
     try {
       await creditNoteService.createManual({
-        tiers_id: clientIdNum,
-        facture_origine_id: factureIdNum,
-        lignes: lignes.map((ligne) => ({
+        tiers_id: values.tiers!.id,
+        facture_origine_id: Number(values.factureId),
+        lignes: values.lignes.map((ligne) => ({
           description: ligne.description,
           quantite: Number(ligne.quantite),
           prix_unitaire: Number(ligne.prix_unitaire),
         })),
-        notes: notes || undefined,
+        notes: values.notes || undefined,
         avoir_type: 'erreur',
       });
+      clear();
       toast.success('Avoir créé avec succès');
       navigate('/avoirs');
     } catch (error: any) {
@@ -115,7 +122,36 @@ export default function NouvelAvoir() {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit(onValid)} className="space-y-6">
+        {showDraftBanner && (
+          <div className="rounded-lg border bg-muted/50 p-3 text-sm flex items-center justify-between gap-3">
+            <span>Un brouillon non enregistré a été récupéré.</span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  if (draft) reset(draft);
+                  setShowDraftBanner(false);
+                }}
+              >
+                Restaurer
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  clear();
+                  setShowDraftBanner(false);
+                }}
+              >
+                Ignorer
+              </Button>
+            </div>
+          </div>
+        )}
+
         <Card>
           <CardHeader>
             <CardTitle>Références</CardTitle>
@@ -123,15 +159,38 @@ export default function NouvelAvoir() {
           </CardHeader>
           <CardContent className="grid sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
-              <TiersPicker role="client" value={selectedTiers} onChange={setSelectedTiers} />
+              <Label className="block mb-1.5">
+                Client (Tiers)<span className="text-destructive"> *</span>
+              </Label>
+              <Controller
+                control={control}
+                name="tiers"
+                render={({ field }) => (
+                  <TiersPicker role="client" value={field.value} onChange={field.onChange} />
+                )}
+              />
+              {errors.tiers && (
+                <p role="alert" className="text-xs text-danger mt-1.5">
+                  {errors.tiers.message}
+                </p>
+              )}
             </div>
-            <Input
-              type="number"
-              min={1}
-              placeholder="ID Facture d origine"
-              value={factureId}
-              onChange={(e) => setFactureId(e.target.value)}
-            />
+            <div className="space-y-1.5">
+              <Label htmlFor="avoir-facture-origine">Facture d origine<span className="text-destructive"> *</span></Label>
+              <Input
+                id="avoir-facture-origine"
+                type="number"
+                min={1}
+                placeholder="ID Facture d origine"
+                aria-invalid={errors.factureId ? true : undefined}
+                {...register('factureId')}
+              />
+              {errors.factureId && (
+                <p role="alert" className="text-xs text-danger">
+                  {errors.factureId.message}
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -143,46 +202,64 @@ export default function NouvelAvoir() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="w-32">Quantité</TableHead>
-                  <TableHead className="w-40">Prix unitaire</TableHead>
+                  <TableHead>Description<span className="text-destructive"> *</span></TableHead>
+                  <TableHead className="w-32">Quantité<span className="text-destructive"> *</span></TableHead>
+                  <TableHead className="w-40">Prix unitaire<span className="text-destructive"> *</span></TableHead>
                   <TableHead className="w-16"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {lignes.map((ligne, index) => (
-                  <TableRow key={index}>
+                {fields.map((field, index) => (
+                  <TableRow key={field.id}>
                     <TableCell>
                       <Input
+                        aria-label="Description"
                         placeholder="Motif / produit"
-                        value={ligne.description}
-                        onChange={(e) => updateLine(index, 'description', e.target.value)}
+                        aria-invalid={errors.lignes?.[index]?.description ? true : undefined}
+                        {...register(`lignes.${index}.description` as const)}
                       />
+                      {errors.lignes?.[index]?.description && (
+                        <p role="alert" className="text-xs text-danger mt-1">
+                          {errors.lignes[index]?.description?.message}
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Input
+                        aria-label="Quantité"
                         type="number"
                         min={1}
-                        value={ligne.quantite}
-                        onChange={(e) => updateLine(index, 'quantite', Number(e.target.value))}
+                        aria-invalid={errors.lignes?.[index]?.quantite ? true : undefined}
+                        {...register(`lignes.${index}.quantite` as const, { valueAsNumber: true })}
                       />
+                      {errors.lignes?.[index]?.quantite && (
+                        <p role="alert" className="text-xs text-danger mt-1">
+                          {errors.lignes[index]?.quantite?.message}
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Input
+                        aria-label="Prix"
                         type="number"
                         min={0}
                         step="0.01"
-                        value={ligne.prix_unitaire}
-                        onChange={(e) => updateLine(index, 'prix_unitaire', Number(e.target.value))}
+                        aria-invalid={errors.lignes?.[index]?.prix_unitaire ? true : undefined}
+                        {...register(`lignes.${index}.prix_unitaire` as const, { valueAsNumber: true })}
                       />
+                      {errors.lignes?.[index]?.prix_unitaire && (
+                        <p role="alert" className="text-xs text-danger mt-1">
+                          {errors.lignes[index]?.prix_unitaire?.message}
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        onClick={() => removeLine(index)}
-                        disabled={lignes.length === 1}
+                        onClick={() => remove(index)}
+                        disabled={fields.length === 1}
                       >
                         <X className="h-4 w-4" />
                       </Button>
@@ -191,7 +268,16 @@ export default function NouvelAvoir() {
                 ))}
               </TableBody>
             </Table>
-            <Button type="button" variant="outline" onClick={addLine}>
+            {errors.lignes?.root && (
+              <p role="alert" className="text-xs text-danger">
+                {errors.lignes.root.message}
+              </p>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => append({ description: '', quantite: 1, prix_unitaire: 0 })}
+            >
               <Plus className="h-4 w-4 mr-2" />
               Ajouter une ligne
             </Button>
@@ -203,12 +289,7 @@ export default function NouvelAvoir() {
             <CardTitle>Notes</CardTitle>
           </CardHeader>
           <CardContent>
-            <Textarea
-              placeholder="Commentaires optionnels"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={3}
-            />
+            <Textarea placeholder="Commentaires optionnels" rows={3} {...register('notes')} />
           </CardContent>
         </Card>
 

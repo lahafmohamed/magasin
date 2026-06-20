@@ -79,7 +79,14 @@ export const PaymentStatusBar: React.FC<PaymentStatusBarProps> = ({
             <span className="text-muted-foreground">Progression du paiement</span>
             <span className="font-medium num">{percentage.toFixed(0)}%</span>
           </div>
-          <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+          <div
+            className="w-full bg-muted rounded-full h-2 overflow-hidden"
+            role="progressbar"
+            aria-valuenow={Math.round(percentage)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Progression du paiement : ${percentage.toFixed(0)}%`}
+          >
             <div
               className={`h-full transition-all duration-500 ${cfg.barColor}`}
               style={{ width: `${percentage}%` }}

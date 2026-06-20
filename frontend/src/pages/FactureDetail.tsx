@@ -6,11 +6,23 @@ import { PaymentStatusBar } from '../components/PaymentStatusBar';
 import { PaymentHistory } from '../components/PaymentHistory';
 import { PaymentModal } from '../components/PaymentModal';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import StatusBadge from '@/components/StatusBadge';
 import { formatXOF } from '@/utils/format';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DocumentPrint } from '@/components/ui/print-layout';
+import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
 import { ArrowLeft, FileText, User, Calendar, Printer, Download, CreditCard, ArrowLeftRight } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -22,11 +34,17 @@ export default function FactureDetail() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showPrintLayout, setShowPrintLayout] = useState(false);
+  const [printFormat, setPrintFormat] = useState<'A4' | 'A5'>(() => (localStorage.getItem('print_format') as 'A4' | 'A5') || 'A4');
   const [acomptesDispo, setAcomptesDispo] = useState<any[]>([]);
   const [showCompensationModal, setShowCompensationModal] = useState(false);
   const [compensationMontant, setCompensationMontant] = useState('');
   const [compensationLoading, setCompensationLoading] = useState(false);
   const [soldeFourn, setSoldeFourn] = useState<number>(0);
+  const [acompteToApply, setAcompteToApply] = useState<any | null>(null);
+  const [applyMontant, setApplyMontant] = useState('');
+  const [applyLoading, setApplyLoading] = useState(false);
+  const [paiementToDelete, setPaiementToDelete] = useState<number | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     loadFacture();
@@ -100,28 +118,45 @@ export default function FactureDetail() {
     }
   };
 
-  const handleApplyAcompte = async (acompte: any) => {
+  const acompteMaxApply = (() => {
+    if (!facture || !acompteToApply) return 0;
+    const restant = parseFloat(acompteToApply.montant_restant ?? acompteToApply.montant);
+    const factureReste = parseFloat(facture.remaining_due as any) || (parseFloat(facture.total as any) - parseFloat(facture.montant_paye as any));
+    return Math.min(restant, factureReste);
+  })();
+
+  const openApplyAcompte = (acompte: any) => {
     if (!facture) return;
     const restant = parseFloat(acompte.montant_restant ?? acompte.montant);
     const factureReste = parseFloat(facture.remaining_due as any) || (parseFloat(facture.total as any) - parseFloat(facture.montant_paye as any));
     const maxApply = Math.min(restant, factureReste);
-    const input = window.prompt(`Montant à appliquer (max ${maxApply.toFixed(2)}):`, String(maxApply));
-    if (!input) return;
-    const montant = parseFloat(input);
+    setAcompteToApply(acompte);
+    setApplyMontant(maxApply.toFixed(2));
+  };
+
+  const handleApplyAcompte = async () => {
+    if (!facture || !acompteToApply) return;
+    const maxApply = acompteMaxApply;
+    const montant = parseFloat(applyMontant);
     if (Number.isNaN(montant) || montant <= 0 || montant > maxApply + 0.005) {
       toast.error(`Montant invalide (max ${maxApply.toFixed(2)})`);
       return;
     }
+    setApplyLoading(true);
     try {
-      await acompteService.apply(acompte.id, {
+      await acompteService.apply(acompteToApply.id, {
         facture_id: facture.id,
         montant,
-        idempotency_key: `apply-${acompte.id}-${facture.id}-${Date.now()}`,
+        idempotency_key: `apply-${acompteToApply.id}-${facture.id}-${Date.now()}`,
       });
       toast.success(`Acompte appliqué: ${montant.toFixed(2)} XOF`);
+      setAcompteToApply(null);
+      setApplyMontant('');
       await loadFacture();
     } catch (e: any) {
       toast.error(e?.response?.data?.error || 'Erreur application acompte');
+    } finally {
+      setApplyLoading(false);
     }
   };
 
@@ -138,16 +173,23 @@ export default function FactureDetail() {
     await loadFacture();
   };
 
-  const handleDeletePayment = async (paiementId: number) => {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer ce paiement?')) return;
+  const handleDeletePayment = (paiementId: number) => {
+    setPaiementToDelete(paiementId);
+  };
 
+  const confirmDeletePayment = async () => {
+    if (paiementToDelete == null) return;
+    setDeleteLoading(true);
     try {
-      await paiementService.delete(paiementId);
+      await paiementService.delete(paiementToDelete);
       toast.success('Paiement supprimé');
+      setPaiementToDelete(null);
       await loadFacture();
     } catch (error) {
       toast.error('Erreur lors de la suppression du paiement');
       console.error(error);
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -231,6 +273,24 @@ export default function FactureDetail() {
           </Button>
         </div>
       </div>
+
+      {/* Document lifecycle strip */}
+      <DocumentLifecycle
+        steps={[
+          {
+            label: 'Devis',
+            numero: (facture.origine as any)?.numero_devis ?? null,
+            to: (facture.origine as any)?.devis_id ? `/devis/${(facture.origine as any).devis_id}` : null,
+          },
+          {
+            label: 'Bon de livraison',
+            numero: (facture.origine as any)?.numero_bl ?? null,
+            to: (facture.origine as any)?.bl_id ? `/bons-livraison/${(facture.origine as any).bl_id}` : null,
+          },
+          { label: 'Facture', numero: facture.numero_facture || `Facture #${facture.id}`, current: true },
+          { label: 'Avoir', numero: null },
+        ]}
+      />
 
       {/* Payment Status Bar */}
       {facture.statut !== 'annulee' && (
@@ -491,7 +551,7 @@ export default function FactureDetail() {
                         {formatXOF(restant)}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button size="sm" variant="outline" onClick={() => handleApplyAcompte(a)}>
+                        <Button size="sm" variant="outline" onClick={() => openApplyAcompte(a)}>
                           Appliquer
                         </Button>
                       </TableCell>
@@ -505,51 +565,123 @@ export default function FactureDetail() {
       )}
 
       {/* Compensation Modal */}
-      {showCompensationModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <h2 className="text-xl font-bold mb-1 flex items-center gap-2">
+      <Dialog
+        open={showCompensationModal}
+        onOpenChange={(open) => {
+          if (!compensationLoading) setShowCompensationModal(open);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
               <ArrowLeftRight className="h-5 w-5 text-amber-600" />
               Compenser avec dette fournisseur
-            </h2>
-            <p className="text-sm text-muted-foreground mb-4">
+            </DialogTitle>
+            <DialogDescription>
               Ce montant sera déduit à la fois de ce que le client vous doit (facture client) et de ce que vous lui devez (compte fournisseur).
-            </p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium block mb-1">Reste dû sur la facture</label>
-                <p className="text-lg font-bold text-red-600">{remainingDue.toLocaleString('fr-FR')} XOF</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium block mb-1">Votre dette fournisseur envers ce tiers</label>
-                <p className="text-lg font-bold text-blue-600">{soldeFourn.toLocaleString('fr-FR')} XOF</p>
-              </div>
-              <div>
-                <label className="text-sm font-semibold block mb-1">
-                  Montant à compenser (max {Math.min(remainingDue, soldeFourn).toLocaleString('fr-FR')} XOF)
-                </label>
-                <input
-                  type="number"
-                  className="w-full border rounded-md px-3 py-2 text-sm"
-                  value={compensationMontant}
-                  onChange={(e) => setCompensationMontant(e.target.value)}
-                  min={0.01}
-                  max={Math.min(remainingDue, soldeFourn)}
-                  step={0.01}
-                />
-              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <span className="text-sm font-medium block mb-1">Reste dû sur la facture</span>
+              <p className="text-lg font-bold text-red-600">{remainingDue.toLocaleString('fr-FR')} XOF</p>
             </div>
-            <div className="flex gap-2 mt-6 justify-end">
-              <Button variant="outline" onClick={() => setShowCompensationModal(false)} disabled={compensationLoading}>
-                Annuler
-              </Button>
-              <Button onClick={handleCompensation} disabled={compensationLoading} className="bg-amber-600 hover:bg-amber-700 text-white">
-                {compensationLoading ? 'En cours...' : 'Confirmer la compensation'}
-              </Button>
+            <div>
+              <span className="text-sm font-medium block mb-1">Votre dette fournisseur envers ce tiers</span>
+              <p className="text-lg font-bold text-blue-600">{soldeFourn.toLocaleString('fr-FR')} XOF</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="compensation-montant">
+                Montant à compenser (max {Math.min(remainingDue, soldeFourn).toLocaleString('fr-FR')} XOF)
+              </Label>
+              <Input
+                id="compensation-montant"
+                type="number"
+                value={compensationMontant}
+                onChange={(e) => setCompensationMontant(e.target.value)}
+                min={0.01}
+                max={Math.min(remainingDue, soldeFourn)}
+                step={0.01}
+              />
             </div>
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCompensationModal(false)} disabled={compensationLoading}>
+              Annuler
+            </Button>
+            <Button onClick={handleCompensation} disabled={compensationLoading} className="bg-amber-600 hover:bg-amber-700 text-white">
+              {compensationLoading ? 'En cours...' : 'Confirmer la compensation'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Apply acompte Dialog */}
+      <Dialog
+        open={!!acompteToApply}
+        onOpenChange={(open) => {
+          if (!open && !applyLoading) setAcompteToApply(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CreditCard className="h-5 w-5 text-blue-600" />
+              Appliquer l'acompte
+            </DialogTitle>
+            <DialogDescription>
+              Indiquez le montant de l'acompte à appliquer sur cette facture.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="apply-acompte-montant">
+              Montant à appliquer (max {acompteMaxApply.toFixed(2)} XOF)
+            </Label>
+            <Input
+              id="apply-acompte-montant"
+              type="number"
+              value={applyMontant}
+              onChange={(e) => setApplyMontant(e.target.value)}
+              min={0.01}
+              max={acompteMaxApply}
+              step={0.01}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAcompteToApply(null)} disabled={applyLoading}>
+              Annuler
+            </Button>
+            <Button onClick={handleApplyAcompte} disabled={applyLoading}>
+              {applyLoading ? 'En cours...' : 'Valider'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete payment confirmation Dialog */}
+      <Dialog
+        open={paiementToDelete != null}
+        onOpenChange={(open) => {
+          if (!open && !deleteLoading) setPaiementToDelete(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Supprimer le paiement</DialogTitle>
+            <DialogDescription>
+              Êtes-vous sûr de vouloir supprimer ce paiement ? Cette action est irréversible.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPaiementToDelete(null)} disabled={deleteLoading}>
+              Annuler
+            </Button>
+            <Button variant="destructive" onClick={confirmDeletePayment} disabled={deleteLoading}>
+              {deleteLoading ? 'Suppression...' : 'Supprimer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Payment Modal */}
       <PaymentModal
@@ -565,7 +697,22 @@ export default function FactureDetail() {
           <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8 print:max-w-none print:w-full print:my-0 print:shadow-none print:rounded-none">
             <div className="sticky top-0 z-10 bg-white border-b p-4 flex justify-between items-center print:hidden">
               <h2 className="text-lg font-semibold">Aperçu d'impression</h2>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Format:</span>
+                  <Select
+                    value={printFormat}
+                    onValueChange={(v) => { const f = v as 'A4' | 'A5'; setPrintFormat(f); localStorage.setItem('print_format', f); }}
+                  >
+                    <SelectTrigger className="h-8 w-auto px-2 text-xs" aria-label="Format d'impression">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="A4">A4</SelectItem>
+                      <SelectItem value="A5">Ticket A5</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button variant="outline" onClick={() => setShowPrintLayout(false)}>Fermer</Button>
                 <Button onClick={() => window.print()}>
                   <Printer className="h-4 w-4 mr-2" />
@@ -574,6 +721,7 @@ export default function FactureDetail() {
               </div>
             </div>
             <DocumentPrint
+              format={printFormat}
               docType="facture"
               numero={facture.numero_facture || `F${String(facture.id).padStart(5, '0')}`}
               dateDoc={facture.date_facture}

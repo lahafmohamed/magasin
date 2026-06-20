@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authorize } from '../middleware/auth';
 import pool from '../db/connection';
 import { validateBody } from '../middleware/validation';
 import { createClientSchema, updateClientSchema } from '../validation/schemas';
@@ -128,7 +128,7 @@ router.get('/with-balance', async (req, res) => {
         ) p ON p.tiers_id = c.id
         LEFT JOIN (
           SELECT tiers_id, SUM(total) as total_avoirs, MAX(date_avoir) as dernier_avoir
-          FROM factures_avoir WHERE statut IN ('valide', 'utilise') GROUP BY tiers_id
+          FROM factures_avoir WHERE statut = 'valide' GROUP BY tiers_id
         ) fa ON fa.tiers_id = c.id
         LEFT JOIN (
           SELECT tiers_id, SUM(montant) as total_acomptes, MAX(date_acompte) as dernier_acompte
@@ -238,7 +238,7 @@ router.get('/:id/compte', async (req, res) => {
     const totauxQuery = `
       WITH
       f AS (SELECT COALESCE(SUM(total), 0) as total FROM factures WHERE tiers_id = $1 AND statut != 'annulee' AND deleted_at IS NULL),
-      fa AS (SELECT COALESCE(SUM(total), 0) as total FROM factures_avoir WHERE tiers_id = $1 AND statut IN ('valide', 'utilise')),
+      fa AS (SELECT COALESCE(SUM(total), 0) as total FROM factures_avoir WHERE tiers_id = $1 AND statut = 'valide'),
       ac AS (SELECT COALESCE(SUM(montant), 0) as total FROM acomptes_clients WHERE tiers_id = $1 AND statut IN ('disponible', 'utilise')),
       p AS (SELECT COALESCE(SUM(p.montant), 0) as total FROM paiements p JOIN factures fa ON fa.id = p.facture_id WHERE fa.tiers_id = $1 AND fa.deleted_at IS NULL),
       alloc AS (SELECT COALESCE(SUM(montant_paye), 0) as total FROM factures WHERE tiers_id = $1 AND statut != 'annulee' AND deleted_at IS NULL)
@@ -307,7 +307,7 @@ router.get('/:id/compte', async (req, res) => {
           NULL as montant_paye,
           NULL as restant
         FROM factures_avoir
-        WHERE tiers_id = $1 AND statut IN ('valide', 'utilise')
+        WHERE tiers_id = $1 AND statut = 'valide'
 
         UNION ALL
 
@@ -418,7 +418,7 @@ router.get('/:id/historique', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/', validateBody(createClientSchema), async (req: Request, res: Response) => {
+router.post('/', authorize('admin', 'manager'), validateBody(createClientSchema), async (req: Request, res: Response) => {
   try {
     const authReq = req as AuthRequest;
     const { nom, prenom, email, telephone, adresse, nif } = req.body;
@@ -445,7 +445,7 @@ router.post('/', validateBody(createClientSchema), async (req: Request, res: Res
   }
 });
 
-router.put('/:id', validateBody(updateClientSchema), async (req: Request, res: Response) => {
+router.put('/:id', authorize('admin', 'manager'), validateBody(updateClientSchema), async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     const authReq = req as AuthRequest;
@@ -497,11 +497,11 @@ router.put('/:id', validateBody(updateClientSchema), async (req: Request, res: R
   }
 });
 
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', authorize('admin', 'manager'), async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     const authReq = req as AuthRequest;
-    
+
     // Check if client is linked to invoices
     const { rows: invoiceRows } = await pool.query(
       'SELECT id FROM factures WHERE tiers_id = $1 AND deleted_at IS NULL LIMIT 1',

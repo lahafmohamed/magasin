@@ -11,6 +11,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EmptyState } from '@/components/ui/empty-state';
+import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 
 interface StockLocation {
   id: number;
@@ -126,6 +129,23 @@ export default function StockTransfers() {
       .sort((x, y) => y.score - x.score)
       .map((row) => row.t);
   }, [transfers, search, statusFilter]);
+
+  type TransferSortKey = 'numero_transfer' | 'statut' | 'date_transfer';
+  const [sort, setSort] = useState<SortState<TransferSortKey> | null>(null);
+  const handleSort = (key: TransferSortKey) => setSort((s) => toggleSort(s, key));
+
+  const sortedTransfers = useMemo(() => {
+    if (!sort) return filteredTransfers;
+    const arr = [...filteredTransfers];
+    arr.sort((a, b) => {
+      const cmp =
+        sort.key === 'date_transfer'
+          ? new Date(a.date_transfer).getTime() - new Date(b.date_transfer).getTime()
+          : String(a[sort.key]).localeCompare(String(b[sort.key]), 'fr');
+      return sort.dir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [filteredTransfers, sort]);
 
   const handleOpenDetail = async (transfer: Transfer) => {
     try {
@@ -262,23 +282,24 @@ export default function StockTransfers() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Rechercher N°, source, destination..."
-                className="pl-10 h-10"
+                className="pl-10 sm:pl-10 h-10"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
-              <select
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                <option value="all">Tous statuts</option>
-                {ALL_STATUSES.map((s) => (
-                  <option key={s} value={s}>{STATUS_CONFIG[s]?.label ?? s}</option>
-                ))}
-              </select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="h-9 w-auto" aria-label="Filtrer par statut">
+                  <SelectValue placeholder="Tous statuts" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tous statuts</SelectItem>
+                  {ALL_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>{STATUS_CONFIG[s]?.label ?? s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <Button variant="outline" size="sm" onClick={fetchAll} className="gap-2 h-10">
               <RefreshCw className="h-4 w-4" />
@@ -304,26 +325,23 @@ export default function StockTransfers() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>N° Transfert</TableHead>
+                <SortableHeader columnKey="numero_transfer" sort={sort} onSort={handleSort}>N° Transfert</SortableHeader>
                 <TableHead>Type</TableHead>
                 <TableHead>Trajet</TableHead>
-                <TableHead>Statut</TableHead>
-                <TableHead>Date</TableHead>
+                <SortableHeader columnKey="statut" sort={sort} onSort={handleSort}>Statut</SortableHeader>
+                <SortableHeader columnKey="date_transfer" sort={sort} onSort={handleSort}>Date</SortableHeader>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredTransfers.length === 0 ? (
+              {sortedTransfers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-12">
-                    <div className="flex flex-col items-center gap-2">
-                      <Package className="h-10 w-10 text-muted-foreground/40" />
-                      <p className="text-muted-foreground">Aucun transfert trouvé</p>
-                    </div>
+                  <TableCell colSpan={6} className="p-0">
+                    <EmptyState icon={Package} title="Aucun transfert trouvé" />
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredTransfers.map((transfer) => (
+                sortedTransfers.map((transfer) => (
                   <TableRow
                     key={transfer.id}
                     className="hover:bg-muted/50 cursor-pointer"
@@ -457,33 +475,39 @@ export default function StockTransfers() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Source *</Label>
-                  <select
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={formData.location_source_id}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, location_source_id: e.target.value }))}
-                    required
+                  <Select
+                    value={formData.location_source_id === '' ? '__none' : formData.location_source_id}
+                    onValueChange={(v) => setFormData((prev) => ({ ...prev, location_source_id: v === '__none' ? '' : v }))}
                   >
-                    <option value="">Sélectionner...</option>
-                    {locations.map((loc) => (
-                      <option key={loc.id} value={loc.id}>{loc.nom}</option>
-                    ))}
-                  </select>
+                    <SelectTrigger aria-label="Source">
+                      <SelectValue placeholder="Sélectionner..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">Sélectionner...</SelectItem>
+                      {locations.map((loc) => (
+                        <SelectItem key={loc.id} value={String(loc.id)}>{loc.nom}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label>Destination *</Label>
-                  <select
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={formData.location_destination_id}
-                    onChange={(e) => setFormData((prev) => ({ ...prev, location_destination_id: e.target.value }))}
-                    required
+                  <Select
+                    value={formData.location_destination_id === '' ? '__none' : formData.location_destination_id}
+                    onValueChange={(v) => setFormData((prev) => ({ ...prev, location_destination_id: v === '__none' ? '' : v }))}
                   >
-                    <option value="">Sélectionner...</option>
-                    {locations
-                      .filter((l) => l.id.toString() !== formData.location_source_id)
-                      .map((loc) => (
-                        <option key={loc.id} value={loc.id}>{loc.nom}</option>
-                      ))}
-                  </select>
+                    <SelectTrigger aria-label="Destination">
+                      <SelectValue placeholder="Sélectionner..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">Sélectionner...</SelectItem>
+                      {locations
+                        .filter((l) => l.id.toString() !== formData.location_source_id)
+                        .map((loc) => (
+                          <SelectItem key={loc.id} value={String(loc.id)}>{loc.nom}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
@@ -514,19 +538,22 @@ export default function StockTransfers() {
                 <div className="space-y-2">
                   {formData.lignes.map((ligne, index) => (
                     <div key={index} className="flex gap-2 items-center">
-                      <select
-                        className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                        value={ligne.produit_id}
-                        onChange={(e) => updateLine(index, 'produit_id', parseInt(e.target.value))}
-                        required
+                      <Select
+                        value={String(ligne.produit_id)}
+                        onValueChange={(v) => updateLine(index, 'produit_id', parseInt(v))}
                       >
-                        <option value={0}>Choisir produit...</option>
-                        {products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.reference} — {p.nom} (stock: {p.stock})
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="flex-1" aria-label="Produit">
+                          <SelectValue placeholder="Choisir produit..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="0">Choisir produit...</SelectItem>
+                          {products.map((p) => (
+                            <SelectItem key={p.id} value={String(p.id)}>
+                              {p.reference} — {p.nom} (stock: {p.stock})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <Input
                         type="number"
                         className="w-24"
@@ -542,6 +569,7 @@ export default function StockTransfers() {
                         size="sm"
                         className="text-destructive hover:text-destructive px-2"
                         onClick={() => removeLine(index)}
+                        aria-label="Supprimer la ligne"
                       >
                         <X className="h-4 w-4" />
                       </Button>

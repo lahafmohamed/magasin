@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Check, Loader2, Plus } from 'lucide-react';
+import { Check, Loader2, Plus, Package } from 'lucide-react';
 import { stockLocationService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -218,8 +218,9 @@ export default function StockLocations() {
                 />
               </div>
               {filteredStockLevels.length === 0 ? (
-                <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">
-                  Aucun stock dans cette location
+                <div className="flex flex-col items-center gap-2 py-12">
+                  <Package className="h-10 w-10 text-muted-foreground/40" />
+                  <p className="text-muted-foreground">Aucun stock dans cette location</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-md border">

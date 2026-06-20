@@ -2,12 +2,22 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { formatFCFA as formatXOF } from '../utils/format';
-import { ArrowLeft, FileCheck, Truck, Printer, Download } from 'lucide-react';
+import { ArrowLeft, FileCheck, Truck, Printer, Download, Loader2 } from 'lucide-react';
 import { bonLivraisonService } from '@/services/api';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { DocumentPrint } from '@/components/ui/print-layout';
+import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
 
 export default function BonLivraisonDetail() {
   const { id } = useParams();
@@ -16,6 +26,9 @@ export default function BonLivraisonDetail() {
   const [actionLoading, setActionLoading] = useState(false);
   const [bon, setBon] = useState<any>(null);
   const [showPrint, setShowPrint] = useState(false);
+  const [showDeliverDialog, setShowDeliverDialog] = useState(false);
+  const [showConvertDialog, setShowConvertDialog] = useState(false);
+  const [printFormat, setPrintFormat] = useState<'A4' | 'A5'>(() => (localStorage.getItem('print_format') as 'A4' | 'A5') || 'A4');
 
   useEffect(() => {
     const load = async () => {
@@ -43,12 +56,12 @@ export default function BonLivraisonDetail() {
 
   const handleMarkDelivered = async () => {
     if (!bon?.id) return;
-    if (!confirm('Marquer ce bon de livraison comme livré ?')) return;
 
     try {
       setActionLoading(true);
       await bonLivraisonService.updateStatut(Number(bon.id), 'livre');
       toast.success('Bon de livraison marqué comme livré');
+      setShowDeliverDialog(false);
       const refreshed = await bonLivraisonService.getById(Number(bon.id));
       setBon(refreshed?.data || refreshed);
     } catch (error: any) {
@@ -60,13 +73,13 @@ export default function BonLivraisonDetail() {
 
   const handleConvert = async () => {
     if (!bon?.id) return;
-    if (!confirm('Créer la facture depuis ce bon de livraison ?')) return;
 
     try {
       setActionLoading(true);
       const result = await bonLivraisonService.convertToFacture(Number(bon.id));
       const factureId = result?.facture_id || result?.data?.facture_id;
       toast.success(`Facture ${result?.numero_facture || ''} créée`.trim());
+      setShowConvertDialog(false);
       if (factureId) {
         navigate(`/factures/${factureId}`);
         return;
@@ -81,7 +94,12 @@ export default function BonLivraisonDetail() {
   };
 
   if (loading) {
-    return <div className="p-6">Chargement...</div>;
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-muted-foreground">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <p>Chargement...</p>
+      </div>
+    );
   }
 
   if (!bon) {
@@ -119,19 +137,36 @@ export default function BonLivraisonDetail() {
             Télécharger PDF
           </Button>
           {canMarkDelivered && (
-            <Button onClick={handleMarkDelivered} disabled={actionLoading}>
+            <Button onClick={() => setShowDeliverDialog(true)} disabled={actionLoading}>
               <Truck className="h-4 w-4 mr-2" />
               Marquer livré
             </Button>
           )}
           {canConvert && (
-            <Button onClick={handleConvert} disabled={actionLoading}>
+            <Button onClick={() => setShowConvertDialog(true)} disabled={actionLoading}>
               <FileCheck className="h-4 w-4 mr-2" />
               Créer facture
             </Button>
           )}
         </div>
       </div>
+
+      <DocumentLifecycle
+        steps={[
+          {
+            label: 'Devis',
+            numero: bon.devis_numero,
+            to: bon.devis_id ? `/devis/${bon.devis_id}` : null,
+          },
+          { label: 'Bon de livraison', numero: bon.numero_bl || `BL #${bon.id}`, current: true },
+          {
+            label: 'Facture',
+            numero: bon.facture_numero,
+            to: bon.facture_id ? `/factures/${bon.facture_id}` : null,
+          },
+          { label: 'Avoir', numero: null },
+        ]}
+      />
 
       <Card>
         <CardHeader>
@@ -189,7 +224,22 @@ export default function BonLivraisonDetail() {
           <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8 print:max-w-none print:w-full print:my-0 print:shadow-none print:rounded-none">
             <div className="sticky top-0 z-10 bg-white border-b p-4 flex justify-between items-center print:hidden">
               <h2 className="text-lg font-semibold">Aperçu d'impression</h2>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Format:</span>
+                  <Select
+                    value={printFormat}
+                    onValueChange={(v) => { const f = v as 'A4' | 'A5'; setPrintFormat(f); localStorage.setItem('print_format', f); }}
+                  >
+                    <SelectTrigger className="h-8 w-auto px-2 text-xs" aria-label="Format d'impression">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="A4">A4</SelectItem>
+                      <SelectItem value="A5">Ticket A5</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button variant="outline" onClick={() => setShowPrint(false)}>Fermer</Button>
                 <Button onClick={() => window.print()}>
                   <Printer className="h-4 w-4 mr-2" />
@@ -198,6 +248,7 @@ export default function BonLivraisonDetail() {
               </div>
             </div>
             <DocumentPrint
+              format={printFormat}
               docType="bl"
               numero={bon.numero_bl || `BL${String(bon.id).padStart(5, '0')}`}
               dateDoc={bon.date_bl}
@@ -210,6 +261,58 @@ export default function BonLivraisonDetail() {
           </div>
         </div>
       )}
+
+      {/* Mark delivered Dialog */}
+      <Dialog
+        open={showDeliverDialog}
+        onOpenChange={(open) => {
+          if (!actionLoading) setShowDeliverDialog(open);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Marquer comme livré</DialogTitle>
+            <DialogDescription>
+              Marquer ce bon de livraison comme livré ?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeliverDialog(false)} disabled={actionLoading}>
+              Annuler
+            </Button>
+            <Button onClick={handleMarkDelivered} disabled={actionLoading}>
+              <Truck className="h-4 w-4 mr-2" />
+              {actionLoading ? 'En cours...' : 'Marquer livré'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Convert to facture Dialog */}
+      <Dialog
+        open={showConvertDialog}
+        onOpenChange={(open) => {
+          if (!actionLoading) setShowConvertDialog(open);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Créer la facture</DialogTitle>
+            <DialogDescription>
+              Créer la facture depuis ce bon de livraison ?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowConvertDialog(false)} disabled={actionLoading}>
+              Annuler
+            </Button>
+            <Button onClick={handleConvert} disabled={actionLoading}>
+              <FileCheck className="h-4 w-4 mr-2" />
+              {actionLoading ? 'En cours...' : 'Créer facture'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -11,6 +11,9 @@ router.use(authenticate);
 // GET /api/bons-livraison - Get all delivery notes
 router.get('/', BonLivraisonController.getAll);
 
+// GET /api/bons-livraison/stats - List KPIs (must precede /:id)
+router.get('/stats', BonLivraisonController.getStats);
+
 // GET /api/bons-livraison/:id - Get delivery note by ID
 router.get('/:id', BonLivraisonController.getById);
 

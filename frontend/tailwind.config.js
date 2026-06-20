@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -13,18 +14,22 @@ export default {
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
         success: {
+          DEFAULT: "#059669",
           50: "#ECFDF5", 100: "#D1FAE5", 200: "#A7F3D0",
           500: "#059669", 600: "#047857", 700: "#065F46", 800: "#064E3B",
         },
         warning: {
+          DEFAULT: "#D97706",
           50: "#FFFBEB", 100: "#FEF3C7", 200: "#FDE68A",
           500: "#D97706", 600: "#B45309", 700: "#92400E", 800: "#78350F",
         },
         danger: {
+          DEFAULT: "#DC2626",
           50: "#FEF2F2", 100: "#FEE2E2", 200: "#FECACA",
           500: "#DC2626", 600: "#B91C1C", 700: "#991B1B", 800: "#7F1D1D",
         },
         info: {
+          DEFAULT: "#2563EB",
           50: "#EFF6FF", 100: "#DBEAFE",
           500: "#2563EB", 600: "#1D4ED8", 700: "#1E40AF",
         },

@@ -3,6 +3,7 @@ import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
+import { ClientAllocationService } from './ClientAllocationService';
 
 export interface BonLivraisonLigneInput {
   produit_id?: number;
@@ -208,6 +209,28 @@ export class BonLivraisonService {
         total,
         totalPages: Math.ceil(total / limit),
       },
+    };
+  }
+
+  /**
+   * Aggregate KPIs for the delivery-notes list header.
+   */
+  async getStats(): Promise<any> {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*)::int AS total_count,
+        COALESCE(SUM(total), 0) AS total_montant,
+        COUNT(*) FILTER (WHERE statut = 'livre')::int AS a_facturer_count,
+        COUNT(*) FILTER (WHERE date_trunc('month', date_bl) = date_trunc('month', CURRENT_DATE))::int AS mois_count,
+        COALESCE(SUM(total) FILTER (WHERE date_trunc('month', date_bl) = date_trunc('month', CURRENT_DATE)), 0) AS mois_montant
+      FROM bons_livraison
+      WHERE deleted_at IS NULL
+    `);
+    const r = rows[0];
+    return {
+      total: { count: r.total_count, montant: Number(r.total_montant) },
+      a_facturer: { count: r.a_facturer_count },
+      mois: { count: r.mois_count, montant: Number(r.mois_montant) },
     };
   }
 
@@ -495,52 +518,218 @@ export class BonLivraisonService {
       throw new Error('Le statut facture est mis à jour automatiquement après conversion en facture');
     }
 
-    const { rows: blRows } = await pool.query(
-      'SELECT id, devis_id, statut FROM bons_livraison WHERE id = $1',
-      [id]
-    );
+    const client = await pool.connect();
 
-    if (blRows.length === 0) {
-      throw new Error('Bon de livraison non trouvé');
-    }
+    try {
+      await client.query('BEGIN');
 
-    if (blRows[0].statut === 'facture' || blRows[0].statut === 'annule') {
-      throw new Error('Impossible de modifier le statut d\'un bon de livraison facturé ou annulé');
-    }
-
-    if (blRows[0].devis_id) {
-      const { rows: devisRows } = await pool.query(
-        'SELECT statut FROM devis WHERE id = $1',
-        [blRows[0].devis_id]
+      const { rows: blRows } = await client.query(
+        'SELECT id, devis_id, statut, location_id, numero_bl FROM bons_livraison WHERE id = $1 FOR UPDATE',
+        [id]
       );
 
-      if (devisRows.length === 0) {
-        throw new Error('Devis parent introuvable');
+      if (blRows.length === 0) {
+        throw new Error('Bon de livraison non trouvé');
       }
 
-      if (devisRows[0].statut === 'annule') {
-        throw new Error('Impossible de modifier ce bon de livraison: le devis parent est annulé');
+      const bl = blRows[0];
+      const oldStatut = bl.statut;
+
+      if (oldStatut === 'facture' || oldStatut === 'annule') {
+        throw new Error('Impossible de modifier le statut d\'un bon de livraison facturé ou annulé');
       }
+
+      if (bl.devis_id) {
+        const { rows: devisRows } = await client.query(
+          'SELECT statut FROM devis WHERE id = $1',
+          [bl.devis_id]
+        );
+
+        if (devisRows.length === 0) {
+          throw new Error('Devis parent introuvable');
+        }
+
+        if (devisRows[0].statut === 'annule') {
+          throw new Error('Impossible de modifier ce bon de livraison: le devis parent est annulé');
+        }
+      }
+
+      // Resolve location ID
+      let effectiveLocationId = bl.location_id;
+      if (!effectiveLocationId) {
+        const { rows: mainLocRows } = await client.query(
+          'SELECT id FROM stock_locations WHERE est_principal = true AND actif = true LIMIT 1'
+        );
+        effectiveLocationId = mainLocRows[0]?.id;
+      }
+
+      // 1. Stock deduction when status changes to 'livre' (only if it wasn't already 'livre')
+      if (normalizedStatut === 'livre' && oldStatut !== 'livre') {
+        const { rows: lignesRows } = await client.query(
+          `SELECT produit_id, quantite_livree, quantite as quantite_commandee 
+           FROM document_lignes 
+           WHERE document_type = 'bl' AND document_id = $1`,
+          [id]
+        );
+
+        for (const ligne of lignesRows) {
+          if (!ligne.produit_id) continue;
+
+          const qtyToDeduct = Number(ligne.quantite_livree || ligne.quantite_commandee || 0);
+          if (qtyToDeduct <= 0) continue;
+
+          // Check stock
+          const { rows: splRows } = await client.query(
+            `SELECT COALESCE(quantite, 0) as quantite 
+             FROM stock_par_location 
+             WHERE produit_id = $1 AND location_id = $2 
+             FOR UPDATE`,
+            [ligne.produit_id, effectiveLocationId]
+          );
+
+          let currentStock = splRows.length > 0 ? parseInt(splRows[0].quantite, 10) : 0;
+          let useLegacyStock = splRows.length === 0;
+
+          if (splRows.length === 0) {
+            const { rows: legacyRows } = await client.query(
+              'SELECT stock FROM produits WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+              [ligne.produit_id]
+            );
+            if (legacyRows.length > 0) {
+              currentStock = parseInt(legacyRows[0].stock, 10);
+            }
+          }
+
+          if (currentStock < qtyToDeduct) {
+            throw new Error(`Stock insuffisant pour le produit ID ${ligne.produit_id}. Stock disponible: ${currentStock}, requis: ${qtyToDeduct}`);
+          }
+
+          // Deduct
+          if (useLegacyStock) {
+            await client.query(
+              'UPDATE produits SET stock = stock - $1 WHERE id = $2',
+              [qtyToDeduct, ligne.produit_id]
+            );
+          } else {
+            await client.query(
+              'UPDATE stock_par_location SET quantite = quantite - $1 WHERE produit_id = $2 AND location_id = $3',
+              [qtyToDeduct, ligne.produit_id, effectiveLocationId]
+            );
+          }
+
+          // Log stock movement
+          await client.query(
+            `INSERT INTO mouvements_stock 
+               (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id) 
+             VALUES ($1, 'vente', $2, $3, $4, $5, $6, $7)`,
+            [
+              ligne.produit_id,
+              -qtyToDeduct,
+              currentStock,
+              currentStock - qtyToDeduct,
+              `Livraison — BL ${bl.numero_bl}`,
+              bl.numero_bl,
+              effectiveLocationId
+            ]
+          );
+        }
+      }
+
+      // 2. Stock restoration when status changes from 'livre' to 'annule'
+      if (normalizedStatut === 'annule' && oldStatut === 'livre') {
+        const { rows: lignesRows } = await client.query(
+          `SELECT produit_id, quantite_livree, quantite as quantite_commandee 
+           FROM document_lignes 
+           WHERE document_type = 'bl' AND document_id = $1`,
+          [id]
+        );
+
+        for (const ligne of lignesRows) {
+          if (!ligne.produit_id) continue;
+
+          const qtyToRestore = Number(ligne.quantite_livree || ligne.quantite_commandee || 0);
+          if (qtyToRestore <= 0) continue;
+
+          const { rows: splRows } = await client.query(
+            `SELECT COALESCE(quantite, 0) as quantite 
+             FROM stock_par_location 
+             WHERE produit_id = $1 AND location_id = $2 
+             FOR UPDATE`,
+            [ligne.produit_id, effectiveLocationId]
+          );
+
+          let currentStock = splRows.length > 0 ? parseInt(splRows[0].quantite, 10) : 0;
+          let useLegacyStock = splRows.length === 0;
+
+          if (splRows.length === 0) {
+            const { rows: legacyRows } = await client.query(
+              'SELECT stock FROM produits WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+              [ligne.produit_id]
+            );
+            if (legacyRows.length > 0) {
+              currentStock = parseInt(legacyRows[0].stock, 10);
+            }
+          }
+
+          if (useLegacyStock) {
+            await client.query(
+              'UPDATE produits SET stock = stock + $1 WHERE id = $2',
+              [qtyToRestore, ligne.produit_id]
+            );
+          } else {
+            await client.query(
+              'UPDATE stock_par_location SET quantite = quantite + $1 WHERE produit_id = $2 AND location_id = $3',
+              [qtyToRestore, ligne.produit_id, effectiveLocationId]
+            );
+          }
+
+          await client.query(
+            `INSERT INTO mouvements_stock 
+               (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id) 
+             VALUES ($1, 'vente', $2, $3, $4, $5, $6, $7)`,
+            [
+              ligne.produit_id,
+              qtyToRestore,
+              currentStock,
+              currentStock + qtyToRestore,
+              `Annulation livraison — BL ${bl.numero_bl}`,
+              bl.numero_bl,
+              effectiveLocationId
+            ]
+          );
+        }
+      }
+
+      await client.query(
+        'UPDATE bons_livraison SET statut = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        [normalizedStatut, id]
+      );
+
+      await client.query('COMMIT');
+
+      // Audit log (outside transaction)
+      if (req?.user?.id) {
+        try {
+          await logAudit({
+            utilisateur_id: req.user.id,
+            action: 'update',
+            table_name: 'bons_livraison',
+            record_id: id,
+            req,
+            new_values: { statut: normalizedStatut },
+          });
+        } catch (auditErr) {
+          logger.error({ err: auditErr }, 'Failed to log audit for updateStatut');
+        }
+      }
+
+      logger.info({ blId: id, statut: normalizedStatut }, 'Delivery note statut updated');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    await pool.query(
-      'UPDATE bons_livraison SET statut = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      [normalizedStatut, id]
-    );
-
-    // Audit log
-    if (req?.user?.id) {
-      await logAudit({
-        utilisateur_id: req.user.id,
-        action: 'update_statut',
-        table_name: 'bons_livraison',
-        record_id: id,
-        req,
-        new_values: { statut: normalizedStatut },
-      });
-    }
-
-    logger.info({ blId: id, statut: normalizedStatut }, 'Delivery note statut updated');
   }
 
   /**
@@ -634,13 +823,34 @@ export class BonLivraisonService {
         numeroFacture = fallbackResult.numero_facture;
       }
 
+      // Get the created invoice details to insert into compte_client_lignes
+      const { rows: factRows } = await client.query(
+        'SELECT total, notes, tiers_id FROM factures WHERE id = $1',
+        [factureId]
+      );
+      if (factRows.length === 0) {
+        throw new Error('Facture non trouvée après conversion');
+      }
+      const { total, notes: invoiceNotes, tiers_id: tiersId } = factRows[0];
+
+      // Insert into compte_client_lignes (customer ledger)
+      await client.query(
+        `INSERT INTO compte_client_lignes
+           (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
+         VALUES ($1, 'facture', $2, $3, $4, 0, $5, $6)`,
+        [tiersId, factureId, numeroFacture, total, invoiceNotes || null, userId || null]
+      );
+
+      // Recompute Client Allocations (updates tiers.solde_client_actuel)
+      await ClientAllocationService.recomputeClientAllocations(tiersId, { transaction: client });
+
       await client.query('COMMIT');
 
       // Audit log
       if (userId) {
         await logAudit({
           utilisateur_id: userId,
-          action: 'convert_to_facture',
+          action: 'update',
           table_name: 'bons_livraison',
           record_id: id,
           req,
@@ -663,23 +873,120 @@ export class BonLivraisonService {
    * Delete delivery note (soft delete)
    */
   async delete(id: number, req?: any): Promise<void> {
-    await pool.query(
-      'UPDATE bons_livraison SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL',
-      [id]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    // Audit log
-    if (req?.user?.id) {
-      await logAudit({
-        utilisateur_id: req.user.id,
-        action: 'delete',
-        table_name: 'bons_livraison',
-        record_id: id,
-        req,
-      });
+      const { rows: blRows } = await client.query(
+        'SELECT id, statut, location_id, numero_bl FROM bons_livraison WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+
+      if (blRows.length > 0) {
+        const bl = blRows[0];
+        // Restore stock if it was delivered
+        if (bl.statut === 'livre') {
+          let effectiveLocationId = bl.location_id;
+          if (!effectiveLocationId) {
+            const { rows: mainLocRows } = await client.query(
+              'SELECT id FROM stock_locations WHERE est_principal = true AND actif = true LIMIT 1'
+            );
+            effectiveLocationId = mainLocRows[0]?.id;
+          }
+
+          const { rows: lignesRows } = await client.query(
+            `SELECT produit_id, quantite_livree, quantite as quantite_commandee 
+             FROM document_lignes 
+             WHERE document_type = 'bl' AND document_id = $1`,
+            [id]
+          );
+
+          for (const ligne of lignesRows) {
+            if (!ligne.produit_id) continue;
+
+            const qtyToRestore = Number(ligne.quantite_livree || ligne.quantite_commandee || 0);
+            if (qtyToRestore <= 0) continue;
+
+            const { rows: splRows } = await client.query(
+              `SELECT COALESCE(quantite, 0) as quantite 
+               FROM stock_par_location 
+               WHERE produit_id = $1 AND location_id = $2 
+               FOR UPDATE`,
+              [ligne.produit_id, effectiveLocationId]
+            );
+
+            let currentStock = splRows.length > 0 ? parseInt(splRows[0].quantite, 10) : 0;
+            let useLegacyStock = splRows.length === 0;
+
+            if (splRows.length === 0) {
+              const { rows: legacyRows } = await client.query(
+                'SELECT stock FROM produits WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+                [ligne.produit_id]
+              );
+              if (legacyRows.length > 0) {
+                currentStock = parseInt(legacyRows[0].stock, 10);
+              }
+            }
+
+            if (useLegacyStock) {
+              await client.query(
+                'UPDATE produits SET stock = stock + $1 WHERE id = $2',
+                [qtyToRestore, ligne.produit_id]
+              );
+            } else {
+              await client.query(
+                'UPDATE stock_par_location SET quantite = quantite + $1 WHERE produit_id = $2 AND location_id = $3',
+                [qtyToRestore, ligne.produit_id, effectiveLocationId]
+              );
+            }
+
+            await client.query(
+              `INSERT INTO mouvements_stock 
+                 (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id) 
+               VALUES ($1, 'vente', $2, $3, $4, $5, $6, $7)`,
+              [
+                ligne.produit_id,
+                qtyToRestore,
+                currentStock,
+                currentStock + qtyToRestore,
+                `Suppression BL — BL ${bl.numero_bl}`,
+                bl.numero_bl,
+                effectiveLocationId
+              ]
+            );
+          }
+        }
+      }
+
+      await client.query(
+        'UPDATE bons_livraison SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL',
+        [id]
+      );
+
+      await client.query('COMMIT');
+
+      // Audit log (outside transaction)
+      if (req?.user?.id) {
+        try {
+          await logAudit({
+            utilisateur_id: req.user.id,
+            action: 'delete',
+            table_name: 'bons_livraison',
+            record_id: id,
+            req,
+          });
+        } catch (auditErr) {
+          logger.error({ err: auditErr }, 'Failed to log audit for delete BL');
+        }
+      }
+
+      logger.info({ blId: id }, 'Delivery note soft-deleted');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    logger.info({ blId: id }, 'Delivery note soft-deleted');
   }
 }
 

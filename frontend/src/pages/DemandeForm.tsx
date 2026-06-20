@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { demandeService, stockLocationService } from '../services/api';
 import { useAuth } from '../lib/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -7,12 +10,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { 
-  Plus, 
-  Minus, 
-  Trash2, 
-  Search, 
-  ArrowLeft, 
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Plus,
+  Minus,
+  Trash2,
+  Search,
+  ArrowLeft,
   Send,
   Save,
   Package,
@@ -46,6 +50,14 @@ interface CartItem {
   notes?: string;
 }
 
+const demandeSchema = z.object({
+  magasin_id: z.string().min(1, 'Veuillez sélectionner un magasin et un dépôt'),
+  depot_id: z.string().min(1, 'Veuillez sélectionner un magasin et un dépôt'),
+  motif: z.string().optional(),
+});
+
+type DemandeFormValues = z.infer<typeof demandeSchema>;
+
 export default function DemandeForm() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -54,16 +66,31 @@ export default function DemandeForm() {
 
   const [locations, setLocations] = useState<StockLocation[]>([]);
   const [depotProducts, setDepotProducts] = useState<DepotProduct[]>([]);
+  // Le panier reste géré localement : sa logique (fusion, clamp au stock,
+  // suppression à 0, panneau de navigation produit) est trop entangled pour useFieldArray.
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  
-  const [formData, setFormData] = useState({
-    magasin_id: '',
-    depot_id: '',
-    motif: '',
+
+  const {
+    control,
+    register,
+    handleSubmit,
+    watch,
+    setValue,
+    reset,
+    formState: { errors },
+  } = useForm<DemandeFormValues>({
+    resolver: zodResolver(demandeSchema),
+    defaultValues: {
+      magasin_id: '',
+      depot_id: '',
+      motif: '',
+    },
   });
-  
+
+  const depotId = watch('depot_id');
+
   const [loading, setLoading] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -81,10 +108,10 @@ export default function DemandeForm() {
 
   // Load depot products when depot selected
   useEffect(() => {
-    if (formData.depot_id) {
-      loadDepotProducts(parseInt(formData.depot_id));
+    if (depotId) {
+      loadDepotProducts(parseInt(depotId));
     }
-  }, [formData.depot_id, debouncedSearch]);
+  }, [depotId, debouncedSearch]);
 
   // Load existing demande if editing
   useEffect(() => {
@@ -105,10 +132,10 @@ export default function DemandeForm() {
 
       if (!isEdit) {
         if (magasins.length > 0) {
-          setFormData((prev) => ({ ...prev, magasin_id: String(magasins[0].id) }));
+          setValue('magasin_id', String(magasins[0].id));
         }
         if (depots.length > 0) {
-          setFormData((prev) => ({ ...prev, depot_id: String(depots[0].id) }));
+          setValue('depot_id', String(depots[0].id));
         }
       }
     } catch {
@@ -116,10 +143,10 @@ export default function DemandeForm() {
     }
   };
 
-  const loadDepotProducts = async (depotId: number) => {
+  const loadDepotProducts = async (depotIdArg: number) => {
     setLoadingProducts(true);
     try {
-      const response = await demandeService.getDepotStock(depotId, debouncedSearch);
+      const response = await demandeService.getDepotStock(depotIdArg, debouncedSearch);
       setDepotProducts(response.data || response || []);
     } catch {
       // Silent fail
@@ -134,7 +161,7 @@ export default function DemandeForm() {
       const response = await demandeService.getById(parseInt(id!, 10));
       const demande = response.data || response;
 
-      setFormData({
+      reset({
         magasin_id: String(demande.magasin_id),
         depot_id: String(demande.depot_id),
         motif: demande.motif || '',
@@ -205,12 +232,7 @@ export default function DemandeForm() {
     );
   }, []);
 
-  const handleSubmit = async (andSend: boolean) => {
-    if (!formData.magasin_id || !formData.depot_id) {
-      toast.error('Veuillez sélectionner un magasin et un dépôt');
-      return;
-    }
-
+  const submitDemande = async (values: DemandeFormValues, andSend: boolean) => {
     if (cart.length === 0) {
       toast.error('Ajoutez au moins un produit au panier');
       return;
@@ -219,9 +241,9 @@ export default function DemandeForm() {
     setSubmitting(true);
     try {
       const payload = {
-        magasin_id: parseInt(formData.magasin_id),
-        depot_id: parseInt(formData.depot_id),
-        motif: formData.motif || undefined,
+        magasin_id: parseInt(values.magasin_id),
+        depot_id: parseInt(values.depot_id),
+        motif: values.motif || undefined,
         lignes: cart.map((item) => ({
           produit_id: item.produit_id,
           quantite_demandee: item.quantite_demandee,
@@ -291,45 +313,69 @@ export default function DemandeForm() {
             <CardContent className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="magasin">Magasin destinataire *</Label>
-                <select
-                  id="magasin"
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={formData.magasin_id}
-                  onChange={(e) => setFormData({ ...formData, magasin_id: e.target.value })}
-                  required
-                  disabled={isEdit}
-                >
-                  <option value="">Sélectionner...</option>
-                  {magasins.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.nom} ({m.code})
-                    </option>
-                  ))}
-                </select>
+                <Controller
+                  control={control}
+                  name="magasin_id"
+                  render={({ field }) => (
+                    <Select
+                      value={field.value || undefined}
+                      onValueChange={field.onChange}
+                      disabled={isEdit}
+                    >
+                      <SelectTrigger id="magasin" className="h-9 w-full text-sm">
+                        <SelectValue placeholder="Sélectionner..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {magasins.map((m) => (
+                          <SelectItem key={m.id} value={String(m.id)}>
+                            {m.nom} ({m.code})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                {errors.magasin_id && (
+                  <p role="alert" className="text-xs text-danger">
+                    {errors.magasin_id.message}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="depot">Dépôt source *</Label>
-                <select
-                  id="depot"
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={formData.depot_id}
-                  onChange={(e) => setFormData({ ...formData, depot_id: e.target.value })}
-                  required
-                  disabled={isEdit}
-                >
-                  <option value="">Sélectionner...</option>
-                  {depots.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.nom} ({d.code})
-                    </option>
-                  ))}
-                </select>
+                <Controller
+                  control={control}
+                  name="depot_id"
+                  render={({ field }) => (
+                    <Select
+                      value={field.value || undefined}
+                      onValueChange={field.onChange}
+                      disabled={isEdit}
+                    >
+                      <SelectTrigger id="depot" className="h-9 w-full text-sm">
+                        <SelectValue placeholder="Sélectionner..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {depots.map((d) => (
+                          <SelectItem key={d.id} value={String(d.id)}>
+                            {d.nom} ({d.code})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                {errors.depot_id && (
+                  <p role="alert" className="text-xs text-danger">
+                    {errors.depot_id.message}
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
 
           {/* Product Selection */}
-          {formData.depot_id && (
+          {depotId && (
             <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center justify-between">
@@ -344,7 +390,7 @@ export default function DemandeForm() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Rechercher un produit par nom ou référence..."
-                    className="pl-10"
+                    className="pl-10 sm:pl-10"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                   />
@@ -372,10 +418,10 @@ export default function DemandeForm() {
                       <tbody className="divide-y">
                         {depotProducts.map((product) => {
                           const inCart = cart.find((item) => item.produit_id === product.produit_id);
-                          const stockClass = product.quantite_disponible <= 5 
-                            ? 'text-destructive' 
-                            : product.quantite_disponible <= 20 
-                              ? 'text-warning' 
+                          const stockClass = product.quantite_disponible <= 5
+                            ? 'text-destructive'
+                            : product.quantite_disponible <= 20
+                              ? 'text-warning'
                               : 'text-success';
 
                           return (
@@ -433,7 +479,7 @@ export default function DemandeForm() {
                 <div className="bg-muted/50 p-3 rounded-lg flex items-start gap-2">
                   <AlertCircle className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
                   <p className="text-xs text-muted-foreground">
-                    Le stock affiché est indicatif. Les quantités réellement disponibles 
+                    Le stock affiché est indicatif. Les quantités réellement disponibles
                     seront vérifiées lors de l&apos;exécution du transfert par le dépôt.
                   </p>
                 </div>
@@ -449,9 +495,8 @@ export default function DemandeForm() {
             <CardContent>
               <Textarea
                 placeholder="Notes éventuelles pour le dépôt..."
-                value={formData.motif}
-                onChange={(e) => setFormData({ ...formData, motif: e.target.value })}
                 rows={3}
+                {...register('motif')}
               />
             </CardContent>
           </Card>
@@ -547,7 +592,7 @@ export default function DemandeForm() {
                   <div className="border-t pt-4 space-y-2">
                     <Button
                       className="w-full gap-2"
-                      onClick={() => handleSubmit(false)}
+                      onClick={handleSubmit((values) => submitDemande(values, false))}
                       disabled={submitting}
                       variant="outline"
                     >
@@ -556,7 +601,7 @@ export default function DemandeForm() {
                     </Button>
                     <Button
                       className="w-full gap-2"
-                      onClick={() => handleSubmit(true)}
+                      onClick={handleSubmit((values) => submitDemande(values, true))}
                       disabled={submitting}
                     >
                       {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}

@@ -84,4 +84,17 @@ export class StockTransferController {
       res.status(500).json({ success: false, error: error.message });
     }
   }
+
+  static async cancel(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const ok = await stockTransferService.cancel(parseInt(req.params.id), req.user?.id, req);
+      if (!ok) {
+        res.status(400).json({ success: false, error: 'Transfert introuvable ou déjà complété/annulé' });
+        return;
+      }
+      successResponse(res, null, 'Transfert annulé');
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
 }

@@ -14,7 +14,7 @@ router.get('/:id', CamionController.getCamionById);
 router.put('/:id', authorize('admin', 'manager'), CamionController.updateCamion);
 router.delete('/:id', authorize('admin', 'manager'), CamionController.desactiverCamion);
 router.get('/:id/ravitaillements', CamionController.getRavitaillements);
-router.post('/:id/ravitaillements', CamionController.createRavitaillement);
+router.post('/:id/ravitaillements', authorize('admin', 'manager', 'depot_staff'), CamionController.createRavitaillement);
 router.get('/:id/stats', CamionController.getStats);
 
 export default router;

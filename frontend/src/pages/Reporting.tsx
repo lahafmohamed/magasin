@@ -149,11 +149,11 @@ export default function Reporting() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <p className="text-sm text-muted-foreground">Chiffre d'affaires</p>
-                    <p className="text-xl font-semibold text-success-700 num">{formatFCFA(pnl.chiffre_affaires)}</p>
+                    <p className="text-xl font-semibold text-success-700 num">+{formatFCFA(pnl.chiffre_affaires)}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Coût des ventes</p>
-                    <p className="text-xl font-semibold text-danger-700 num">{formatFCFA(pnl.cout_ventes)}</p>
+                    <p className="text-xl font-semibold text-danger-700 num">−{formatFCFA(pnl.cout_ventes)}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Marge brute</p>

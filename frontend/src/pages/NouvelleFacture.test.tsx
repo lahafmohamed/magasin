@@ -20,9 +20,6 @@ vi.mock('../services/api', () => ({
   stockLocationService: {
     getStockLevels: vi.fn().mockResolvedValue([]),
   },
-  tvaService: {
-    getActive: vi.fn().mockResolvedValue([]),
-  },
 }));
 
 // Mock react-router-dom
@@ -40,7 +37,7 @@ vi.mock('sonner', () => ({
   },
 }));
 
-import { produitService, clientService, factureService } from '../services/api';
+import { produitService, clientService, factureService, ventesService } from '../services/api';
 
 const mockProduits = [
   {
@@ -95,8 +92,9 @@ describe('NouvelleFacture', () => {
     renderNouvelleFacture();
 
     expect(screen.getByText('Nouvelle Facture')).toBeInTheDocument();
-    expect(screen.getByText(/Sélectionnez le client/i)).toBeInTheDocument();
-    expect(screen.getByText(/Recherchez et ajoutez des produits/i)).toBeInTheDocument();
+    // Client selection now delegates to the TiersPicker under the "Client (Tiers)" section.
+    expect(screen.getByText(/Client \(Tiers\)/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Rechercher un produit/i)).toBeInTheDocument();
     expect(screen.getByText('Résumé')).toBeInTheDocument();
   });
 
@@ -107,27 +105,22 @@ describe('NouvelleFacture', () => {
     expect(submitBtn).toBeDisabled();
   });
 
-  it('searches for clients when typing in client search field', async () => {
+  it('renders the client picker section', () => {
     renderNouvelleFacture();
 
-    const clientSearchInput = screen.getByPlaceholderText(/Rechercher un client/i);
-    fireEvent.change(clientSearchInput, { target: { value: 'Dup' } });
-    fireEvent.focus(clientSearchInput);
-
-    await waitFor(() => {
-      expect(clientService.getAll).toHaveBeenCalledWith('Dup');
-    });
+    // Client search moved into the TiersPicker component; the page exposes its section.
+    expect(screen.getByText(/Client \(Tiers\)/i)).toBeInTheDocument();
   });
 
   it('searches for products when typing in product search field', async () => {
     renderNouvelleFacture();
 
     const produitSearchInput = screen.getByPlaceholderText(/Rechercher un produit/i);
-    fireEvent.change(produitSearchInput, { target: { value: 'Laptop' } });
     fireEvent.focus(produitSearchInput);
+    fireEvent.change(produitSearchInput, { target: { value: 'Laptop' } });
 
     await waitFor(() => {
-      expect(produitService.getAll).toHaveBeenCalledWith('Laptop');
+      expect(ventesService.searchFuzzy).toHaveBeenCalledWith('Laptop', 20, undefined);
     });
   });
 

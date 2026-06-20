@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkActionBar } from '@/components/ui/bulk-action-bar';
 import {
   Table,
   TableBody,
@@ -16,20 +18,28 @@ import {
   FilePlus,
   Search,
   Eye,
-  Loader2,
   Download,
-  ArrowUp,
-  ArrowDown,
-  ArrowUpDown,
   Wallet,
   CheckCircle2,
   FileEdit,
   Hourglass,
 } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { EmptyState } from '@/components/ui/empty-state';
+import { LoadingState } from '@/components/ui/loading';
+import { SortableHeader, SortState } from '@/components/ui/sortable-header';
 import StatusBadge from '@/components/StatusBadge';
 import { formatXOF, fuzzyScore } from '@/utils/format';
 import { creditNoteService } from '@/services/api';
 import { toast } from 'sonner';
+import { downloadCsv } from '@/utils/csv';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
 interface Avoir {
   id: number;
@@ -75,10 +85,12 @@ const PAGE_LIMIT = 20;
 export default function Avoirs() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const [avoirs, setAvoirs] = useState<Avoir[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
 
   const search = searchParams.get('q') || '';
   const statutFilter = searchParams.get('statut') || 'tous';
@@ -98,9 +110,15 @@ export default function Avoirs() {
     loadAvoirs();
   }, []);
 
+  useKeyboardShortcuts([
+    { key: '/', action: () => searchRef.current?.focus(), description: 'Rechercher' },
+    { key: 'n', action: () => navigate('/avoirs/nouveau'), description: 'Nouvel avoir' },
+  ]);
+
   const loadAvoirs = async () => {
     try {
       setLoading(true);
+      setSelected(new Set());
       const data = await creditNoteService.getAll();
       setAvoirs(data);
     } catch {
@@ -204,7 +222,38 @@ export default function Avoirs() {
   const totalPages = Math.max(1, Math.ceil(processed.length / PAGE_LIMIT));
   const paged = processed.slice((page - 1) * PAGE_LIMIT, page * PAGE_LIMIT);
 
-  const toggleSort = (key: SortKey) => {
+  const allSelected = paged.length > 0 && paged.every((a) => selected.has(a.id));
+  const someSelected = paged.some((a) => selected.has(a.id));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(paged.map((a) => a.id)));
+  const toggleOne = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const exportSelection = () => {
+    const header = ['Numéro', 'Client', 'Date', 'Type', 'Statut', 'Facture origine', 'Montant'];
+    const rows = processed
+      .filter((a) => selected.has(a.id))
+      .map((a) => [
+        a.numero_avoir,
+        `${a.client_nom}${a.client_prenom ? ' ' + a.client_prenom : ''}`,
+        new Date(a.date_avoir).toLocaleDateString('fr-FR'),
+        TYPE_LABEL[a.avoir_type || ''] || a.avoir_type || '',
+        a.statut,
+        a.facture_origine_numero || '',
+        String(a.total || 0),
+      ]);
+    downloadCsv(`avoirs_selection_${new Date().toISOString().slice(0, 10)}.csv`, header, rows);
+    toast.success(`${rows.length} avoir${rows.length > 1 ? 's' : ''} exporté${rows.length > 1 ? 's' : ''}`);
+  };
+
+  // While fuzzy search is active, ranking takes over and column sort is disabled.
+  const sort: SortState<SortKey> | null = search.trim() ? null : { key: sortKey, dir: sortOrder };
+
+  const handleSort = (key: SortKey) => {
     if (search.trim()) return; // sort disabled while fuzzy ranking active
     if (sortKey !== key) {
       const next = new URLSearchParams(searchParams);
@@ -216,12 +265,6 @@ export default function Avoirs() {
       next.set('order', sortOrder === 'asc' ? 'desc' : 'asc');
       setSearchParams(next, { replace: true });
     }
-  };
-
-  const sortIcon = (key: SortKey) => {
-    if (search.trim()) return null;
-    if (sortKey !== key) return <ArrowUpDown className="h-3 w-3 opacity-40" />;
-    return sortOrder === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />;
   };
 
   const exportCSV = () => {
@@ -313,6 +356,12 @@ export default function Avoirs() {
         />
       </div>
 
+      <BulkActionBar count={selected.size} onClear={() => setSelected(new Set())}>
+        <Button variant="outline" size="sm" onClick={exportSelection} className="gap-1">
+          <Download className="h-4 w-4" /> Exporter la sélection
+        </Button>
+      </BulkActionBar>
+
       <Card>
         {/* Tabs + filters */}
         <div className="border-b">
@@ -351,59 +400,67 @@ export default function Avoirs() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Rechercher par numéro, client ou facture"
+              ref={searchRef}
+              placeholder="Rechercher par numéro, client ou facture  ( / )"
               value={search}
               onChange={(e) => setParam('q', e.target.value)}
-              className="pl-10"
+              className="pl-10 sm:pl-10"
             />
           </div>
-          <select
-            value={typeFilter}
-            onChange={(e) => setParam('type', e.target.value)}
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="tous">Tous les types</option>
-            <option value="erreur">Erreur facturation</option>
-            <option value="retour">Retour marchandise</option>
-            <option value="remise">Remise commerciale</option>
-          </select>
+          <Select value={typeFilter} onValueChange={(v) => setParam('type', v)}>
+            <SelectTrigger className="h-9 w-auto" aria-label="Filtrer par type">
+              <SelectValue placeholder="Tous les types" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="tous">Tous les types</SelectItem>
+              <SelectItem value="erreur">Erreur facturation</SelectItem>
+              <SelectItem value="retour">Retour marchandise</SelectItem>
+              <SelectItem value="remise">Remise commerciale</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         <Table>
           <TableHeader>
             <TableRow>
-              <SortableHead label="Numéro" onClick={() => toggleSort('numero_avoir')} icon={sortIcon('numero_avoir')} />
-              <SortableHead label="Client" onClick={() => toggleSort('client_nom')} icon={sortIcon('client_nom')} />
-              <SortableHead label="Date" onClick={() => toggleSort('date_avoir')} icon={sortIcon('date_avoir')} />
+              <TableHead className="w-10">
+                <Checkbox checked={allSelected} indeterminate={someSelected && !allSelected} onChange={toggleAll} aria-label="Tout sélectionner" />
+              </TableHead>
+              <SortableHeader columnKey="numero_avoir" sort={sort} onSort={handleSort}>Numéro</SortableHeader>
+              <SortableHeader columnKey="client_nom" sort={sort} onSort={handleSort}>Client</SortableHeader>
+              <SortableHeader columnKey="date_avoir" sort={sort} onSort={handleSort}>Date</SortableHeader>
               <TableHead>Type</TableHead>
               <TableHead>Facture origine</TableHead>
               <TableHead>Statut</TableHead>
-              <SortableHead label="Montant" onClick={() => toggleSort('total')} icon={sortIcon('total')} align="right" />
+              <SortableHeader columnKey="total" sort={sort} onSort={handleSort} align="right">Montant</SortableHeader>
               <TableHead className="text-right w-12" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-12">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" />
+                <TableCell colSpan={9}>
+                  <LoadingState inCell />
                 </TableCell>
               </TableRow>
             ) : processed.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={9}>
                   {search.trim() || statutFilter !== 'tous' || typeFilter !== 'tous' ? (
-                    <div className="text-muted-foreground text-sm">
-                      Aucun avoir ne correspond aux filtres
-                    </div>
+                    <EmptyState
+                      icon={Search}
+                      title="Aucun avoir ne correspond aux filtres"
+                    />
                   ) : (
-                    <div className="flex flex-col items-center gap-3 text-muted-foreground">
-                      <FilePlus className="h-10 w-10 opacity-40" />
-                      <div className="text-sm">Aucun avoir enregistré</div>
-                      <Button size="sm" onClick={() => navigate('/avoirs/nouveau')}>
-                        Créer le premier avoir
-                      </Button>
-                    </div>
+                    <EmptyState
+                      icon={FilePlus}
+                      title="Aucun avoir enregistré"
+                      action={
+                        <Button size="sm" onClick={() => navigate('/avoirs/nouveau')}>
+                          Créer le premier avoir
+                        </Button>
+                      }
+                    />
                   )}
                 </TableCell>
               </TableRow>
@@ -412,9 +469,12 @@ export default function Avoirs() {
                 {paged.map((avoir) => (
                   <TableRow
                     key={avoir.id}
-                    className="cursor-pointer hover:bg-muted/50"
+                    className={`cursor-pointer hover:bg-muted/50 ${selected.has(avoir.id) ? 'bg-muted/40' : ''}`}
                     onClick={() => navigate(`/avoirs/${avoir.id}`)}
                   >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox checked={selected.has(avoir.id)} onChange={() => toggleOne(avoir.id)} aria-label={`Sélectionner ${avoir.numero_avoir}`} />
+                    </TableCell>
                     <TableCell className="font-medium num">{avoir.numero_avoir}</TableCell>
                     <TableCell>
                       {avoir.client_id ? (
@@ -469,7 +529,7 @@ export default function Avoirs() {
                   </TableRow>
                 ))}
                 <TableRow className="bg-muted/30 font-semibold border-t-2">
-                  <TableCell colSpan={6} className="text-right text-muted-foreground">
+                  <TableCell colSpan={7} className="text-right text-muted-foreground">
                     Total ({processed.length} avoir{processed.length > 1 ? 's' : ''})
                   </TableCell>
                   <TableCell className="text-right num">{formatXOF(totalSum)}</TableCell>
@@ -524,32 +584,5 @@ function KpiTile({
       <div className="mt-2 text-2xl font-semibold num">{value}</div>
       <div className="mt-1 text-xs text-muted-foreground num">{sub}</div>
     </Card>
-  );
-}
-
-function SortableHead({
-  label,
-  onClick,
-  icon,
-  align,
-}: {
-  label: string;
-  onClick: () => void;
-  icon: React.ReactNode;
-  align?: 'right';
-}) {
-  return (
-    <TableHead className={align === 'right' ? 'text-right' : undefined}>
-      <button
-        type="button"
-        onClick={onClick}
-        className={`inline-flex items-center gap-1 hover:text-foreground transition-colors ${
-          align === 'right' ? 'ml-auto' : ''
-        }`}
-      >
-        {label}
-        {icon}
-      </button>
-    </TableHead>
   );
 }

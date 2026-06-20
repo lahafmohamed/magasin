@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { tiersService, acompteService, acompteFournisseurService } from '../services/api';
+import { tiersService, acompteService, acompteFournisseurService, crmService } from '../services/api';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -11,7 +12,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   ArrowLeft, Users, Truck, Wallet,
-  Plus, RefreshCw, GitMerge, Phone, Mail, MapPin, FileText
+  Plus, RefreshCw, GitMerge, Phone, Mail, MapPin, FileText,
+  Calendar, CheckCircle2, Clock, MessageSquare,
+  Trash2, AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatFCFA } from '@/lib/utils';
@@ -44,6 +47,14 @@ export default function TiersDetail() {
   const [acompteForm, setAcompteForm] = useState({ montant: '', methode: 'espece', notes: '', magasin_id: '', reference_number: '' });
   const [magasinsList, setMagasinsList] = useState<Array<{ id: number; nom: string; code: string }>>([]);
 
+  // CRM state
+  const [interactions, setInteractions] = useState<any[]>([]);
+  const [taches, setTaches] = useState<any[]>([]);
+  const [showInteractionForm, setShowInteractionForm] = useState(false);
+  const [showTacheForm, setShowTacheForm] = useState(false);
+  const [interactionForm, setInteractionForm] = useState({ type: 'appel', sujet: '', description: '', date_rappel: '', priorite: 'normale' });
+  const [tacheForm, setTacheForm] = useState({ titre: '', description: '', priorite: 'normale', date_echeance: '' });
+
   useEffect(() => {
     fetch('/api/caisse/magasins', {
       headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
@@ -72,6 +83,12 @@ export default function TiersDetail() {
   useEffect(() => { tiersService.getCompensations(tiersId).then(setCompensations).catch(() => {}); }, [tiersId]);
   useEffect(() => { loadAcomptes(); }, [tiersId]);
 
+  // Chargement CRM
+  useEffect(() => {
+    crmService.getInteractions(tiersId).then(setInteractions).catch(() => {});
+    crmService.getTaches(tiersId).then(setTaches).catch(() => {});
+  }, [tiersId]);
+
   const loadAcomptes = async () => {
     try {
       const [cli, fou] = await Promise.all([
@@ -91,6 +108,83 @@ export default function TiersDetail() {
       session_caisse_id: '',
       notes: '',
     });
+  };
+
+  // CRM
+  const handleCreateInteraction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const newItem = await crmService.createInteraction({
+        tiers_id: tiersId,
+        ...interactionForm,
+      });
+      setInteractions(prev => [newItem, ...prev]);
+      setShowInteractionForm(false);
+      setInteractionForm({ type: 'appel', sujet: '', description: '', date_rappel: '', priorite: 'normale' });
+      toast.success('Interaction enregistrée');
+    } catch {
+      toast.error("Erreur lors de l'enregistrement");
+    }
+  };
+
+  const handleDeleteInteraction = async (id: number) => {
+    try {
+      await crmService.deleteInteraction(id);
+      setInteractions(prev => prev.filter(i => i.id !== id));
+      toast.success('Interaction supprimée');
+    } catch {
+      toast.error('Erreur lors de la suppression');
+    }
+  };
+
+  const handleCreateTache = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const newTache = await crmService.createTache({
+        tiers_id: tiersId,
+        ...tacheForm,
+      });
+      setTaches(prev => [newTache, ...prev]);
+      setShowTacheForm(false);
+      setTacheForm({ titre: '', description: '', priorite: 'normale', date_echeance: '' });
+      toast.success('Tâche créée');
+    } catch {
+      toast.error('Erreur lors de la création');
+    }
+  };
+
+  const handleCompleteTache = async (id: number) => {
+    try {
+      await crmService.updateTacheStatut(id, 'terminee');
+      setTaches(prev => prev.map(t => t.id === id ? { ...t, statut: 'terminee' } : t));
+      toast.success('Tâche terminée');
+    } catch {
+      toast.error('Erreur');
+    }
+  };
+
+  const handleDeleteTache = async (id: number) => {
+    try {
+      await crmService.deleteTache(id);
+      setTaches(prev => prev.filter(t => t.id !== id));
+    } catch {
+      toast.error('Erreur');
+    }
+  };
+
+  const INTERACTION_TYPES = [
+    { value: 'appel', label: 'Appel', icon: Phone },
+    { value: 'email', label: 'Email', icon: Mail },
+    { value: 'reunion', label: 'Réunion', icon: Users },
+    { value: 'note', label: 'Note interne', icon: MessageSquare },
+    { value: 'relance', label: 'Relance', icon: AlertCircle },
+  ];
+
+  const PRIORITE_LABELS: Record<string, { label: string; color: string }> = {
+    basse: { label: 'Basse', color: 'text-gray-500' },
+    normale: { label: 'Normale', color: 'text-blue-600' },
+    haute: { label: 'Haute', color: 'text-orange-600' },
+    urgente: { label: 'Urgente', color: 'text-destructive' },
   };
 
   const handleRefund = async (e: React.FormEvent) => {
@@ -130,7 +224,12 @@ export default function TiersDetail() {
   };
 
   const handleAcompteClient = async (e: React.FormEvent) => {
-    e.preventDefault(); setSubmitting(true);
+    e.preventDefault();
+    if (acompteForm.methode === 'espece' && !acompteForm.magasin_id) {
+      toast.error('Sélectionnez un magasin pour un acompte en espèces.');
+      return;
+    }
+    setSubmitting(true);
     const idemKey = `aco-${tiersId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     try {
       await tiersService.recordAcompteClient(tiersId, {
@@ -151,7 +250,12 @@ export default function TiersDetail() {
   };
 
   const handleAcompteFourn = async (e: React.FormEvent) => {
-    e.preventDefault(); setSubmitting(true);
+    e.preventDefault();
+    if (acompteForm.methode === 'espece' && !acompteForm.magasin_id) {
+      toast.error('Sélectionnez un magasin pour un acompte en espèces.');
+      return;
+    }
+    setSubmitting(true);
     try {
       await tiersService.recordAcompteFournisseur(tiersId, {
         montant: parseFloat(acompteForm.montant),
@@ -293,12 +397,12 @@ export default function TiersDetail() {
       {/* Date filter */}
       <div className="flex gap-3 items-end">
         <div>
-          <Label className="text-xs">Du</Label>
-          <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 text-sm w-36" />
+          <Label htmlFor="ledger-date-from" className="text-xs">Du</Label>
+          <Input id="ledger-date-from" type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 text-sm w-36" />
         </div>
         <div>
-          <Label className="text-xs">Au</Label>
-          <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-8 text-sm w-36" />
+          <Label htmlFor="ledger-date-to" className="text-xs">Au</Label>
+          <Input id="ledger-date-to" type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-8 text-sm w-36" />
         </div>
         {(dateFrom || dateTo) && (
           <Button variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-xs">Réinitialiser</Button>
@@ -446,6 +550,224 @@ export default function TiersDetail() {
         </Card>
       )}
 
+      {/* ========== CRM INTERACTIONS ========== */}
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-semibold flex items-center gap-1">
+              <MessageSquare className="h-4 w-4 text-primary" />
+              Interactions CRM ({interactions.length})
+            </CardTitle>
+            <Button variant="outline" size="sm" onClick={() => setShowInteractionForm(true)} className="gap-1 text-xs">
+              <Plus className="h-3 w-3" /> Nouvelle
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {interactions.length > 0 ? (
+            <div className="divide-y">
+              {interactions.map((item: any) => {
+                const typeConfig = INTERACTION_TYPES.find(t => t.value === item.type) || { label: item.type, icon: MessageSquare };
+                const TypeIcon = typeConfig.icon;
+                const pConfig = PRIORITE_LABELS[item.priorite] || { label: item.priorite, color: '' };
+                return (
+                  <div key={item.id} className="px-4 py-3 flex items-start gap-3 hover:bg-muted/30">
+                    <div className="mt-0.5 p-1.5 rounded-full bg-primary/10">
+                      <TypeIcon className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-medium">{item.sujet}</p>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => handleDeleteInteraction(item.id)}>
+                          <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{item.description || ''}</p>
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{typeConfig.label}</span>
+                        <span className={`text-[10px] ${pConfig.color}`}>{pConfig.label}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(item.date_interaction).toLocaleDateString('fr-FR')}
+                        </span>
+                        {item.date_rappel && (
+                          <span className="text-[10px] text-amber-600 flex items-center gap-0.5">
+                            <Clock className="h-3 w-3" /> Rappel: {new Date(item.date_rappel).toLocaleDateString('fr-FR')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="px-4 py-6 text-center text-muted-foreground">
+              <MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-xs">Aucune interaction enregistrée</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ========== CRM TÂCHES ========== */}
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-semibold flex items-center gap-1">
+              <CheckCircle2 className="h-4 w-4 text-primary" />
+              Tâches ({taches.length})
+            </CardTitle>
+            <Button variant="outline" size="sm" onClick={() => setShowTacheForm(true)} className="gap-1 text-xs">
+              <Plus className="h-3 w-3" /> Nouvelle tâche
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {taches.length > 0 ? (
+            <div className="divide-y">
+              {taches.map((t: any) => (
+                <div key={t.id} className="px-4 py-3 flex items-start gap-3 hover:bg-muted/30">
+                  <div className="mt-0.5">
+                    {t.statut === 'terminee' ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <Clock className="h-4 w-4 text-amber-500" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className={`text-sm font-medium ${t.statut === 'terminee' ? 'line-through text-muted-foreground' : ''}`}>{t.titre}</p>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {t.statut !== 'terminee' && (
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleCompleteTache(t.id)} title="Marquer terminée">
+                            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleDeleteTache(t.id)}>
+                          <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                        </Button>
+                      </div>
+                    </div>
+                    {t.description && <p className="text-xs text-muted-foreground mt-0.5">{t.description}</p>}
+                    <div className="flex items-center gap-2 mt-1.5">
+                      {t.priorite && (
+                        <span className={`text-[10px] ${PRIORITE_LABELS[t.priorite]?.color || ''} bg-muted px-1.5 py-0.5 rounded`}>
+                          {PRIORITE_LABELS[t.priorite]?.label || t.priorite}
+                        </span>
+                      )}
+                      {t.date_echeance && (
+                        <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+                          <Calendar className="h-3 w-3" /> Échéance: {new Date(t.date_echeance).toLocaleDateString('fr-FR')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="px-4 py-6 text-center text-muted-foreground">
+              <CheckCircle2 className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-xs">Aucune tâche</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ========== DIALOGS CRM ========== */}
+      <Dialog open={showInteractionForm} onOpenChange={setShowInteractionForm}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Nouvelle interaction</DialogTitle></DialogHeader>
+          <form onSubmit={handleCreateInteraction} className="space-y-3">
+            <div>
+              <Label htmlFor="interaction-type">Type *</Label>
+              <Select value={interactionForm.type} onValueChange={v => setInteractionForm(p => ({ ...p, type: v }))}>
+                <SelectTrigger id="interaction-type" className="w-full" aria-label="Type d'interaction">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {INTERACTION_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Sujet *</Label>
+              <Input value={interactionForm.sujet} onChange={e => setInteractionForm(p => ({ ...p, sujet: e.target.value }))} required />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <textarea value={interactionForm.description} onChange={e => setInteractionForm(p => ({ ...p, description: e.target.value }))}
+                rows={3} className="w-full border rounded-md px-3 py-2 text-sm bg-background" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Priorité</Label>
+                <Select value={interactionForm.priorite} onValueChange={v => setInteractionForm(p => ({ ...p, priorite: v }))}>
+                  <SelectTrigger className="w-full" aria-label="Priorité">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="basse">Basse</SelectItem>
+                    <SelectItem value="normale">Normale</SelectItem>
+                    <SelectItem value="haute">Haute</SelectItem>
+                    <SelectItem value="urgente">Urgente</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Rappel le</Label>
+                <Input type="date" value={interactionForm.date_rappel} onChange={e => setInteractionForm(p => ({ ...p, date_rappel: e.target.value }))} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowInteractionForm(false)}>Annuler</Button>
+              <Button type="submit">Enregistrer</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showTacheForm} onOpenChange={setShowTacheForm}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Nouvelle tâche</DialogTitle></DialogHeader>
+          <form onSubmit={handleCreateTache} className="space-y-3">
+            <div>
+              <Label>Titre *</Label>
+              <Input value={tacheForm.titre} onChange={e => setTacheForm(p => ({ ...p, titre: e.target.value }))} required />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <textarea value={tacheForm.description} onChange={e => setTacheForm(p => ({ ...p, description: e.target.value }))}
+                rows={2} className="w-full border rounded-md px-3 py-2 text-sm bg-background" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Priorité</Label>
+                <Select value={tacheForm.priorite} onValueChange={v => setTacheForm(p => ({ ...p, priorite: v }))}>
+                  <SelectTrigger className="w-full" aria-label="Priorité">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="basse">Basse</SelectItem>
+                    <SelectItem value="normale">Normale</SelectItem>
+                    <SelectItem value="haute">Haute</SelectItem>
+                    <SelectItem value="urgente">Urgente</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Échéance</Label>
+                <Input type="date" value={tacheForm.date_echeance} onChange={e => setTacheForm(p => ({ ...p, date_echeance: e.target.value }))} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowTacheForm(false)}>Annuler</Button>
+              <Button type="submit">Créer</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Acompte client dialog */}
       <Dialog open={showAcompteClient} onOpenChange={setShowAcompteClient}>
         <DialogContent className="max-w-sm">
@@ -454,21 +776,30 @@ export default function TiersDetail() {
             <div><Label>Montant *</Label><MoneyInput value={acompteForm.montant} onChange={v => setAcompteForm(p => ({ ...p, montant: v }))} required placeholder="0" /></div>
             <div>
               <Label>Méthode</Label>
-              <select value={acompteForm.methode} onChange={e => setAcompteForm(p => ({ ...p, methode: e.target.value }))} className="w-full border rounded-md px-3 py-2 text-sm bg-background">
-                {METHODES.map(m => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
-              </select>
+              <Select value={acompteForm.methode} onValueChange={v => setAcompteForm(p => ({ ...p, methode: v }))}>
+                <SelectTrigger className="w-full" aria-label="Méthode de paiement">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {METHODES.map(m => <SelectItem key={m} value={m}>{m.replace('_', ' ')}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Magasin {acompteForm.methode === 'espece' && <span className="text-red-500">*</span>}</Label>
-              <select
-                value={acompteForm.magasin_id}
-                onChange={e => setAcompteForm(p => ({ ...p, magasin_id: e.target.value }))}
-                className="w-full border rounded-md px-3 py-2 text-sm bg-background"
-                required={acompteForm.methode === 'espece'}
+              <Select
+                value={acompteForm.magasin_id || undefined}
+                onValueChange={v => setAcompteForm(p => ({ ...p, magasin_id: v }))}
               >
-                <option value="">— Choisir —</option>
-                {magasinsList.map(m => <option key={m.id} value={m.id}>{m.code} - {m.nom}</option>)}
-              </select>
+                <SelectTrigger aria-label="Magasin">
+                  <SelectValue placeholder="— Choisir —" />
+                </SelectTrigger>
+                <SelectContent>
+                  {magasinsList.map(m => (
+                    <SelectItem key={m.id} value={String(m.id)}>{m.code} - {m.nom}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {acompteForm.methode === 'espece' && (
                 <p className="text-xs text-amber-600 mt-1">Caisse du magasin doit être ouverte.</p>
               )}
@@ -496,9 +827,14 @@ export default function TiersDetail() {
             <div><Label>Montant *</Label><MoneyInput value={acompteForm.montant} onChange={v => setAcompteForm(p => ({ ...p, montant: v }))} required placeholder="0" /></div>
             <div>
               <Label>Méthode</Label>
-              <select value={acompteForm.methode} onChange={e => setAcompteForm(p => ({ ...p, methode: e.target.value }))} className="w-full border rounded-md px-3 py-2 text-sm bg-background">
-                {METHODES.map(m => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
-              </select>
+              <Select value={acompteForm.methode} onValueChange={v => setAcompteForm(p => ({ ...p, methode: v }))}>
+                <SelectTrigger className="w-full" aria-label="Méthode de paiement">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {METHODES.map(m => <SelectItem key={m} value={m}>{m.replace('_', ' ')}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Magasin {acompteForm.methode === 'espece' && <span className="text-red-500">*</span>}</Label>
@@ -582,11 +918,15 @@ export default function TiersDetail() {
               </div>
               <div>
                 <Label>Méthode</Label>
-                <select value={refundForm.methode}
-                  onChange={e => setRefundForm(p => ({ ...p, methode: e.target.value }))}
-                  className="w-full border rounded-md px-3 py-2 text-sm bg-background">
-                  {METHODES.map(m => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
-                </select>
+                <Select value={refundForm.methode}
+                  onValueChange={v => setRefundForm(p => ({ ...p, methode: v }))}>
+                  <SelectTrigger className="w-full" aria-label="Méthode de remboursement">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {METHODES.map(m => <SelectItem key={m} value={m}>{m.replace('_', ' ')}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label>Session caisse (optionnel)</Label>

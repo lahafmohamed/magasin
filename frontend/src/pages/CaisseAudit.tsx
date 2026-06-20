@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertTriangle, CheckCircle2, RefreshCw, Filter } from 'lucide-react';
 import { formatFCFA } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -101,9 +102,14 @@ export default function CaisseAudit() {
         <CardContent className="p-4 flex flex-wrap gap-3 items-end">
           <div>
             <Label className="text-xs">Type</Label>
-            <select value={sourceKind} onChange={e => setSourceKind(e.target.value)} className="block border rounded-md px-3 py-2 text-sm bg-background">
-              {SOURCE_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
-            </select>
+            <Select value={sourceKind || '__all'} onValueChange={v => setSourceKind(v === '__all' ? '' : v)}>
+              <SelectTrigger className="block w-44 text-sm" aria-label="Filtrer par type">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SOURCE_KINDS.map(k => <SelectItem key={k.value} value={k.value === '' ? '__all' : k.value}>{k.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
           <div>
             <Label className="text-xs">Du</Label>

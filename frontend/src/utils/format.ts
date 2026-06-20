@@ -68,12 +68,22 @@ export function fuzzyMatch(query: string, target: string): boolean {
 }
 
 /**
- * Format a number as FCFA. Zero decimals, French thousand separator.
+ * Format a number with dynamic currency symbol.
+ * Uses stored devise from company settings (defaults to 'FCFA').
  */
-export function formatFCFA(montant: number | string | undefined | null): string {
+export function formatCurrency(
+  montant: number | string | undefined | null,
+  devise?: string | null
+): string {
   const value = typeof montant === 'string' ? parseFloat(montant) : (montant ?? 0);
-  if (isNaN(value)) return '0 FCFA';
-  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Math.round(value)) + ' FCFA';
+  if (isNaN(value)) return `0 ${devise || 'FCFA'}`;
+  const symbol = devise || 'FCFA';
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Math.round(value)) + ' ' + symbol;
+}
+
+/** @deprecated Use formatCurrency instead */
+export function formatFCFA(montant: number | string | undefined | null): string {
+  return formatCurrency(montant);
 }
 
 export const formatXOF = formatFCFA;

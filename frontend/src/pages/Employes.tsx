@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Loader2, Plus } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Loader2, Plus, Users } from 'lucide-react';
 import { employeService } from '../services/api';
 import { toast } from 'sonner';
 import { MoneyInput } from '../components/ui/money-input';
@@ -8,6 +8,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EmptyState } from '@/components/ui/empty-state';
+import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { formatFCFA } from '../utils/format';
 
 interface Employe {
@@ -37,7 +40,7 @@ interface CommissionSummary {
   commissions_payees: number;
 }
 
-const SELECT_CLS = 'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
+type EmployeSortKey = 'matricule' | 'nom_complet' | 'poste' | 'departement' | 'commission_taux';
 
 export default function Employes() {
   const [employes, setEmployes] = useState<Employe[]>([]);
@@ -47,6 +50,8 @@ export default function Employes() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [filterDepartement, setFilterDepartement] = useState<string>('');
+  const [sort, setSort] = useState<SortState<EmployeSortKey> | null>(null);
+  const handleSort = (key: EmployeSortKey) => setSort((s) => toggleSort(s, key));
 
   const [formData, setFormData] = useState({
     matricule: '',
@@ -123,6 +128,23 @@ export default function Employes() {
     }
   };
 
+  const sortedEmployes = useMemo(() => {
+    if (!sort) return employes;
+    const arr = [...employes];
+    arr.sort((a, b) => {
+      let cmp: number;
+      if (sort.key === 'commission_taux') {
+        cmp = (parseFloat(a.commission_taux) || 0) - (parseFloat(b.commission_taux) || 0);
+      } else {
+        const av = (a[sort.key] || '').toString().toLowerCase();
+        const bv = (b[sort.key] || '').toString().toLowerCase();
+        cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      }
+      return sort.dir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [employes, sort]);
+
   if (loading) {
     return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
@@ -132,16 +154,20 @@ export default function Employes() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Gestion des employés</h1>
         <div className="flex gap-2">
-          <select
-            className={SELECT_CLS + ' w-auto'}
-            value={filterDepartement}
-            onChange={(e) => setFilterDepartement(e.target.value)}
+          <Select
+            value={filterDepartement === '' ? '__all' : filterDepartement}
+            onValueChange={(v) => setFilterDepartement(v === '__all' ? '' : v)}
           >
-            <option value="">Tous les départements</option>
-            <option value="Vente">Vente</option>
-            <option value="Magasin">Magasin</option>
-            <option value="Administration">Administration</option>
-          </select>
+            <SelectTrigger className="h-9 w-auto" aria-label="Filtrer par département">
+              <SelectValue placeholder="Tous les départements" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all">Tous les départements</SelectItem>
+              <SelectItem value="Vente">Vente</SelectItem>
+              <SelectItem value="Magasin">Magasin</SelectItem>
+              <SelectItem value="Administration">Administration</SelectItem>
+            </SelectContent>
+          </Select>
           <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
             <Plus className="h-4 w-4" />
             Nouvel employé
@@ -170,12 +196,20 @@ export default function Employes() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-dept">Département</Label>
-                <select id="emp-dept" className={SELECT_CLS} value={formData.departement} onChange={(e) => setFormData({ ...formData, departement: e.target.value })}>
-                  <option value="">Sélectionner…</option>
-                  <option value="Vente">Vente</option>
-                  <option value="Magasin">Magasin</option>
-                  <option value="Administration">Administration</option>
-                </select>
+                <Select
+                  value={formData.departement === '' ? '__all' : formData.departement}
+                  onValueChange={(v) => setFormData({ ...formData, departement: v === '__all' ? '' : v })}
+                >
+                  <SelectTrigger id="emp-dept" className="h-9">
+                    <SelectValue placeholder="Sélectionner…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">Sélectionner…</SelectItem>
+                    <SelectItem value="Vente">Vente</SelectItem>
+                    <SelectItem value="Magasin">Magasin</SelectItem>
+                    <SelectItem value="Administration">Administration</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-embauche">Date d'embauche *</Label>
@@ -228,23 +262,23 @@ export default function Employes() {
           <div className="p-5">
             <h2 className="text-lg font-semibold mb-3">Employés</h2>
             {employes.length === 0 ? (
-              <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">Aucun employé</div>
+              <EmptyState icon={Users} title="Aucun employé" />
             ) : (
               <div className="overflow-x-auto rounded-md border">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 text-left">
                     <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="px-3 py-2 font-medium">Matricule</th>
-                      <th className="px-3 py-2 font-medium">Nom</th>
-                      <th className="px-3 py-2 font-medium">Poste</th>
-                      <th className="px-3 py-2 font-medium">Dépt.</th>
-                      <th className="px-3 py-2 font-medium">Commission</th>
+                      <SortableHeader columnKey="matricule" sort={sort} onSort={handleSort}>Matricule</SortableHeader>
+                      <SortableHeader columnKey="nom_complet" sort={sort} onSort={handleSort}>Nom</SortableHeader>
+                      <SortableHeader columnKey="poste" sort={sort} onSort={handleSort}>Poste</SortableHeader>
+                      <SortableHeader columnKey="departement" sort={sort} onSort={handleSort}>Dépt.</SortableHeader>
+                      <SortableHeader columnKey="commission_taux" sort={sort} onSort={handleSort} align="right">Commission</SortableHeader>
                       <th className="px-3 py-2 font-medium">Statut</th>
                       <th className="px-3 py-2 font-medium">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {employes.map((employe) => (
+                    {sortedEmployes.map((employe) => (
                       <tr key={employe.id} className={`hover:bg-muted/30 ${selectedEmploye?.id === employe.id ? 'bg-primary/10' : ''}`}>
                         <td className="px-3 py-2 font-medium text-xs num">{employe.matricule}</td>
                         <td className="px-3 py-2">{employe.nom_complet}</td>

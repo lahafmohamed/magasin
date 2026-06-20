@@ -18,22 +18,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('auth_token');
     const storedUser = localStorage.getItem('auth_user');
 
-    if (token && storedUser) {
+    if (storedUser) {
       setUser(JSON.parse(storedUser));
-      // Verify token is still valid
+      // Validate the session via the httpOnly cookie (sent automatically).
       authService.getCurrentUser()
         .then((userData) => {
           setUser(userData);
           localStorage.setItem('auth_user', JSON.stringify(userData));
         })
         .catch((err: any) => {
-          // Only end the session if the token is actually rejected (401).
-          // Rate-limit (429), network, or server errors keep the stored session.
+          // Only end the session if the cookie is actually rejected (401).
+          // Rate-limit (429), network, or server errors keep the cached session.
           if (err?.response?.status === 401) {
-            authService.logout();
+            localStorage.removeItem('auth_user');
             setUser(null);
           }
         })
@@ -53,7 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
-    authService.logout();
+    void authService.logout();
     setUser(null);
     window.location.href = '/login';
   };

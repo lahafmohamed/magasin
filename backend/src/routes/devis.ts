@@ -12,6 +12,9 @@ router.use(authenticate);
 // GET /api/devis - Get all quotes
 router.get('/', DevisController.getAll);
 
+// GET /api/devis/stats - List KPIs (must precede /:id)
+router.get('/stats', DevisController.getStats);
+
 // GET /api/devis/:id - Get quote by ID
 router.get('/:id', DevisController.getById);
 

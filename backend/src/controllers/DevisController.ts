@@ -143,6 +143,15 @@ export class DevisController {
     }
   }
 
+  static async getStats(_req: Request, res: Response): Promise<void> {
+    try {
+      const stats = await devisService.getStats();
+      res.json({ success: true, data: stats });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
   static async generatePDF(req: Request, res: Response): Promise<void> {
     try {
       const { id } = req.params;

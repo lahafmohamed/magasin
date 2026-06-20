@@ -1,23 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { factureService, stockLocationService, ventesService, tvaService } from '../services/api';
+import { useForm, useFieldArray, useWatch, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { factureService, stockLocationService, ventesService } from '../services/api';
 import { TiersPicker } from '../components/TiersPicker';
+import { useDraft } from '@/hooks/useDraft';
 import { Produit, Tiers } from '../types';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
 import { ArrowLeft, Search, Minus, Plus, X, AlertCircle, ScanLine } from 'lucide-react';
 import { toast } from 'sonner';
-
-interface LigneFacture {
-  produit_id: number;
-  produit_nom: string;
-  produit_reference: string;
-  quantite: number;
-  prix_unitaire: number;
-  prix_unitaire_default: number;
-  prix_revient: number;
-  remise_pct: number;
-  stock_dispo: number;
-}
 
 interface StockLocation {
   id: number;
@@ -33,44 +27,121 @@ interface StockLevel {
 
 import { formatFCFA as formatXOF } from '../utils/format';
 
-const DEFAULT_TVA_RATE = 0.19;
+// VAT-exempt business: TVA is always 0 (HT == TTC).
+const DEFAULT_TVA_RATE = 0;
+
+// --- Validation schema (react-hook-form + zod) -----------------------------
+// Mirrors the fields that were previously validated manually before submit:
+//  - a client (tiers) must be selected
+//  - at least one line
+//  - per line: quantité > 0, prix unitaire >= 0, remise 0..100
+// The stock-availability rule (quantité <= stock_dispo) stays in onValid so we
+// keep the exact original toast UX (it depends on per-location live stock).
+const ligneSchema = z.object({
+  produit_id: z.number(),
+  produit_nom: z.string(),
+  produit_reference: z.string(),
+  quantite: z.number().min(1, 'Quantité invalide'),
+  prix_unitaire: z.number().min(0, 'Prix invalide'),
+  prix_unitaire_default: z.number(),
+  prix_revient: z.number(),
+  remise_pct: z.number().min(0).max(100),
+  stock_dispo: z.number(),
+});
+
+const factureSchema = z
+  .object({
+    client: z.custom<Tiers | null>(),
+    location_id: z.number().nullable(),
+    echeance: z.string().min(1, 'Échéance requise'),
+    notes: z.string(),
+    lignes: z.array(ligneSchema).min(1, 'Ajoutez au moins un produit'),
+  })
+  // Object-level check so the field output type stays `Tiers | null`
+  // (a field-level type-guard refine would narrow it and break RHF typing).
+  .superRefine((val, ctx) => {
+    if (val.client == null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['client'],
+        message: 'Sélectionnez un tiers (client)',
+      });
+    }
+  });
+
+type FactureFormValues = z.infer<typeof factureSchema>;
+type LigneFacture = z.infer<typeof ligneSchema>;
+
+function defaultEcheance(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 14);
+  return d.toISOString().slice(0, 10);
+}
 
 export default function NouvelleFacture() {
   const navigate = useNavigate();
 
-  const [selectedClient, setSelectedClient] = useState<Tiers | null>(null);
-
+  // --- Local (non-form) UI state -------------------------------------------
+  // Product search / dropdown are pure UX; only the selected product becomes a
+  // form line. tvaRate, locations and the per-location stock map are loaded
+  // async and feed calculations / line stock — not form inputs themselves.
   const [produits, setProduits] = useState<Produit[]>([]);
   const [produitSearch, setProduitSearch] = useState('');
   const [showProduitDropdown, setShowProduitDropdown] = useState(false);
-
-  const [lignes, setLignes] = useState<LigneFacture[]>([]);
-  const [notes, setNotes] = useState('');
-  const [echeance, setEcheance] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 14);
-    return d.toISOString().slice(0, 10);
-  });
   const [submitting, setSubmitting] = useState(false);
-
   const [locations, setLocations] = useState<StockLocation[]>([]);
-  const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
   const [locationStockMap, setLocationStockMap] = useState<Record<number, number>>({});
-  const [tvaRate, setTvaRate] = useState(DEFAULT_TVA_RATE);
+  const [tvaRate] = useState(DEFAULT_TVA_RATE);
+
+  // --- react-hook-form ------------------------------------------------------
+  const {
+    control,
+    register,
+    handleSubmit,
+    setValue,
+    getValues,
+    watch,
+    reset,
+    formState: { errors, isDirty },
+  } = useForm<FactureFormValues>({
+    resolver: zodResolver(factureSchema),
+    mode: 'onChange',
+    defaultValues: {
+      client: null,
+      location_id: null,
+      echeance: defaultEcheance(),
+      notes: '',
+      lignes: [],
+    },
+  });
+
+  // --- Draft autosave + unsaved-changes guard ------------------------------
+  const { draft, save, clear, hasDraft } = useDraft<FactureFormValues>('facture:new');
+  const [showDraftBanner, setShowDraftBanner] = useState(hasDraft);
 
   useEffect(() => {
-    const loadTvaRate = async () => {
-      try {
-        const rates = await tvaService.getActive();
-        if (rates && rates.length > 0) {
-          setTvaRate(Number(rates[0].taux) / 100);
-        }
-      } catch {
-        // Garde le taux par défaut si l'appel échoue
+    const sub = watch((v) => save(v as FactureFormValues));
+    return () => sub.unsubscribe();
+  }, [watch, save]);
+
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '';
       }
     };
-    void loadTvaRate();
-  }, []);
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
+  const { fields, append, remove } = useFieldArray({ control, name: 'lignes' });
+
+  // Live watched values drive totals, stock loading and the submit button.
+  const watchedClient = useWatch({ control, name: 'client' });
+  const selectedLocationId = useWatch({ control, name: 'location_id' });
+  const watchedLignesRaw = useWatch({ control, name: 'lignes' });
+  const lignes = (watchedLignesRaw ?? []) as LigneFacture[];
 
   useEffect(() => {
     const loadLocations = async () => {
@@ -80,7 +151,7 @@ export default function NouvelleFacture() {
         setLocations(magasinLocations);
         const defaultLocation = magasinLocations.find((l) => l.est_principal) || magasinLocations[0];
         if (defaultLocation) {
-          setSelectedLocationId(defaultLocation.id);
+          setValue('location_id', defaultLocation.id);
         } else {
           toast.error('Aucun magasin actif disponible pour la facturation');
         }
@@ -89,7 +160,7 @@ export default function NouvelleFacture() {
       }
     };
     void loadLocations();
-  }, []);
+  }, [setValue]);
 
   useEffect(() => {
     if (!selectedLocationId) return;
@@ -109,15 +180,15 @@ export default function NouvelleFacture() {
     void loadLocationStock();
   }, [selectedLocationId]);
 
+  // Re-sync each line's stock_dispo when the location stock map changes
+  // (preserves the original `stock_dispo: map[id] ?? 0` remap).
   useEffect(() => {
     if (!selectedLocationId) return;
-    setLignes((prev) =>
-      prev.map((ligne) => ({
-        ...ligne,
-        stock_dispo: locationStockMap[ligne.produit_id] ?? 0,
-      })),
-    );
-  }, [locationStockMap, selectedLocationId]);
+    const current = getValues('lignes');
+    current.forEach((ligne, i) => {
+      setValue(`lignes.${i}.stock_dispo`, locationStockMap[ligne.produit_id] ?? 0);
+    });
+  }, [locationStockMap, selectedLocationId, getValues, setValue]);
 
   useEffect(() => {
     if (produitSearch.length < 2) {
@@ -133,9 +204,13 @@ export default function NouvelleFacture() {
   }, [produitSearch, selectedLocationId]);
 
   const addProduit = (p: Produit) => {
-    const existing = lignes.find((l) => l.produit_id === p.id);
-    if (existing) {
-      setLignes(lignes.map((l) => (l.produit_id === p.id ? { ...l, quantite: l.quantite + 1 } : l)));
+    const current = getValues('lignes');
+    const existingIdx = current.findIndex((l) => l.produit_id === p.id);
+    if (existingIdx >= 0) {
+      setValue(`lignes.${existingIdx}.quantite`, current[existingIdx].quantite + 1, {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
       setProduitSearch('');
       setShowProduitDropdown(false);
       return;
@@ -148,28 +223,22 @@ export default function NouvelleFacture() {
       ? locationStockMap[p.id] ?? fallbackStock
       : fallbackStock;
 
-    setLignes([
-      ...lignes,
-      {
-        produit_id: p.id,
-        produit_nom: p.nom,
-        produit_reference: p.reference,
-        quantite: 1,
-        prix_unitaire: prixVente,
-        prix_unitaire_default: prixVente,
-        prix_revient: prixAchat,
-        remise_pct: 0,
-        stock_dispo: stock,
-      },
-    ]);
+    append({
+      produit_id: p.id,
+      produit_nom: p.nom,
+      produit_reference: p.reference,
+      quantite: 1,
+      prix_unitaire: prixVente,
+      prix_unitaire_default: prixVente,
+      prix_revient: prixAchat,
+      remise_pct: 0,
+      stock_dispo: stock,
+    });
     setProduitSearch('');
     setShowProduitDropdown(false);
   };
 
-  const updateLigne = (idx: number, patch: Partial<LigneFacture>) => {
-    setLignes((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
-  };
-  const removeLigne = (idx: number) => setLignes(lignes.filter((_, i) => i !== idx));
+  const removeLigne = (idx: number) => remove(idx);
 
   const totals = useMemo(() => {
     const subtotal = lignes.reduce(
@@ -185,20 +254,26 @@ export default function NouvelleFacture() {
     return { subtotal, totalCost, margin, marginPct, tva, total, totalUnits };
   }, [lignes, tvaRate]);
 
-  const isValid = !!selectedClient && lignes.length > 0;
-  const disabledReason = !selectedClient ? 'Sélectionnez un tiers (client)' : lignes.length === 0 ? 'Ajoutez au moins un produit' : null;
+  const isValid = !!watchedClient && lignes.length > 0;
+  const disabledReason = !watchedClient
+    ? 'Sélectionnez un tiers (client)'
+    : lignes.length === 0
+    ? 'Ajoutez au moins un produit'
+    : null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedClient) {
+  const onValid = async (data: FactureFormValues) => {
+    // Defensive guards kept identical to the original manual validation so the
+    // exact toast messages are preserved (the schema already blocks these,
+    // but we keep the UX 1:1).
+    if (!data.client) {
       toast.error('Veuillez sélectionner un client');
       return;
     }
-    if (lignes.length === 0) {
+    if (data.lignes.length === 0) {
       toast.error('Veuillez ajouter au moins un produit');
       return;
     }
-    for (const ligne of lignes) {
+    for (const ligne of data.lignes) {
       if (ligne.quantite > ligne.stock_dispo) {
         toast.error(`Stock insuffisant pour "${ligne.produit_nom}" (disponible: ${ligne.stock_dispo})`);
         return;
@@ -211,15 +286,16 @@ export default function NouvelleFacture() {
     setSubmitting(true);
     try {
       const result = await factureService.create({
-        tiers_id: selectedClient.id,
-        location_id: selectedLocationId || undefined,
-        lignes: lignes.map((l) => ({
+        tiers_id: data.client.id,
+        location_id: data.location_id || undefined,
+        lignes: data.lignes.map((l) => ({
           produit_id: l.produit_id,
           quantite: l.quantite,
           prix_unitaire: l.prix_unitaire * (1 - l.remise_pct / 100),
         })),
-        notes: notes || undefined,
+        notes: data.notes || undefined,
       });
+      clear();
       toast.success(`Facture ${result.numero_facture} créée avec succès!`);
       navigate('/factures');
     } catch (error: any) {
@@ -235,7 +311,7 @@ export default function NouvelleFacture() {
 
   return (
     <form
-      onSubmit={handleSubmit}
+      onSubmit={handleSubmit(onValid)}
       className="w-full p-4 sm:p-8 tabular-nums"
       style={{ fontFeatureSettings: '"tnum"' }}
     >
@@ -253,41 +329,106 @@ export default function NouvelleFacture() {
         </div>
       </div>
 
+      {showDraftBanner && (
+        <div className="rounded-lg border bg-muted/50 p-3 text-sm flex items-center justify-between gap-3 mb-5">
+          <span>Un brouillon non enregistré a été récupéré.</span>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                if (draft) reset(draft);
+                setShowDraftBanner(false);
+              }}
+            >
+              Restaurer
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                clear();
+                setShowDraftBanner(false);
+              }}
+            >
+              Ignorer
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
         {/* Left column */}
         <div className="grid gap-4 min-w-0">
           {/* Client + meta */}
           <section className={cardCls}>
             <div className="flex items-baseline justify-between mb-3">
-              <h2 className={sectionLabel}>Client (Tiers)</h2>
+              <h2 className={sectionLabel}>Client (Tiers)<span className="text-destructive"> *</span></h2>
             </div>
-            <TiersPicker role="client" value={selectedClient} onChange={setSelectedClient} />
+            <Controller
+              control={control}
+              name="client"
+              render={({ field, fieldState }) => (
+                <>
+                  <TiersPicker role="client" value={field.value} onChange={field.onChange} />
+                  {fieldState.error && (
+                    <p role="alert" className="text-xs font-medium text-danger mt-1.5">
+                      {fieldState.error.message}
+                    </p>
+                  )}
+                </>
+              )}
+            />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
               <div>
-                <label className="text-xs text-muted-foreground block mb-1.5">
-                  Location de vente
-                </label>
-                <select
-                  className="w-full px-3 py-2 text-sm rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={selectedLocationId || ''}
-                  onChange={(e) => setSelectedLocationId(parseInt(e.target.value, 10))}
+                <Label
+                  htmlFor="facture-location"
+                  className="text-xs text-muted-foreground block mb-1.5 font-normal"
                 >
-                  {locations.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.nom} ({l.code})
-                    </option>
-                  ))}
-                </select>
+                  Location de vente
+                </Label>
+                <Controller
+                  control={control}
+                  name="location_id"
+                  render={({ field }) => (
+                    <Select
+                      value={field.value ? String(field.value) : ''}
+                      onValueChange={(v) => field.onChange(parseInt(v, 10))}
+                    >
+                      <SelectTrigger id="facture-location" className="w-full" aria-label="Location de vente">
+                        <SelectValue placeholder="Choisir une location" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {locations.map((l) => (
+                          <SelectItem key={l.id} value={String(l.id)}>
+                            {l.nom} ({l.code})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground block mb-1.5">Échéance</label>
+                <Label
+                  htmlFor="facture-echeance"
+                  className="text-xs text-muted-foreground block mb-1.5 font-normal"
+                >
+                  Échéance<span className="text-destructive"> *</span>
+                </Label>
                 <input
+                  id="facture-echeance"
                   type="date"
                   className="w-full px-3 py-2 text-sm rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={echeance}
-                  onChange={(e) => setEcheance(e.target.value)}
+                  {...register('echeance')}
                 />
+                {errors.echeance && (
+                  <p role="alert" className="text-xs font-medium text-danger mt-1">
+                    {errors.echeance.message}
+                  </p>
+                )}
               </div>
             </div>
           </section>
@@ -309,9 +450,16 @@ export default function NouvelleFacture() {
               </button>
             </div>
 
+            <Label
+              htmlFor="facture-produit-search"
+              className="text-xs text-muted-foreground block mb-1.5 font-normal"
+            >
+              Rechercher un produit
+            </Label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input
+                id="facture-produit-search"
                 className="w-full pl-10 pr-3 py-2.5 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
                 placeholder="Rechercher un produit par nom ou référence…"
                 value={produitSearch}
@@ -376,16 +524,16 @@ export default function NouvelleFacture() {
               )}
             </div>
 
-            {lignes.length > 0 ? (
+            {fields.length > 0 ? (
               <div className="mt-4 border rounded-lg overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50">
                       <tr className="text-[11px] uppercase tracking-wider text-muted-foreground">
                         <th className="text-left font-semibold px-3 py-2.5">Produit</th>
-                        <th className="text-center font-semibold px-3 py-2.5 w-[110px]">Qté</th>
+                        <th className="text-center font-semibold px-3 py-2.5 w-[110px]">Qté<span className="text-destructive"> *</span></th>
                         <th className="text-right font-semibold px-3 py-2.5 w-[150px]">
-                          Prix unitaire
+                          Prix unitaire<span className="text-destructive"> *</span>
                         </th>
                         <th className="text-right font-semibold px-3 py-2.5 w-[110px]">Marge</th>
                         <th className="text-right font-semibold px-3 py-2.5 w-[80px]">Remise</th>
@@ -394,7 +542,9 @@ export default function NouvelleFacture() {
                       </tr>
                     </thead>
                     <tbody>
-                      {lignes.map((l, i) => {
+                      {fields.map((field, i) => {
+                        const l = (lignes[i] ?? field) as LigneFacture;
+                        const lineErrors = errors.lignes?.[i];
                         const effPrice = l.prix_unitaire * (1 - l.remise_pct / 100);
                         const lineTotal = l.quantite * effPrice;
                         const lineCost = l.quantite * l.prix_revient;
@@ -405,7 +555,7 @@ export default function NouvelleFacture() {
                         const overstock = l.quantite > l.stock_dispo;
                         const priceOverridden = l.prix_unitaire !== l.prix_unitaire_default;
                         return (
-                          <tr key={`${l.produit_id}-${i}`} className="border-t align-middle">
+                          <tr key={field.id} className="border-t align-middle">
                             <td className="px-3 py-3">
                               <div className="font-medium">{l.produit_nom}</div>
                               <div className="text-xs font-mono text-muted-foreground">
@@ -424,50 +574,82 @@ export default function NouvelleFacture() {
                                   type="button"
                                   className="px-2 py-1 text-muted-foreground hover:bg-muted"
                                   onClick={() =>
-                                    updateLigne(i, { quantite: Math.max(1, l.quantite - 1) })
+                                    setValue(`lignes.${i}.quantite`, Math.max(1, l.quantite - 1), {
+                                      shouldValidate: true,
+                                      shouldDirty: true,
+                                    })
                                   }
                                 >
                                   <Minus className="h-3.5 w-3.5" />
                                 </button>
-                                <input
-                                  className="w-10 text-center text-sm border-x py-1 font-mono bg-background focus:outline-none"
-                                  value={l.quantite === 0 ? '' : l.quantite}
-                                  onChange={(e) => {
-                                    const n = parseInt(e.target.value, 10);
-                                    updateLigne(i, { quantite: Number.isNaN(n) ? 0 : n });
-                                  }}
-                                  onBlur={(e) => {
-                                    if (!e.target.value || parseInt(e.target.value, 10) < 1) {
-                                      updateLigne(i, { quantite: 1 });
-                                    }
-                                  }}
+                                <Controller
+                                  control={control}
+                                  name={`lignes.${i}.quantite`}
+                                  render={({ field: qField }) => (
+                                    <input
+                                      className="w-10 text-center text-sm border-x py-1 font-mono bg-background focus:outline-none"
+                                      value={qField.value === 0 ? '' : qField.value}
+                                      onChange={(e) => {
+                                        const n = parseInt(e.target.value, 10);
+                                        qField.onChange(Number.isNaN(n) ? 0 : n);
+                                      }}
+                                      onBlur={(e) => {
+                                        if (!e.target.value || parseInt(e.target.value, 10) < 1) {
+                                          qField.onChange(1);
+                                        }
+                                        qField.onBlur();
+                                      }}
+                                    />
+                                  )}
                                 />
                                 <button
                                   type="button"
                                   className="px-2 py-1 text-muted-foreground hover:bg-muted"
-                                  onClick={() => updateLigne(i, { quantite: l.quantite + 1 })}
+                                  onClick={() =>
+                                    setValue(`lignes.${i}.quantite`, l.quantite + 1, {
+                                      shouldValidate: true,
+                                      shouldDirty: true,
+                                    })
+                                  }
                                 >
                                   <Plus className="h-3.5 w-3.5" />
                                 </button>
                               </div>
+                              {lineErrors?.quantite && (
+                                <p role="alert" className="text-[10px] font-medium text-danger mt-1">
+                                  {lineErrors.quantite.message}
+                                </p>
+                              )}
                             </td>
                             <td className="px-3 py-3 text-right">
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={l.prix_unitaire === 0 ? '' : l.prix_unitaire}
-                                onChange={(e) => {
-                                  const n = parseFloat(e.target.value);
-                                  updateLigne(i, { prix_unitaire: Number.isNaN(n) ? 0 : Math.max(0, n) });
-                                }}
-                                className={`w-28 px-2 py-1 text-right text-sm border rounded font-mono focus:outline-none focus:ring-1 focus:ring-ring ${
-                                  priceOverridden ? 'bg-primary/10 border-primary/30' : 'bg-background'
-                                }`}
+                              <Controller
+                                control={control}
+                                name={`lignes.${i}.prix_unitaire`}
+                                render={({ field: pField }) => (
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={pField.value === 0 ? '' : pField.value}
+                                    onChange={(e) => {
+                                      const n = parseFloat(e.target.value);
+                                      pField.onChange(Number.isNaN(n) ? 0 : Math.max(0, n));
+                                    }}
+                                    onBlur={pField.onBlur}
+                                    className={`w-28 px-2 py-1 text-right text-sm border rounded font-mono focus:outline-none focus:ring-1 focus:ring-ring ${
+                                      priceOverridden ? 'bg-primary/10 border-primary/30' : 'bg-background'
+                                    }`}
+                                  />
+                                )}
                               />
                               <div className="text-[10px] text-muted-foreground mt-1 flex justify-end items-baseline gap-1">
                                 <span className="uppercase tracking-wider">P. revient</span>
                                 <span className="font-mono">{formatXOF(l.prix_revient)}</span>
                               </div>
+                              {lineErrors?.prix_unitaire && (
+                                <p role="alert" className="text-[10px] font-medium text-danger mt-1">
+                                  {lineErrors.prix_unitaire.message}
+                                </p>
+                              )}
                             </td>
                             <td className="px-3 py-3 text-right">
                               <div
@@ -489,20 +671,24 @@ export default function NouvelleFacture() {
                             </td>
                             <td className="px-3 py-3 text-right">
                               <div className="inline-flex items-baseline gap-0.5">
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={100}
-                                  value={l.remise_pct}
-                                  onChange={(e) =>
-                                    updateLigne(i, {
-                                      remise_pct: Math.min(
-                                        100,
-                                        Math.max(0, parseFloat(e.target.value) || 0),
-                                      ),
-                                    })
-                                  }
-                                  className="w-12 px-1.5 py-1 text-right text-sm border rounded font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                                <Controller
+                                  control={control}
+                                  name={`lignes.${i}.remise_pct`}
+                                  render={({ field: rField }) => (
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      value={rField.value}
+                                      onChange={(e) =>
+                                        rField.onChange(
+                                          Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)),
+                                        )
+                                      }
+                                      onBlur={rField.onBlur}
+                                      className="w-12 px-1.5 py-1 text-right text-sm border rounded font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                                    />
+                                  )}
                                 />
                                 <span className="text-xs text-muted-foreground">%</span>
                               </div>
@@ -530,6 +716,11 @@ export default function NouvelleFacture() {
               <div className="mt-4 py-8 text-center text-sm text-muted-foreground bg-muted/30 rounded-lg">
                 Aucun produit. Recherchez ou scannez pour ajouter.
               </div>
+            )}
+            {errors.lignes?.message && (
+              <p role="alert" className="text-xs font-medium text-danger mt-2">
+                {errors.lignes.message}
+              </p>
             )}
           </section>
         </div>
@@ -589,11 +780,10 @@ export default function NouvelleFacture() {
           <section className={cardCls}>
             <label className="text-sm font-semibold block mb-2">Notes</label>
             <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
               rows={3}
               placeholder="Notes optionnelles visibles sur la facture…"
               className="w-full px-3 py-2 text-sm rounded-md border bg-background resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+              {...register('notes')}
             />
           </section>
 

@@ -1,5 +1,9 @@
-import { useState, useEffect } from 'react';
-import { X, Loader2, Plus } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, Loader2, Plus, FileText } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EmptyState } from '@/components/ui/empty-state';
+import { LoadingState } from '@/components/ui/loading';
+import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { factureFournisseurService, receptionService, produitService, acompteFournisseurService } from '../services/api';
 import { TiersPicker } from '../components/TiersPicker';
 import { Tiers } from '../types';
@@ -60,7 +64,6 @@ interface Product {
   nom: string;
 }
 
-const SELECT_CLS = 'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const BADGE_BASE = 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium';
 
 const STATUT_BADGE: Record<string, string> = {
@@ -84,6 +87,10 @@ export default function FacturesFournisseur() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [filterStatut, setFilterStatut] = useState<string>('');
+
+  type FactureSortKey = 'numero_facture_interne' | 'fournisseur_nom' | 'date_facture' | 'total';
+  const [sort, setSort] = useState<SortState<FactureSortKey> | null>(null);
+  const handleSort = (key: FactureSortKey) => setSort((s) => toggleSort(s, key));
 
   const [formData, setFormData] = useState({
     reception_id: '',
@@ -272,8 +279,29 @@ export default function FacturesFournisseur() {
     }
   };
 
+  const sortedFactures = useMemo(() => {
+    if (!sort) return factures;
+    const arr = [...factures];
+    arr.sort((a, b) => {
+      let cmp = 0;
+      switch (sort.key) {
+        case 'total':
+          cmp = parseFloat(a.total) - parseFloat(b.total);
+          break;
+        case 'date_facture':
+          cmp = new Date(a.date_facture).getTime() - new Date(b.date_facture).getTime();
+          break;
+        default:
+          cmp = String(a[sort.key]).localeCompare(String(b[sort.key]), 'fr');
+          break;
+      }
+      return sort.dir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [factures, sort]);
+
   if (loading) {
-    return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+    return <LoadingState />;
   }
 
   return (
@@ -281,18 +309,22 @@ export default function FacturesFournisseur() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Factures fournisseur</h1>
         <div className="flex gap-2">
-          <select
-            className={SELECT_CLS + ' w-auto'}
-            value={filterStatut}
-            onChange={(e) => setFilterStatut(e.target.value)}
+          <Select
+            value={filterStatut === '' ? '__all' : filterStatut}
+            onValueChange={(v) => setFilterStatut(v === '__all' ? '' : v)}
           >
-            <option value="">Tous les statuts</option>
-            <option value="en_attente">En attente</option>
-            <option value="validee">Validée</option>
-            <option value="partiellement_payee">Partiellement payée</option>
-            <option value="payee">Payée</option>
-            <option value="annulee">Annulée</option>
-          </select>
+            <SelectTrigger className="w-auto" aria-label="Filtrer par statut">
+              <SelectValue placeholder="Tous les statuts" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all">Tous les statuts</SelectItem>
+              <SelectItem value="en_attente">En attente</SelectItem>
+              <SelectItem value="validee">Validée</SelectItem>
+              <SelectItem value="partiellement_payee">Partiellement payée</SelectItem>
+              <SelectItem value="payee">Payée</SelectItem>
+              <SelectItem value="annulee">Annulée</SelectItem>
+            </SelectContent>
+          </Select>
           <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
             <Plus className="h-4 w-4" />
             Nouvelle facture
@@ -329,17 +361,20 @@ export default function FacturesFournisseur() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="ff-rec">Réception liée</Label>
-                <select
-                  id="ff-rec"
-                  className={SELECT_CLS}
-                  value={formData.reception_id}
-                  onChange={(e) => setFormData({ ...formData, reception_id: e.target.value })}
+                <Select
+                  value={formData.reception_id === '' ? '__none' : formData.reception_id}
+                  onValueChange={(v) => setFormData({ ...formData, reception_id: v === '__none' ? '' : v })}
                 >
-                  <option value="">Aucune</option>
-                  {receptions.map((r) => (
-                    <option key={r.id} value={r.id}>{r.numero_reception}</option>
-                  ))}
-                </select>
+                  <SelectTrigger id="ff-rec">
+                    <SelectValue placeholder="Aucune" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">Aucune</SelectItem>
+                    {receptions.map((r) => (
+                      <SelectItem key={r.id} value={String(r.id)}>{r.numero_reception}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1.5">
@@ -360,16 +395,20 @@ export default function FacturesFournisseur() {
               <div className="space-y-2">
                 {formData.lignes.map((ligne, index) => (
                   <div key={index} className="grid grid-cols-12 gap-2">
-                    <select
-                      className={SELECT_CLS + ' col-span-4'}
-                      value={ligne.produit_id || ''}
-                      onChange={(e) => updateLine(index, 'produit_id', e.target.value ? parseInt(e.target.value) : null)}
+                    <Select
+                      value={ligne.produit_id ? String(ligne.produit_id) : '__none'}
+                      onValueChange={(v) => updateLine(index, 'produit_id', v === '__none' ? null : parseInt(v))}
                     >
-                      <option value="">Produit…</option>
-                      {products.map((p) => (
-                        <option key={p.id} value={p.id}>{p.nom}</option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="col-span-4" aria-label="Produit">
+                        <SelectValue placeholder="Produit…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none">Produit…</SelectItem>
+                        {products.map((p) => (
+                          <SelectItem key={p.id} value={String(p.id)}>{p.nom}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <Input
                       type="number"
                       className="col-span-2 num"
@@ -446,18 +485,20 @@ export default function FacturesFournisseur() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="pay-meth">Méthode de paiement *</Label>
-                <select
-                  id="pay-meth"
-                  className={SELECT_CLS}
+                <Select
                   value={paymentData.methode_paiement}
-                  onChange={(e) => setPaymentData({ ...paymentData, methode_paiement: e.target.value })}
-                  required
+                  onValueChange={(v) => setPaymentData({ ...paymentData, methode_paiement: v })}
                 >
-                  <option value="virement">Virement</option>
-                  <option value="cheque">Chèque</option>
-                  <option value="espece">Espèces</option>
-                  <option value="carte">Carte</option>
-                </select>
+                  <SelectTrigger id="pay-meth">
+                    <SelectValue placeholder="Méthode de paiement" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="virement">Virement</SelectItem>
+                    <SelectItem value="cheque">Chèque</SelectItem>
+                    <SelectItem value="espece">Espèces</SelectItem>
+                    <SelectItem value="carte">Carte</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1.5">
@@ -500,26 +541,29 @@ export default function FacturesFournisseur() {
               <form onSubmit={handleAcompteApply} className="space-y-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="ac-id">Acompte *</Label>
-                  <select
-                    id="ac-id"
-                    className={SELECT_CLS}
-                    value={acompteApplyForm.acompte_id}
-                    onChange={e => {
-                      const ac = acomptesDispo.find(a => a.id === parseInt(e.target.value));
+                  <Select
+                    value={acompteApplyForm.acompte_id === '' ? '__none' : acompteApplyForm.acompte_id}
+                    onValueChange={v => {
+                      const val = v === '__none' ? '' : v;
+                      const ac = acomptesDispo.find(a => a.id === parseInt(val));
                       setAcompteApplyForm({
-                        acompte_id: e.target.value,
+                        acompte_id: val,
                         montant: ac ? String(Math.min(parseFloat(ac.montant_restant), parseFloat(selectedFacture.reste_due))) : '',
                       });
                     }}
-                    required
                   >
-                    <option value="">— Sélectionner —</option>
-                    {acomptesDispo.map(a => (
-                      <option key={a.id} value={a.id}>
-                        #{a.id} — {new Date(a.date_acompte).toLocaleDateString('fr-FR')} — restant {formatFCFA(a.montant_restant)} ({a.methode_paiement})
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger id="ac-id">
+                      <SelectValue placeholder="— Sélectionner —" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">— Sélectionner —</SelectItem>
+                      {acomptesDispo.map(a => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          #{a.id} — {new Date(a.date_acompte).toLocaleDateString('fr-FR')} — restant {formatFCFA(a.montant_restant)} ({a.methode_paiement})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1.5">
                   <Label>Montant à appliquer *</Label>
@@ -553,23 +597,23 @@ export default function FacturesFournisseur() {
         <div className="rounded-md border bg-card shadow-sm">
           <div className="p-5">
             <h2 className="text-lg font-semibold mb-3">Factures</h2>
-            {factures.length === 0 ? (
-              <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">Aucune facture fournisseur</div>
+            {sortedFactures.length === 0 ? (
+              <EmptyState icon={FileText} title="Aucune facture fournisseur" />
             ) : (
               <div className="overflow-x-auto rounded-md border">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 text-left">
                     <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className={TABLE_HEAD}>N° interne</th>
-                      <th className={TABLE_HEAD}>Fournisseur</th>
-                      <th className={TABLE_HEAD}>Date</th>
-                      <th className={TABLE_HEAD + ' text-right'}>Total</th>
+                      <SortableHeader columnKey="numero_facture_interne" sort={sort} onSort={handleSort}>N° interne</SortableHeader>
+                      <SortableHeader columnKey="fournisseur_nom" sort={sort} onSort={handleSort}>Fournisseur</SortableHeader>
+                      <SortableHeader columnKey="date_facture" sort={sort} onSort={handleSort}>Date</SortableHeader>
+                      <SortableHeader columnKey="total" sort={sort} onSort={handleSort} align="right">Total</SortableHeader>
                       <th className={TABLE_HEAD}>Statut</th>
                       <th className={TABLE_HEAD}>Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {factures.map((facture) => (
+                    {sortedFactures.map((facture) => (
                       <tr key={facture.id} className="hover:bg-muted/30">
                         <td className="px-3 py-2 font-medium text-xs num">{facture.numero_facture_interne}</td>
                         <td className="px-3 py-2">{facture.fournisseur_nom}</td>

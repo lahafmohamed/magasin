@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -91,7 +93,71 @@ interface ClosurePreview {
   can_close: boolean;
 }
 
+// --- Cash-close dialog: consolidated state (fondFinal, closurePreview, ecart,
+// commentaireCloture, loading/error) managed via a single reducer so the
+// interdependent fields update atomically instead of cascading across setters.
+interface CloseDialogState {
+  fondFinal: string;
+  closurePreview: ClosurePreview | null;
+  ecart: number | null;
+  commentaireCloture: string;
+  loading: boolean;
+  error: string | null;
+}
+
+type CloseDialogAction =
+  | { type: 'setFondFinal'; value: string }
+  | { type: 'previewLoading' }
+  | { type: 'previewLoaded'; preview: ClosurePreview }
+  | { type: 'previewError'; error: string }
+  | { type: 'setCommentaire'; value: string }
+  | { type: 'reset' };
+
+const initialCloseDialogState: CloseDialogState = {
+  fondFinal: '',
+  closurePreview: null,
+  ecart: null,
+  commentaireCloture: '',
+  loading: false,
+  error: null,
+};
+
+function closeDialogReducer(state: CloseDialogState, action: CloseDialogAction): CloseDialogState {
+  switch (action.type) {
+    case 'setFondFinal':
+      return { ...state, fondFinal: action.value };
+    case 'previewLoading':
+      return { ...state, loading: true, error: null };
+    case 'previewLoaded':
+      // ecart is sourced from the server-side preview, kept in sync atomically
+      return {
+        ...state,
+        closurePreview: action.preview,
+        ecart: action.preview.ecart,
+        loading: false,
+        error: null,
+      };
+    case 'previewError':
+      return { ...state, loading: false, error: action.error };
+    case 'setCommentaire':
+      return { ...state, commentaireCloture: action.value };
+    case 'reset':
+      return initialCloseDialogState;
+    default:
+      return state;
+  }
+}
+
+// Ecart display color classes — extracted from the inline nested ternary.
+// Same thresholds/output: 0 => success, |ecart| < 5000 => warning, else danger.
+const getEcartClasses = (ecart: number): string => {
+  if (ecart === 0) return 'bg-success-50 border-success-200 text-success-800';
+  if (Math.abs(ecart) < 5000) return 'bg-warning-50 border-warning-200 text-warning-800';
+  return 'bg-danger-50 border-danger-200 text-danger-800';
+};
+
 export default function CaisseV2() {
+  const navigate = useNavigate();
   const [magasins, setMagasins] = useState<Magasin[]>([]);
   const [selectedMagasin, setSelectedMagasin] = useState<number | null>(null);
   const [session, setSession] = useState<SessionCaisse | null>(null);
@@ -105,12 +171,13 @@ export default function CaisseV2() {
   
   // Form states
   const [fondInitial, setFondInitial] = useState('');
-  const [fondFinal, setFondFinal] = useState('');
-  const [commentaireCloture, setCommentaireCloture] = useState('');
   const [commentaireOuverture, setCommentaireOuverture] = useState('');
 
-  // Closure preview
-  const [closurePreview, setClosurePreview] = useState<ClosurePreview | null>(null);
+  // Cash-close dialog: consolidated interdependent state (fondFinal,
+  // closurePreview, ecart, commentaireCloture, loading/error)
+  const [closeState, dispatchClose] = useReducer(closeDialogReducer, initialCloseDialogState);
+  // Monotonic request id so stale preview responses never overwrite newer ones
+  const previewReqId = useRef(0);
 
   // Divers movement dialog
   const [diversDialog, setDiversDialog] = useState(false);
@@ -119,6 +186,9 @@ export default function CaisseV2() {
   const [diversMontant, setDiversMontant] = useState('');
   const [diversLibelle, setDiversLibelle] = useState('');
   const [diversMethode, setDiversMethode] = useState('espece');
+
+  // Read-only views of the consolidated close-dialog state (writes go through dispatchClose)
+  const { fondFinal, closurePreview, commentaireCloture } = closeState;
 
   // Load magasins on mount
   useEffect(() => {
@@ -236,15 +306,26 @@ export default function CaisseV2() {
   };
 
   const loadClosurePreview = async (sessionId: number, fondFinalNum?: number) => {
+    // Tag this request; only the latest one is allowed to commit its result,
+    // so out-of-order responses from rapid fondFinal edits are ignored.
+    const reqId = ++previewReqId.current;
+    dispatchClose({ type: 'previewLoading' });
     try {
       const qs = fondFinalNum !== undefined ? `?fond_final_compte=${fondFinalNum}` : '';
       const r = await fetch(`/api/caisse/cloture-preview/${sessionId}${qs}`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
       });
       const d = await r.json();
-      if (d.success) setClosurePreview(d.data);
-      else toast.error(d.error || 'Erreur preview');
+      if (reqId !== previewReqId.current) return; // stale response — a newer request superseded it
+      if (d.success) {
+        dispatchClose({ type: 'previewLoaded', preview: d.data });
+      } else {
+        dispatchClose({ type: 'previewError', error: d.error || 'Erreur preview' });
+        toast.error(d.error || 'Erreur preview');
+      }
     } catch (e: any) {
+      if (reqId !== previewReqId.current) return; // stale response
+      dispatchClose({ type: 'previewError', error: e.message || 'Erreur preview' });
       toast.error(e.message || 'Erreur preview');
     }
   };
@@ -255,27 +336,33 @@ export default function CaisseV2() {
     setCloseDialog(true);
   };
 
-  // Refresh preview when fondFinal changes
+  // Refresh preview when fondFinal changes — debounced (300ms) so we don't
+  // spam the API on every keystroke. The stale-response guard in
+  // loadClosurePreview ensures the latest value always wins.
   useEffect(() => {
-    if (closeDialog && session?.id && fondFinal) {
-      const n = parseFloat(fondFinal);
-      if (!Number.isNaN(n)) loadClosurePreview(session.id, n);
-    }
-  }, [fondFinal, closeDialog, session?.id]);
+    if (!closeDialog || !session?.id || !closeState.fondFinal) return;
+    const n = parseFloat(closeState.fondFinal);
+    if (Number.isNaN(n)) return;
+    const sessionId = session.id;
+    const timer = setTimeout(() => {
+      loadClosurePreview(sessionId, n);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [closeState.fondFinal, closeDialog, session?.id]);
 
   const handleCloseSession = async () => {
-    if (!session?.id || !fondFinal) {
+    if (!session?.id || !closeState.fondFinal) {
       toast.error('Comptage final requis');
       return;
     }
-    if (!closurePreview?.can_close) {
+    if (!closeState.closurePreview?.can_close) {
       toast.error('Mouvements orphelins — régularisez avant clôture');
       return;
     }
 
-    const fondFinalNum = parseFloat(fondFinal);
-    const ecartLive = closurePreview?.ecart ?? null;
-    if (ecartLive !== null && ecartLive !== 0 && !commentaireCloture.trim()) {
+    const fondFinalNum = parseFloat(closeState.fondFinal);
+    const ecartLive = closeState.closurePreview?.ecart ?? null;
+    if (ecartLive !== null && ecartLive !== 0 && !closeState.commentaireCloture.trim()) {
       toast.error(`Écart de ${formatXOF(ecartLive)} — commentaire obligatoire`);
       return;
     }
@@ -289,7 +376,7 @@ export default function CaisseV2() {
         },
         body: JSON.stringify({
           fond_final_compte: fondFinalNum,
-          commentaire_cloture: commentaireCloture
+          commentaire_cloture: closeState.commentaireCloture
         })
       });
 
@@ -298,9 +385,7 @@ export default function CaisseV2() {
       if (response.ok) {
         toast.success(data.message);
         setCloseDialog(false);
-        setFondFinal('');
-        setCommentaireCloture('');
-        setClosurePreview(null);
+        dispatchClose({ type: 'reset' });
         loadSession(selectedMagasin!);
       } else {
         toast.error(data.error || 'Erreur lors de la clôture');
@@ -400,18 +485,21 @@ export default function CaisseV2() {
         {/* Magasin Selector */}
         <div className="flex items-center gap-2">
           <Store className="h-4 w-4 text-muted-foreground" />
-          <select
-            value={selectedMagasin || ''}
-            onChange={(e) => setSelectedMagasin(e.target.value ? parseInt(e.target.value) : null)}
-            className="h-9 w-[200px] rounded-md border border-input bg-background px-3 text-sm"
+          <Select
+            value={selectedMagasin ? String(selectedMagasin) : ''}
+            onValueChange={(v) => setSelectedMagasin(v ? parseInt(v) : null)}
           >
-            <option value="">Sélectionner un magasin</option>
-            {magasins.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.code} - {m.nom}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="h-9 w-[200px]" aria-label="Sélectionner un magasin">
+              <SelectValue placeholder="Sélectionner un magasin" />
+            </SelectTrigger>
+            <SelectContent>
+              {magasins.map((m) => (
+                <SelectItem key={m.id} value={String(m.id)}>
+                  {m.code} - {m.nom}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -538,7 +626,7 @@ export default function CaisseV2() {
               </Button>
               <Button 
                 variant="outline" 
-                onClick={() => {/* TODO: Navigate to historique */}}
+                onClick={() => navigate('/caisse/audit')}
               >
                 <History className="h-4 w-4 mr-2" />
                 Historique
@@ -563,54 +651,56 @@ export default function CaisseV2() {
 
           {/* Movements table */}
           <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Heure</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Catégorie</TableHead>
-                  <TableHead>Méthode</TableHead>
-                  <TableHead>Libellé</TableHead>
-                  <TableHead className="text-right">Montant</TableHead>
-                  <TableHead className="text-right">Solde après</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {mouvements.length === 0 ? (
+            <div className="overflow-x-auto w-full">
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                      Aucun mouvement enregistré aujourd'hui
-                    </TableCell>
+                    <TableHead>Heure</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Catégorie</TableHead>
+                    <TableHead>Méthode</TableHead>
+                    <TableHead>Libellé</TableHead>
+                    <TableHead className="text-right">Montant</TableHead>
+                    <TableHead className="text-right">Solde après</TableHead>
                   </TableRow>
-                ) : (
-                  mouvements.slice(0, 10).map((m) => (
-                    <TableRow key={m.id}>
-                      <TableCell>
-                        {new Date(m.date_mouvement).toLocaleTimeString('fr-FR')}
-                      </TableCell>
-                      <TableCell>{getTypeBadge(m.type)}</TableCell>
-                      <TableCell className="text-sm">
-                        {getCategorieLabel(m.categorie)}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        <Badge variant="outline">{m.methode_paiement}</Badge>
-                      </TableCell>
-                      <TableCell className="max-w-md truncate">
-                        {m.libelle}
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        <span className={m.type === 'encaissement' ? 'text-green-600' : 'text-red-600'}>
-                          {m.type === 'encaissement' ? '+' : '-'}{formatXOF(m.montant)}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right text-muted-foreground">
-                        {formatXOF(m.solde_apres)}
+                </TableHeader>
+                <TableBody>
+                  {mouvements.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        Aucun mouvement enregistré aujourd'hui
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                  ) : (
+                    mouvements.slice(0, 10).map((m) => (
+                      <TableRow key={m.id}>
+                        <TableCell>
+                          {new Date(m.date_mouvement).toLocaleTimeString('fr-FR')}
+                        </TableCell>
+                        <TableCell>{getTypeBadge(m.type)}</TableCell>
+                        <TableCell className="text-sm">
+                          {getCategorieLabel(m.categorie)}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          <Badge variant="outline">{m.methode_paiement}</Badge>
+                        </TableCell>
+                        <TableCell className="max-w-md truncate">
+                          {m.libelle}
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          <span className={m.type === 'encaissement' ? 'text-green-600' : 'text-red-600'}>
+                            {m.type === 'encaissement' ? '+' : '-'}{formatXOF(m.montant)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right text-muted-foreground">
+                          {formatXOF(m.solde_apres)}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
             {mouvements.length > 10 && (
               <div className="p-4 text-center border-t">
                 <Button variant="ghost" onClick={() => setMouvementsDialog(true)}>
@@ -732,7 +822,7 @@ export default function CaisseV2() {
               <Label>Comptage physique espèces *</Label>
               <MoneyInput
                 value={fondFinal}
-                onChange={(v) => setFondFinal(v)}
+                onChange={(v) => dispatchClose({ type: 'setFondFinal', value: v })}
                 placeholder="0"
                 className="mt-1"
               />
@@ -740,11 +830,7 @@ export default function CaisseV2() {
 
             {/* Ecart display */}
             {fondFinal && closurePreview?.ecart !== null && closurePreview && (
-              <div className={`p-3 rounded-md border ${
-                closurePreview.ecart === 0 ? 'bg-success-50 border-success-200 text-success-800' :
-                Math.abs(closurePreview.ecart!) < 5000 ? 'bg-warning-50 border-warning-200 text-warning-800' :
-                'bg-danger-50 border-danger-200 text-danger-800'
-              }`}>
+              <div className={`p-3 rounded-md border ${getEcartClasses(closurePreview.ecart!)}`}>
                 <div className="flex items-center gap-2 font-semibold">
                   <AlertCircle className="h-4 w-4" />
                   Écart espèces : {closurePreview.ecart! > 0 ? '+' : ''}{formatXOF(closurePreview.ecart!)}
@@ -764,7 +850,7 @@ export default function CaisseV2() {
               </Label>
               <Input
                 value={commentaireCloture}
-                onChange={(e) => setCommentaireCloture(e.target.value)}
+                onChange={(e) => dispatchClose({ type: 'setCommentaire', value: e.target.value })}
                 placeholder={closurePreview?.ecart !== 0 ? "Expliquer l'écart..." : "Commentaire optionnel..."}
                 className="mt-1"
               />
@@ -802,53 +888,65 @@ export default function CaisseV2() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Type</Label>
-                <select
+                <Select
                   value={diversType}
-                  onChange={(e) => {
-                    const v = e.target.value as 'encaissement' | 'decaissement';
+                  onValueChange={(value) => {
+                    const v = value as 'encaissement' | 'decaissement';
                     setDiversType(v);
                     setDiversCategorie(v === 'encaissement' ? 'apport' : 'retrait_banque');
                   }}
-                  className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
                 >
-                  <option value="encaissement">Entrée</option>
-                  <option value="decaissement">Sortie</option>
-                </select>
+                  <SelectTrigger className="mt-1 h-9 w-full" aria-label="Type de mouvement">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="encaissement">Entrée</SelectItem>
+                    <SelectItem value="decaissement">Sortie</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label>Catégorie</Label>
-                <select
+                <Select
                   value={diversCategorie}
-                  onChange={(e) => setDiversCategorie(e.target.value)}
-                  className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  onValueChange={(v) => setDiversCategorie(v)}
                 >
-                  {diversType === 'encaissement' ? (
-                    <>
-                      <option value="apport">Apport</option>
-                      <option value="autre_entree">Autre entrée</option>
-                    </>
-                  ) : (
-                    <>
-                      <option value="retrait_banque">Retrait banque</option>
-                      <option value="autre_sortie">Autre sortie</option>
-                    </>
-                  )}
-                </select>
+                  <SelectTrigger className="mt-1 h-9 w-full" aria-label="Catégorie du mouvement">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {diversType === 'encaissement' ? (
+                      <>
+                        <SelectItem value="apport">Apport</SelectItem>
+                        <SelectItem value="autre_entree">Autre entrée</SelectItem>
+                      </>
+                    ) : (
+                      <>
+                        <SelectItem value="retrait_banque">Retrait banque</SelectItem>
+                        <SelectItem value="autre_sortie">Autre sortie</SelectItem>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div>
               <Label>Méthode</Label>
-              <select
+              <Select
                 value={diversMethode}
-                onChange={(e) => setDiversMethode(e.target.value)}
-                className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                onValueChange={(v) => setDiversMethode(v)}
               >
-                <option value="espece">Espèces</option>
-                <option value="carte">Carte</option>
-                <option value="cheque">Chèque</option>
-                <option value="virement">Virement</option>
-                <option value="mobile_money">Mobile Money</option>
-              </select>
+                <SelectTrigger className="mt-1 h-9 w-full" aria-label="Méthode de paiement">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="espece">Espèces</SelectItem>
+                  <SelectItem value="carte">Carte</SelectItem>
+                  <SelectItem value="cheque">Chèque</SelectItem>
+                  <SelectItem value="virement">Virement</SelectItem>
+                  <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Montant *</Label>
@@ -884,44 +982,46 @@ export default function CaisseV2() {
             </DialogDescription>
           </DialogHeader>
           <div className="overflow-y-auto max-h-[60vh]">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date/Heure</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Catégorie</TableHead>
-                  <TableHead>Méthode</TableHead>
-                  <TableHead>Libellé</TableHead>
-                  <TableHead className="text-right">Montant</TableHead>
-                  <TableHead className="text-right">Solde après</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {mouvements.map((m) => (
-                  <TableRow key={m.id}>
-                    <TableCell className="text-sm">
-                      {formatDateTime(m.date_mouvement)}
-                    </TableCell>
-                    <TableCell>{getTypeBadge(m.type)}</TableCell>
-                    <TableCell className="text-sm">
-                      {getCategorieLabel(m.categorie)}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      <Badge variant="outline">{m.methode_paiement}</Badge>
-                    </TableCell>
-                    <TableCell>{m.libelle}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      <span className={m.type === 'encaissement' ? 'text-green-600' : 'text-red-600'}>
-                        {m.type === 'encaissement' ? '+' : '-'}{formatXOF(m.montant)}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground">
-                      {formatXOF(m.solde_apres)}
-                    </TableCell>
+            <div className="overflow-x-auto w-full">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date/Heure</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Catégorie</TableHead>
+                    <TableHead>Méthode</TableHead>
+                    <TableHead>Libellé</TableHead>
+                    <TableHead className="text-right">Montant</TableHead>
+                    <TableHead className="text-right">Solde après</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {mouvements.map((m) => (
+                    <TableRow key={m.id}>
+                      <TableCell className="text-sm">
+                        {formatDateTime(m.date_mouvement)}
+                      </TableCell>
+                      <TableCell>{getTypeBadge(m.type)}</TableCell>
+                      <TableCell className="text-sm">
+                        {getCategorieLabel(m.categorie)}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        <Badge variant="outline">{m.methode_paiement}</Badge>
+                      </TableCell>
+                      <TableCell>{m.libelle}</TableCell>
+                      <TableCell className="text-right font-medium">
+                        <span className={m.type === 'encaissement' ? 'text-green-600' : 'text-red-600'}>
+                          {m.type === 'encaissement' ? '+' : '-'}{formatXOF(m.montant)}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground">
+                        {formatXOF(m.solde_apres)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

@@ -1,39 +1,92 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useForm, useFieldArray, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { bonLivraisonService, produitService } from '@/services/api';
+import { useDraft } from '@/hooks/useDraft';
 import { TiersPicker } from '@/components/TiersPicker';
 import { Tiers, Produit } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ArrowLeft, Check, Search, Truck, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 
-interface LigneBonLivraison {
-  produit_id: number;
-  produit_nom: string;
-  produit_reference: string;
-  quantite_commandee: number;
-  quantite_livree: number;
-  prix_unitaire: number;
-  stock_dispo: number;
-}
+const ligneSchema = z.object({
+  produit_id: z.number(),
+  produit_nom: z.string(),
+  produit_reference: z.string(),
+  quantite_commandee: z.number().positive('Quantité invalide'),
+  quantite_livree: z.number().positive('Quantité invalide'),
+  prix_unitaire: z.number().min(0, 'Prix invalide'),
+  stock_dispo: z.number(),
+});
+
+const blSchema = z.object({
+  tiers: z
+    .custom<Tiers | null>()
+    .refine((t) => !!t?.id, 'Veuillez selectionner un client'),
+  devisId: z
+    .string()
+    .refine((v) => Number(v) > 0, 'Le numero de devis est obligatoire'),
+  notes: z.string().optional(),
+  lignes: z.array(ligneSchema).min(1, 'Veuillez ajouter au moins un produit'),
+});
+
+type BLFormValues = z.infer<typeof blSchema>;
 
 export default function NouveauBonLivraison() {
   const navigate = useNavigate();
 
-  const [selectedClient, setSelectedClient] = useState<Tiers | null>(null);
-
+  // État UI de la recherche produit — non géré par le formulaire (trop entangled).
   const [produits, setProduits] = useState<Produit[]>([]);
   const [produitSearch, setProduitSearch] = useState('');
   const [showProduitDropdown, setShowProduitDropdown] = useState(false);
-
-  const [lignes, setLignes] = useState<LigneBonLivraison[]>([]);
-  const [notes, setNotes] = useState('');
-  const [devisId, setDevisId] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  const {
+    control,
+    register,
+    handleSubmit,
+    watch,
+    reset,
+    getValues,
+    formState: { errors, isDirty },
+  } = useForm<BLFormValues>({
+    resolver: zodResolver(blSchema),
+    defaultValues: {
+      tiers: null,
+      devisId: '',
+      notes: '',
+      lignes: [],
+    },
+  });
+
+  // --- Draft autosave + unsaved-changes guard ------------------------------
+  const { draft, save, clear, hasDraft } = useDraft<BLFormValues>('bl:new');
+  const [showDraftBanner, setShowDraftBanner] = useState(hasDraft);
+
+  useEffect(() => {
+    const sub = watch((v) => save(v as BLFormValues));
+    return () => sub.unsubscribe();
+  }, [watch, save]);
+
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
+  const { fields, append, remove } = useFieldArray({ control, name: 'lignes' });
 
   useEffect(() => {
     if (produitSearch.length >= 2) {
@@ -44,7 +97,7 @@ export default function NouveauBonLivraison() {
   }, [produitSearch]);
 
   const addProduit = (produit: Produit) => {
-    if (lignes.some((l) => l.produit_id === produit.id)) {
+    if (getValues('lignes').some((l) => l.produit_id === produit.id)) {
       toast.warning('Ce produit est deja dans le bon de livraison');
       return;
     }
@@ -52,82 +105,45 @@ export default function NouveauBonLivraison() {
     const stock = typeof produit.stock === 'string' ? parseInt(produit.stock) : produit.stock;
     const prixVente = parseFloat(produit.prix_vente as any) || 0;
 
-    setLignes((prev) => [
-      ...prev,
-      {
-        produit_id: produit.id,
-        produit_nom: produit.nom,
-        produit_reference: produit.reference,
-        quantite_commandee: 1,
-        quantite_livree: 1,
-        prix_unitaire: prixVente,
-        stock_dispo: stock,
-      },
-    ]);
+    append({
+      produit_id: produit.id,
+      produit_nom: produit.nom,
+      produit_reference: produit.reference,
+      quantite_commandee: 1,
+      quantite_livree: 1,
+      prix_unitaire: prixVente,
+      stock_dispo: stock,
+    });
 
     setProduitSearch('');
     setProduits([]);
     setShowProduitDropdown(false);
   };
 
-  const updateLigne = (index: number, field: keyof LigneBonLivraison, value: number) => {
-    setLignes((prev) => {
-      const copy = [...prev];
-      copy[index] = { ...copy[index], [field]: value };
-      return copy;
-    });
-  };
+  // Valeurs surveillées pour les totaux et l'état du bouton (calcul identique).
+  const selectedClient = watch('tiers');
+  const watchedLignes = watch('lignes');
+  const total = (watchedLignes ?? []).reduce(
+    (sum, l) => sum + Number(l.quantite_livree || 0) * Number(l.prix_unitaire || 0) * 1.19,
+    0
+  );
 
-  const removeLigne = (index: number) => {
-    setLignes((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const total = lignes.reduce((sum, l) => sum + l.quantite_livree * l.prix_unitaire * 1.19, 0);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!selectedClient) {
-      toast.error('Veuillez selectionner un client');
-      return;
-    }
-
-    const devisIdNumber = Number(devisId);
-    if (!devisIdNumber || devisIdNumber <= 0) {
-      toast.error('Le numero de devis est obligatoire');
-      return;
-    }
-
-    if (lignes.length === 0) {
-      toast.error('Veuillez ajouter au moins un produit');
-      return;
-    }
-
-    for (const ligne of lignes) {
-      if (ligne.quantite_commandee <= 0 || ligne.quantite_livree <= 0) {
-        toast.error(`Quantite invalide pour "${ligne.produit_nom}"`);
-        return;
-      }
-      if (ligne.prix_unitaire < 0) {
-        toast.error(`Prix invalide pour "${ligne.produit_nom}"`);
-        return;
-      }
-    }
-
+  const onValid = async (values: BLFormValues) => {
     setSubmitting(true);
     try {
       const result = await bonLivraisonService.create({
-        tiers_id: selectedClient!.id,
-        devis_id: devisIdNumber,
-        lignes: lignes.map((l) => ({
+        tiers_id: values.tiers!.id,
+        devis_id: Number(values.devisId),
+        lignes: values.lignes.map((l) => ({
           produit_id: l.produit_id,
           quantite_commandee: l.quantite_commandee,
           quantite_livree: l.quantite_livree,
           prix_unitaire: l.prix_unitaire,
         })),
-        notes: notes || undefined,
+        notes: values.notes || undefined,
       });
 
+      clear();
       toast.success(`Bon de livraison ${result.numero_bl || ''} cree avec succes`.trim());
       navigate('/bons-livraison');
     } catch (error: any) {
@@ -153,30 +169,79 @@ export default function NouveauBonLivraison() {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit(onValid)} className="space-y-6">
+        {showDraftBanner && (
+          <div className="rounded-lg border bg-muted/50 p-3 text-sm flex items-center justify-between gap-3">
+            <span>Un brouillon non enregistré a été récupéré.</span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  if (draft) reset(draft);
+                  setShowDraftBanner(false);
+                }}
+              >
+                Restaurer
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  clear();
+                  setShowDraftBanner(false);
+                }}
+              >
+                Ignorer
+              </Button>
+            </div>
+          </div>
+        )}
+
         <Card>
           <CardHeader>
             <CardTitle>Devis parent</CardTitle>
             <CardDescription>Le bon de livraison doit être lié à un devis confirmé</CardDescription>
           </CardHeader>
           <CardContent>
-            <Input
-              type="number"
-              min={1}
-              placeholder="ID du devis"
-              value={devisId}
-              onChange={(e) => setDevisId(e.target.value)}
-            />
+            <div className="space-y-1.5">
+              <Label htmlFor="bl-devis-id">Devis<span className="text-destructive"> *</span></Label>
+              <Input
+                id="bl-devis-id"
+                type="number"
+                min={1}
+                placeholder="ID du devis"
+                aria-invalid={errors.devisId ? true : undefined}
+                {...register('devisId')}
+              />
+              {errors.devisId && (
+                <p role="alert" className="text-xs text-danger">
+                  {errors.devisId.message}
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Client</CardTitle>
+            <CardTitle>Client<span className="text-destructive"> *</span></CardTitle>
             <CardDescription>Selectionnez le client</CardDescription>
           </CardHeader>
           <CardContent>
-            <TiersPicker role="client" value={selectedClient} onChange={setSelectedClient} />
+            <Controller
+              control={control}
+              name="tiers"
+              render={({ field }) => (
+                <TiersPicker role="client" value={field.value} onChange={field.onChange} />
+              )}
+            />
+            {errors.tiers && (
+              <p role="alert" className="text-xs text-danger mt-1.5">
+                {errors.tiers.message}
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -189,10 +254,14 @@ export default function NouveauBonLivraison() {
             <CardDescription>Ajoutez les produits a livrer</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <Label htmlFor="bl-produit-search" className="block mb-1.5">
+              Rechercher un produit
+            </Label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                className="pl-10"
+                id="bl-produit-search"
+                className="pl-10 sm:pl-10"
                 placeholder="Rechercher un produit..."
                 value={produitSearch}
                 onChange={(e) => {
@@ -226,68 +295,91 @@ export default function NouveauBonLivraison() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Produit</TableHead>
-                    <TableHead className="w-28">Qte Commandee</TableHead>
-                    <TableHead className="w-28">Qte Livree</TableHead>
-                    <TableHead className="w-36">Prix Unitaire</TableHead>
+                    <TableHead className="w-28">Qte Commandee<span className="text-destructive"> *</span></TableHead>
+                    <TableHead className="w-28">Qte Livree<span className="text-destructive"> *</span></TableHead>
+                    <TableHead className="w-36">Prix Unitaire<span className="text-destructive"> *</span></TableHead>
                     <TableHead className="w-32">Total TTC</TableHead>
                     <TableHead className="w-16"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {lignes.length === 0 ? (
+                  {fields.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                         Aucun produit ajoute
                       </TableCell>
                     </TableRow>
                   ) : (
-                    lignes.map((ligne, index) => (
-                      <TableRow key={ligne.produit_id}>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">{ligne.produit_nom}</p>
-                            <p className="text-xs text-muted-foreground font-mono">{ligne.produit_reference}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={ligne.quantite_commandee}
-                            onChange={(e) => updateLigne(index, 'quantite_commandee', Number(e.target.value))}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={ligne.quantite_livree}
-                            onChange={(e) => updateLigne(index, 'quantite_livree', Number(e.target.value))}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={ligne.prix_unitaire}
-                            onChange={(e) => updateLigne(index, 'prix_unitaire', Number(e.target.value))}
-                          />
-                        </TableCell>
-                        <TableCell className="font-semibold">
-                          {(ligne.quantite_livree * ligne.prix_unitaire * 1.19).toFixed(2)} XOF
-                        </TableCell>
-                        <TableCell>
-                          <Button type="button" variant="ghost" size="icon" onClick={() => removeLigne(index)}>
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))
+                    fields.map((field, index) => {
+                      const ligne = watchedLignes?.[index] ?? field;
+                      return (
+                        <TableRow key={field.id}>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{field.produit_nom}</p>
+                              <p className="text-xs text-muted-foreground font-mono">{field.produit_reference}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={1}
+                              aria-invalid={errors.lignes?.[index]?.quantite_commandee ? true : undefined}
+                              {...register(`lignes.${index}.quantite_commandee` as const, { valueAsNumber: true })}
+                            />
+                            {errors.lignes?.[index]?.quantite_commandee && (
+                              <p role="alert" className="text-xs text-danger mt-1">
+                                {errors.lignes[index]?.quantite_commandee?.message}
+                              </p>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={1}
+                              aria-invalid={errors.lignes?.[index]?.quantite_livree ? true : undefined}
+                              {...register(`lignes.${index}.quantite_livree` as const, { valueAsNumber: true })}
+                            />
+                            {errors.lignes?.[index]?.quantite_livree && (
+                              <p role="alert" className="text-xs text-danger mt-1">
+                                {errors.lignes[index]?.quantite_livree?.message}
+                              </p>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              aria-invalid={errors.lignes?.[index]?.prix_unitaire ? true : undefined}
+                              {...register(`lignes.${index}.prix_unitaire` as const, { valueAsNumber: true })}
+                            />
+                            {errors.lignes?.[index]?.prix_unitaire && (
+                              <p role="alert" className="text-xs text-danger mt-1">
+                                {errors.lignes[index]?.prix_unitaire?.message}
+                              </p>
+                            )}
+                          </TableCell>
+                          <TableCell className="font-semibold">
+                            {(Number(ligne.quantite_livree || 0) * Number(ligne.prix_unitaire || 0) * 1.19).toFixed(2)} XOF
+                          </TableCell>
+                          <TableCell>
+                            <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)}>
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>
             </div>
+            {errors.lignes?.root && (
+              <p role="alert" className="text-xs text-danger">
+                {errors.lignes.root.message}
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -298,9 +390,8 @@ export default function NouveauBonLivraison() {
           <CardContent>
             <Textarea
               placeholder="Notes internes ou instructions de livraison..."
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
               rows={4}
+              {...register('notes')}
             />
           </CardContent>
         </Card>
@@ -311,7 +402,7 @@ export default function NouveauBonLivraison() {
               <p className="text-sm text-muted-foreground">Total estime (TTC)</p>
               <p className="text-2xl font-bold">{total.toFixed(2)} XOF</p>
             </div>
-            <Button type="submit" disabled={submitting || !selectedClient || lignes.length === 0}>
+            <Button type="submit" disabled={submitting || !selectedClient || fields.length === 0}>
               <Check className="h-4 w-4 mr-2" />
               {submitting ? 'Creation...' : 'Creer le bon de livraison'}
             </Button>

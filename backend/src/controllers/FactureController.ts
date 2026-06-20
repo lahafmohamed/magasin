@@ -26,6 +26,24 @@ export class FactureController {
     }
   }
 
+  static async getAllExport(req: Request, res: Response): Promise<void> {
+    try {
+      const { search, statut } = req.query;
+      const result = await factureService.getAll(
+        search as string,
+        statut as string,
+        1,
+        100000,
+        'date_facture',
+        'DESC'
+      );
+      res.json({ success: true, data: result.data || [] });
+    } catch (error) {
+      consoleError('GET /api/factures/export', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
   static async getById(req: Request, res: Response): Promise<void> {
     try {
       const id = parseInt(req.params.id);

@@ -10,9 +10,10 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
-import { Plus, Search, Pencil, Trash2, Users, Truck, UserCheck, Eye, ArrowUpDown } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Users, Truck, UserCheck, Eye, ArrowUpDown, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatFCFA } from '@/lib/utils';
+import { useExportExcel } from '../hooks/useExportExcel';
 
 type RoleFilter = 'all' | 'client' | 'fournisseur' | 'mixte';
 
@@ -36,6 +37,7 @@ export default function TiersPage() {
   const [totalPages, setTotalPages] = useState(0);
   const [sort, setSort] = useState('raison_sociale');
   const [order, setOrder] = useState<'asc' | 'desc'>('asc');
+  const { exportToExcel } = useExportExcel();
 
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Tiers | null>(null);
@@ -123,6 +125,17 @@ export default function TiersPage() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><UserCheck className="h-6 w-6" /> Contacts</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{total} contacts au total</p>
         </div>
+        <Button variant="outline" onClick={() => exportToExcel(tiers, [
+          { key: 'raison_sociale', label: 'Raison sociale' },
+          { key: 'telephone', label: 'Téléphone' },
+          { key: 'email', label: 'Email' },
+          { key: 'adresse', label: 'Adresse' },
+          { key: 'solde_client', label: 'Solde client' },
+          { key: 'solde_fournisseur', label: 'Solde fournisseur' },
+        ], 'tiers')} className="gap-2">
+          <Download className="h-4 w-4" />
+          Excel
+        </Button>
         <Button onClick={openCreate} className="gap-2 self-start sm:self-auto">
           <Plus className="h-4 w-4" /> Nouveau contact
         </Button>
@@ -215,13 +228,13 @@ export default function TiersPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex gap-1 justify-end">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate(`/tiers/${t.id}`)}>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate(`/tiers/${t.id}`)} aria-label="Voir ce contact">
                           <Eye className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(t)}>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(t)} aria-label="Modifier ce contact">
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDelete(t.id)}>
+                        <Button variant="destructive" size="icon" className="h-7 w-7" onClick={() => handleDelete(t.id)} aria-label="Supprimer ce contact">
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>

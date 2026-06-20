@@ -35,8 +35,16 @@ import caissesHierarchyRoutes from './routes/caisses-hierarchy';
 import avoirsRoutes from './routes/avoirs';
 import adminAllocationRoutes from './routes/admin-allocation';
 import adminUsersRoutes from './routes/admin-users';
-import adminTvaRoutes from './routes/admin-tva';
-import tvaRoutes from './routes/tva';
+import companySettingsRoutes from './routes/company-settings';
+import auditRoutes from './routes/audit';
+import notificationRoutes from './routes/notifications';
+import batchExportRoutes from './routes/export-batch';
+import crmRoutes from './routes/crm';
+import importExportRoutes from './routes/import-export';
+import comptabiliteRoutes from './routes/comptabilite';
+import camionsRoutes from './routes/camions';
+import lotsRoutes from './routes/lots';
+import serialsRoutes from './routes/serials';
 import { logger, requestLogger } from './utils/logger';
 
 dotenv.config();
@@ -117,8 +125,16 @@ app.use('/api/caisses-hierarchy', caissesHierarchyRoutes);
 app.use('/api/avoirs', avoirsRoutes);
 app.use('/api/admin/allocation', adminAllocationRoutes);
 app.use('/api/admin/users', adminUsersRoutes);
-app.use('/api/admin/tva', adminTvaRoutes);
-app.use('/api/tva', tvaRoutes);
+app.use('/api/company-settings', companySettingsRoutes);
+app.use('/api/admin/audit', auditRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/export', batchExportRoutes);
+app.use('/api/crm', crmRoutes);
+app.use('/api/import', importExportRoutes);
+app.use('/api/comptabilite', comptabiliteRoutes);
+app.use('/api/camions', camionsRoutes);
+app.use('/api/lots', lotsRoutes);
+app.use('/api/serials', serialsRoutes);
 
 // Health check (no rate limit)
 app.get('/api/health', (_req, res) => {

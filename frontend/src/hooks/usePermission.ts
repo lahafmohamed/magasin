@@ -30,6 +30,7 @@ export const Permissions = {
     // Ventes
     FACTURE_CREATE: 'facture:create',
     DEVIS_CREATE: 'devis:create',
+    DEVIS_UPDATE: 'devis:update',
 
     // Admin
     ADMIN_FULL: 'admin:full',
@@ -66,6 +67,7 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
         Permissions.TRANSFERT_READ,
         Permissions.FACTURE_CREATE,
         Permissions.DEVIS_CREATE,
+        Permissions.DEVIS_UPDATE,
     ],
     viewer: [
         Permissions.STOCK_DEPOT_VIEW,
@@ -88,6 +90,7 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
         Permissions.TRANSFERT_EXECUTE,
         Permissions.FACTURE_CREATE,
         Permissions.DEVIS_CREATE,
+        Permissions.DEVIS_UPDATE,
     ],
     caissier: [
         Permissions.STOCK_MAGASIN_VIEW,

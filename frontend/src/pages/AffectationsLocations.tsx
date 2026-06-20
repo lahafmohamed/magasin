@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { userLocationAssignmentService } from '../services/api';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface AssignmentUser {
   id: number;
@@ -99,7 +100,7 @@ export default function AffectationsLocations() {
     if (!selectedUserId) return;
 
     if (selectedLocationIds.length === 0) {
-      toast.error('Selectionne au moins une location');
+      toast.error('Sélectionnez au moins une location');
       return;
     }
 
@@ -226,22 +227,25 @@ export default function AffectationsLocations() {
 
                 <div className="space-y-1.5 mb-6">
                   <Label htmlFor="default-location">Location par défaut</Label>
-                  <select
-                    id="default-location"
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={defaultLocationId ?? ''}
-                    onChange={(e) => setDefaultLocationId(e.target.value ? parseInt(e.target.value, 10) : null)}
+                  <Select
+                    value={defaultLocationId == null ? '__none' : String(defaultLocationId)}
+                    onValueChange={(v) => setDefaultLocationId(v === '__none' ? null : parseInt(v, 10))}
                     disabled={selectedLocationIds.length === 0}
                   >
-                    <option value="">Aucune</option>
-                    {locations
-                      .filter((location) => selectedLocationIds.includes(location.id))
-                      .map((location) => (
-                        <option key={location.id} value={location.id}>
-                          {location.nom} ({location.code})
-                        </option>
-                      ))}
-                  </select>
+                    <SelectTrigger id="default-location" className="h-9 w-full text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">Aucune</SelectItem>
+                      {locations
+                        .filter((location) => selectedLocationIds.includes(location.id))
+                        .map((location) => (
+                          <SelectItem key={location.id} value={String(location.id)}>
+                            {location.nom} ({location.code})
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div className="flex justify-end">

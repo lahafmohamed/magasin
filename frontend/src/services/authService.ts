@@ -3,15 +3,8 @@ import type { User, LoginInput, AuthResponse, ApiResponse } from '../types/auth'
 
 const api = axios.create({
   baseURL: '/api',
-});
-
-// Request interceptor to add auth token
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
+  // Auth carried by the httpOnly auth_token cookie.
+  withCredentials: true,
 });
 
 // Response interceptor: only force logout on a real auth failure (401).
@@ -19,7 +12,6 @@ api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('auth_token');
       localStorage.removeItem('auth_user');
       window.location.href = '/login';
     }
@@ -29,16 +21,18 @@ api.interceptors.response.use(
 
 export const authService = {
   login: async (input: LoginInput): Promise<AuthResponse> => {
+    // Backend sets the httpOnly auth_token cookie; we only cache the (non-sensitive)
+    // user object for UX rehydration on reload.
     const { data } = await api.post('/auth/login', input);
-    if (data.success && data.data?.token) {
-      localStorage.setItem('auth_token', data.data.token);
+    if (data.success && data.data?.user) {
       localStorage.setItem('auth_user', JSON.stringify(data.data.user));
     }
     return data;
   },
 
-  logout: () => {
-    localStorage.removeItem('auth_token');
+  logout: async () => {
+    // Revoke the session + clear the cookie server-side, then drop the cached user.
+    try { await api.post('/auth/logout'); } catch { /* ignore */ }
     localStorage.removeItem('auth_user');
   },
 

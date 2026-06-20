@@ -475,37 +475,63 @@ export class FactureService {
    * 'payee' and 'partielle' are computed exclusively by the payment trigger.
    */
   async updateStatut(id: number, statut: string, userId?: number, req?: any): Promise<boolean> {
+    // Whitelist of manually-settable statuses ('payee'/'partielle' are trigger-computed)
+    const ALLOWED_STATUTS = ['en_attente', 'annulee'];
     if (statut === 'payee' || statut === 'partielle') {
       throw new Error(`Le statut '${statut}' est calculé automatiquement par les paiements et ne peut pas être défini manuellement.`);
     }
+    if (!ALLOWED_STATUTS.includes(statut)) {
+      throw new Error(`Statut invalide: '${statut}'`);
+    }
 
-    if (statut === 'annulee') {
-      const { rows } = await pool.query(
-        'SELECT COALESCE(SUM(montant), 0) as total_paye FROM paiements WHERE facture_id = $1',
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Lock the invoice row so the payment check and the status change are atomic (no TOCTOU)
+      const { rows: factRows } = await client.query(
+        'SELECT id FROM factures WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
         [id]
       );
-      if (parseFloat(rows[0].total_paye) > 0) {
-        throw new Error('Impossible d\'annuler une facture ayant des paiements enregistrés. Supprimez les paiements d\'abord.');
+      if (factRows.length === 0) {
+        await client.query('ROLLBACK');
+        return false;
       }
+
+      if (statut === 'annulee') {
+        const { rows } = await client.query(
+          'SELECT COALESCE(SUM(montant), 0) as total_paye FROM paiements WHERE facture_id = $1',
+          [id]
+        );
+        if (parseFloat(rows[0].total_paye) > 0) {
+          throw new Error('Impossible d\'annuler une facture ayant des paiements enregistrés. Supprimez les paiements d\'abord.');
+        }
+      }
+
+      const { rowCount } = await client.query(
+        'UPDATE factures SET statut = $1 WHERE id = $2 AND deleted_at IS NULL',
+        [statut, id]
+      );
+
+      if ((rowCount ?? 0) > 0 && userId) {
+        await logAudit({
+          utilisateur_id: userId,
+          action: 'update',
+          table_name: 'factures',
+          record_id: id,
+          req,
+          new_values: { statut },
+        });
+      }
+
+      await client.query('COMMIT');
+      return (rowCount ?? 0) > 0;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
     }
-
-    const { rowCount } = await pool.query(
-      'UPDATE factures SET statut = $1 WHERE id = $2 AND deleted_at IS NULL',
-      [statut, id]
-    );
-
-    if ((rowCount ?? 0) > 0 && userId) {
-      await logAudit({
-        utilisateur_id: userId,
-        action: 'update',
-        table_name: 'factures',
-        record_id: id,
-        req,
-        new_values: { statut },
-      });
-    }
-
-    return (rowCount ?? 0) > 0;
   }
 
   /**

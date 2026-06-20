@@ -1,26 +1,32 @@
 import pool from '../db/connection';
 
+// Cash session model after migrations 045/046/048:
+//   sessions_caisse: fond_initial, fond_final_compte, solde_theorique_cloture,
+//                    ouverte_par_user_id, date_cloture, statut IN ('ouverte','cloturee')
+//   mouvements_caisse: session_caisse_id, type ('encaissement'|'decaissement'), montant
+// Variance (écart) = fond_final_compte - solde_theorique_cloture (computed, not stored).
 export class CashVarianceService {
   /**
    * Get daily cash variance report
    * Compares expected cash vs actual cash counted
    */
   async getDailyVariance(date: string): Promise<any> {
-    // Get all cash register sessions for the day
+    // All cash register sessions opened that day
     const { rows: sessions } = await pool.query(
-      `SELECT 
+      `SELECT
         sc.*,
+        (sc.fond_final_compte - sc.solde_theorique_cloture) AS ecart,
         u.username as utilisateur_nom
        FROM sessions_caisse sc
-       LEFT JOIN utilisateurs u ON sc.utilisateur_id = u.id
+       LEFT JOIN utilisateurs u ON sc.ouverte_par_user_id = u.id
        WHERE DATE(sc.date_ouverture) = $1
        ORDER BY sc.date_ouverture ASC`,
       [date]
     );
 
-    // Calculate total expected cash from all sales
+    // Total expected cash from cash sales
     const { rows: salesData } = await pool.query(
-      `SELECT 
+      `SELECT
         COALESCE(SUM(p.montant), 0) as total_cash_ventes,
         COUNT(DISTINCT p.facture_id) as nombre_ventes
        FROM paiements p
@@ -30,22 +36,22 @@ export class CashVarianceService {
       [date]
     );
 
-    // Get other cash movements
+    // Other cash movements grouped by type
     const { rows: otherMovements } = await pool.query(
-      `SELECT 
-        mc.type_mouvement,
+      `SELECT
+        mc.type AS type_mouvement,
         COUNT(*) as nombre,
         COALESCE(SUM(mc.montant), 0) as total
        FROM mouvements_caisse mc
-       INNER JOIN sessions_caisse sc ON mc.session_id = sc.id
+       INNER JOIN sessions_caisse sc ON mc.session_caisse_id = sc.id
        WHERE DATE(sc.date_ouverture) = $1
-       GROUP BY mc.type_mouvement`,
+       GROUP BY mc.type`,
       [date]
     );
 
-    // Get payment breakdown
+    // Payment breakdown
     const { rows: paymentBreakdown } = await pool.query(
-      `SELECT 
+      `SELECT
         p.methode_paiement,
         COUNT(*) as nombre,
         COALESCE(SUM(p.montant), 0) as total
@@ -57,7 +63,6 @@ export class CashVarianceService {
       [date]
     );
 
-    // Calculate totals
     const totalCashVentes = parseFloat(salesData[0].total_cash_ventes);
     const nombreVentes = parseInt(salesData[0].nombre_ventes);
 
@@ -67,14 +72,14 @@ export class CashVarianceService {
     let totalEcart = 0;
 
     sessions.forEach(session => {
-      totalOuverture += parseFloat(session.solde_ouverture);
-      if (session.solde_fermeture) {
-        totalFermeture += parseFloat(session.solde_fermeture);
+      totalOuverture += parseFloat(session.fond_initial || 0);
+      if (session.fond_final_compte != null) {
+        totalFermeture += parseFloat(session.fond_final_compte);
       }
-      if (session.solde_theorique) {
-        totalTheorique += parseFloat(session.solde_theorique);
+      if (session.solde_theorique_cloture != null) {
+        totalTheorique += parseFloat(session.solde_theorique_cloture);
       }
-      if (session.ecart) {
+      if (session.ecart != null) {
         totalEcart += parseFloat(session.ecart);
       }
     });
@@ -93,12 +98,12 @@ export class CashVarianceService {
       sessions: sessions.map(s => ({
         id: s.id,
         utilisateur: s.utilisateur_nom,
-        ouverture: parseFloat(s.solde_ouverture),
-        fermeture: s.solde_fermeture ? parseFloat(s.solde_fermeture) : null,
-        theorique: s.solde_theorique ? parseFloat(s.solde_theorique) : null,
-        ecart: s.ecart ? parseFloat(s.ecart) : null,
+        ouverture: parseFloat(s.fond_initial || 0),
+        fermeture: s.fond_final_compte != null ? parseFloat(s.fond_final_compte) : null,
+        theorique: s.solde_theorique_cloture != null ? parseFloat(s.solde_theorique_cloture) : null,
+        ecart: s.ecart != null ? parseFloat(s.ecart) : null,
         date_ouverture: s.date_ouverture,
-        date_fermeture: s.date_fermeture,
+        date_fermeture: s.date_cloture,
       })),
       par_methode_paiement: paymentBreakdown,
       autres_mouvements: otherMovements,
@@ -110,16 +115,16 @@ export class CashVarianceService {
    */
   async getVarianceRange(dateDebut: string, dateFin: string): Promise<any[]> {
     const { rows } = await pool.query(
-      `SELECT 
+      `SELECT
         DATE(sc.date_ouverture) as date,
         COUNT(DISTINCT sc.id) as nombre_sessions,
-        COALESCE(SUM(sc.solde_ouverture), 0) as total_ouverture,
-        COALESCE(SUM(sc.solde_fermeture), 0) as total_fermeture,
-        COALESCE(SUM(sc.solde_theorique), 0) as total_theorique,
-        COALESCE(SUM(sc.ecart), 0) as total_ecart
+        COALESCE(SUM(sc.fond_initial), 0) as total_ouverture,
+        COALESCE(SUM(sc.fond_final_compte), 0) as total_fermeture,
+        COALESCE(SUM(sc.solde_theorique_cloture), 0) as total_theorique,
+        COALESCE(SUM(sc.fond_final_compte - sc.solde_theorique_cloture), 0) as total_ecart
        FROM sessions_caisse sc
        WHERE DATE(sc.date_ouverture) BETWEEN $1 AND $2
-         AND sc.statut = 'fermee'
+         AND sc.statut = 'cloturee'
        GROUP BY DATE(sc.date_ouverture)
        ORDER BY date DESC`,
       [dateDebut, dateFin]
@@ -140,14 +145,15 @@ export class CashVarianceService {
    */
   async getUserPerformance(utilisateurId: number, dateDebut: string, dateFin: string): Promise<any> {
     const { rows: sessions } = await pool.query(
-      `SELECT 
+      `SELECT
         sc.*,
+        (sc.fond_final_compte - sc.solde_theorique_cloture) AS ecart,
         u.username
        FROM sessions_caisse sc
-       LEFT JOIN utilisateurs u ON sc.utilisateur_id = u.id
-       WHERE sc.utilisateur_id = $1
+       LEFT JOIN utilisateurs u ON sc.ouverte_par_user_id = u.id
+       WHERE sc.ouverte_par_user_id = $1
          AND DATE(sc.date_ouverture) BETWEEN $2 AND $3
-         AND sc.statut = 'fermee'
+         AND sc.statut = 'cloturee'
        ORDER BY sc.date_ouverture DESC`,
       [utilisateurId, dateDebut, dateFin]
     );

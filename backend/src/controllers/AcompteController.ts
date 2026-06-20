@@ -537,7 +537,7 @@ export class AcompteController {
     try {
       const acompteId = parseInt(req.params.id);
       const { rows } = await pool.query(
-        `SELECT app.*, f.numero_facture
+        `SELECT app.*, f.numero_facture_interne AS numero_facture
          FROM acompte_applications_fournisseur app
          JOIN factures_fournisseur f ON f.id = app.facture_id
          WHERE app.acompte_id = $1
@@ -568,7 +568,7 @@ export class AcompteController {
         return;
       }
       const { rows: apps } = await pool.query(
-        `SELECT app.*, f.numero_facture
+        `SELECT app.*, f.numero_facture_interne AS numero_facture
          FROM acompte_applications_fournisseur app
          JOIN factures_fournisseur f ON f.id = app.facture_id
          WHERE app.acompte_id = $1

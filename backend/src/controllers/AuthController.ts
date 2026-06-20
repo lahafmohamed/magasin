@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { UserModel } from '../models/UserModel';
-import { generateToken, authenticate, AuthRequest, authorize, revokeSession, revokeAllUserSessions } from '../middleware/auth';
+import { generateToken, authenticate, AuthRequest, authorize, revokeSession, revokeAllUserSessions, extractToken } from '../middleware/auth';
 import pool from '../db/connection';
 import { logger } from '../utils/logger';
 
@@ -65,10 +65,20 @@ export class AuthController {
 
       // Log audit
       await pool.query(
-        `INSERT INTO audit_log (utilisateur_id, action, table_name, record_id, ip_address, user_agent)
+        `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [user.id, 'login', 'utilisateurs', user.id, req.ip, req.get('user-agent')]
       );
+
+      // Primary auth transport: httpOnly cookie (not readable by JS → XSS-safe).
+      // The token is still returned in the body for transitional/native clients.
+      res.cookie('auth_token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days, matches JWT_EXPIRATION
+        path: '/',
+      });
 
       res.json({
         success: true,
@@ -99,11 +109,11 @@ export class AuthController {
    */
   static async logout(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.split(' ')[1];
+      const token = extractToken(req);
+      if (token) {
         await revokeSession(token);
       }
+      res.clearCookie('auth_token', { path: '/' });
 
       res.json({
         success: true,
@@ -150,6 +160,11 @@ export class AuthController {
    * POST /api/auth/register
    * Register a new user (admin only)
    */
+  /** Password complexity policy: ≥8 chars with at least one letter and one digit. */
+  static isStrongPassword(pw: unknown): boolean {
+    return typeof pw === 'string' && pw.length >= 8 && /[A-Za-z]/.test(pw) && /\d/.test(pw);
+  }
+
   static async register(req: AuthRequest, res: Response): Promise<void> {
     try {
       const { username, email, password, nom_complet, role } = req.body;
@@ -158,6 +173,14 @@ export class AuthController {
         res.status(400).json({
           success: false,
           error: 'Username et mot de passe requis',
+        });
+        return;
+      }
+
+      if (!AuthController.isStrongPassword(password)) {
+        res.status(400).json({
+          success: false,
+          error: 'Le mot de passe doit contenir au moins 8 caractères, dont une lettre et un chiffre.',
         });
         return;
       }
@@ -175,18 +198,29 @@ export class AuthController {
       // Hash password
       const password_hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
+      // Resolve the requested role name to its role_id (fallback: caissier).
+      let roleId = 3;
+      const requestedRole = typeof role === 'string' ? role : 'caissier';
+      const { rows: roleRows } = await pool.query('SELECT id FROM roles WHERE nom = $1', [requestedRole]);
+      if (roleRows.length > 0) {
+        roleId = roleRows[0].id;
+      } else {
+        const { rows: fallback } = await pool.query("SELECT id FROM roles WHERE nom = 'caissier'");
+        if (fallback.length > 0) roleId = fallback[0].id;
+      }
+
       // Create user
       const user = await UserModel.create({
         username,
         email,
         password_hash,
         nom_complet,
-        role_id: 3, // Default caissier
+        role_id: roleId,
       });
 
       // Log audit
       await pool.query(
-        `INSERT INTO audit_log (utilisateur_id, action, table_name, record_id, ip_address, user_agent)
+        `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [req.user!.id, 'create', 'utilisateurs', user.id, req.ip, req.get('user-agent')]
       );
@@ -261,6 +295,15 @@ export class AuthController {
         res.status(400).json({
           success: false,
           error: 'Mot de passe actuel et nouveau mot de passe requis',
+        });
+        return;
+      }
+
+      // Password complexity policy: ≥8 chars with at least one letter and one digit
+      if (!AuthController.isStrongPassword(newPassword)) {
+        res.status(400).json({
+          success: false,
+          error: 'Le mot de passe doit contenir au moins 8 caractères, dont une lettre et un chiffre.',
         });
         return;
       }
@@ -351,7 +394,7 @@ export class AuthController {
 
       // Log audit
       await pool.query(
-        `INSERT INTO audit_log (utilisateur_id, action, table_name, record_id, ip_address, user_agent)
+        `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [req.user!.id, 'update', 'utilisateurs', userId, req.ip, req.get('user-agent')]
       );

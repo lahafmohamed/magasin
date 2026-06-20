@@ -3,10 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { creditNoteService } from '../services/api';
 import { AvoirComplete } from '../types';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import StatusBadge from '@/components/StatusBadge';
 import { DocumentPrint } from '@/components/ui/print-layout';
+import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
 import { formatXOF, formatDate } from '@/utils/format';
 import { ArrowLeft, FileText, User, Calendar, Printer } from 'lucide-react';
 import { toast } from 'sonner';
@@ -17,6 +19,7 @@ export default function AvoirDetail() {
   const [avoir, setAvoir] = useState<AvoirComplete | null>(null);
   const [loading, setLoading] = useState(true);
   const [showPrintLayout, setShowPrintLayout] = useState(false);
+  const [printFormat, setPrintFormat] = useState<'A4' | 'A5'>(() => (localStorage.getItem('print_format') as 'A4' | 'A5') || 'A4');
 
   useEffect(() => {
     loadAvoir();
@@ -88,6 +91,20 @@ export default function AvoirDetail() {
           </Button>
         </div>
       </div>
+
+      {/* Document lifecycle strip */}
+      <DocumentLifecycle
+        steps={[
+          { label: 'Devis', numero: null },
+          { label: 'Bon de livraison', numero: null },
+          {
+            label: 'Facture',
+            numero: avoir.facture_origine_numero,
+            to: avoir.facture_origine_id ? `/factures/${avoir.facture_origine_id}` : null,
+          },
+          { label: 'Avoir', numero: avoir.numero_avoir || `Avoir #${avoir.id}`, current: true },
+        ]}
+      />
 
       {/* Info cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -206,7 +223,22 @@ export default function AvoirDetail() {
           <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8 print:max-w-none print:w-full print:my-0 print:shadow-none print:rounded-none">
             <div className="sticky top-0 z-10 bg-white border-b p-4 flex justify-between items-center print:hidden">
               <h2 className="text-lg font-semibold">Aperçu d'impression</h2>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Format:</span>
+                  <Select
+                    value={printFormat}
+                    onValueChange={(v) => { const f = v as 'A4' | 'A5'; setPrintFormat(f); localStorage.setItem('print_format', f); }}
+                  >
+                    <SelectTrigger className="h-8 w-auto px-2 text-xs" aria-label="Format d'impression">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="A4">A4</SelectItem>
+                      <SelectItem value="A5">Ticket A5</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button variant="outline" onClick={() => setShowPrintLayout(false)}>Fermer</Button>
                 <Button onClick={() => window.print()}>
                   <Printer className="h-4 w-4 mr-2" />
@@ -215,6 +247,7 @@ export default function AvoirDetail() {
               </div>
             </div>
             <DocumentPrint
+              format={printFormat}
               docType="avoir"
               numero={avoir.numero_avoir || `AV${String(avoir.id).padStart(5, '0')}`}
               dateDoc={avoir.date_avoir}

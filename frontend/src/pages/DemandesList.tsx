@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { demandeService } from '../services/api';
 import { fuzzyScore } from '../utils/format';
@@ -9,17 +9,20 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  Clock, 
-  CheckCircle, 
-  XCircle, 
-  Package, 
-  Truck, 
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EmptyState } from '@/components/ui/empty-state';
+import { LoadingState } from '@/components/ui/loading';
+import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
+import {
+  Plus,
+  Search,
+  Filter,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Package,
+  Truck,
   Check,
-  Loader2,
   RefreshCw,
   Eye
 } from 'lucide-react';
@@ -53,6 +56,8 @@ const STATUS_CONFIG: Record<string, { label: string; variant: 'default' | 'secon
   cloturee: { label: 'Clôturée', variant: 'default', icon: CheckCircle },
 };
 
+type DemandeSortKey = 'numero' | 'magasin_nom' | 'depot_nom' | 'statut' | 'date_creation' | 'created_by_nom';
+
 export default function DemandesList() {
   const navigate = useNavigate();
   useAuth();
@@ -62,6 +67,8 @@ export default function DemandesList() {
   const [loading, setLoading] = useState(true);
   const [filterStatut, setFilterStatut] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sort, setSort] = useState<SortState<DemandeSortKey> | null>(null);
+  const handleSort = (key: DemandeSortKey) => setSort((s) => toggleSort(s, key));
   const [stats, setStats] = useState({
     total: 0,
     enAttente: 0,
@@ -116,6 +123,23 @@ export default function DemandesList() {
         .filter((row) => row.score > 0)
         .sort((x, y) => y.score - x.score)
         .map((row) => row.d);
+
+  const displayedDemandes = useMemo(() => {
+    if (!sort) return filteredDemandes;
+    const arr = [...filteredDemandes];
+    arr.sort((a, b) => {
+      let cmp: number;
+      if (sort.key === 'date_creation') {
+        cmp = new Date(a.date_creation).getTime() - new Date(b.date_creation).getTime();
+      } else {
+        const av = (a[sort.key] || '').toString().toLowerCase();
+        const bv = (b[sort.key] || '').toString().toLowerCase();
+        cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      }
+      return sort.dir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [filteredDemandes, sort]);
 
   const StatusBadge = ({ statut }: { statut: string }) => {
     const config = STATUS_CONFIG[statut] || { label: statut, variant: 'outline', icon: Clock };
@@ -210,28 +234,29 @@ export default function DemandesList() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Rechercher par numéro, magasin, dépôt..."
-                className="pl-10"
+                className="pl-10 sm:pl-10"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
-              <select
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                value={filterStatut}
-                onChange={(e) => setFilterStatut(e.target.value)}
-              >
-                <option value="all">Tous les statuts</option>
-                {isMagasin && <option value="brouillon">Brouillon</option>}
-                <option value="envoyee">Envoyée</option>
-                <option value="approuvee">Approuvée</option>
-                <option value="partiellement_approuvee">Partiellement approuvée</option>
-                <option value="refusee">Refusée</option>
-                <option value="en_cours">En cours</option>
-                <option value="livree">Livrée</option>
-                <option value="cloturee">Clôturée</option>
-              </select>
+              <Select value={filterStatut} onValueChange={setFilterStatut}>
+                <SelectTrigger className="h-9 w-auto" aria-label="Filtrer par statut">
+                  <SelectValue placeholder="Tous les statuts" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Tous les statuts</SelectItem>
+                  {isMagasin && <SelectItem value="brouillon">Brouillon</SelectItem>}
+                  <SelectItem value="envoyee">Envoyée</SelectItem>
+                  <SelectItem value="approuvee">Approuvée</SelectItem>
+                  <SelectItem value="partiellement_approuvee">Partiellement approuvée</SelectItem>
+                  <SelectItem value="refusee">Refusée</SelectItem>
+                  <SelectItem value="en_cours">En cours</SelectItem>
+                  <SelectItem value="livree">Livrée</SelectItem>
+                  <SelectItem value="cloturee">Clôturée</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <Button variant="outline" size="sm" onClick={loadDemandes} className="gap-2">
               <RefreshCw className="h-4 w-4" />
@@ -245,39 +270,38 @@ export default function DemandesList() {
       <Card>
         <CardContent className="p-0">
           {loading ? (
-            <div className="flex justify-center items-center py-20">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <LoadingState />
           ) : filteredDemandes.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <Package className="h-12 w-12 mb-4 opacity-50" />
-              <p>Aucune demande trouvée</p>
-              <RequirePermission permission={Permissions.DEMANDE_CREATE} hideIfUnauthorized>
-                <Button 
-                  variant="link" 
-                  onClick={() => navigate('/demandes/nouvelle')}
-                  className="mt-2"
-                >
-                  Créer une demande
-                </Button>
-              </RequirePermission>
-            </div>
+            <EmptyState
+              icon={Package}
+              title="Aucune demande trouvée"
+              action={
+                <RequirePermission permission={Permissions.DEMANDE_CREATE} hideIfUnauthorized>
+                  <Button
+                    variant="link"
+                    onClick={() => navigate('/demandes/nouvelle')}
+                  >
+                    Créer une demande
+                  </Button>
+                </RequirePermission>
+              }
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="border-b bg-muted/50">
-                    <th className="px-4 py-3 text-left text-sm font-medium">N° Demande</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Magasin</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Dépôt</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Statut</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Date</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Créée par</th>
+                    <SortableHeader columnKey="numero" sort={sort} onSort={handleSort}>N° Demande</SortableHeader>
+                    <SortableHeader columnKey="magasin_nom" sort={sort} onSort={handleSort}>Magasin</SortableHeader>
+                    <SortableHeader columnKey="depot_nom" sort={sort} onSort={handleSort}>Dépôt</SortableHeader>
+                    <SortableHeader columnKey="statut" sort={sort} onSort={handleSort}>Statut</SortableHeader>
+                    <SortableHeader columnKey="date_creation" sort={sort} onSort={handleSort}>Date</SortableHeader>
+                    <SortableHeader columnKey="created_by_nom" sort={sort} onSort={handleSort}>Créée par</SortableHeader>
                     <th className="px-4 py-3 text-right text-sm font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {filteredDemandes.map((demande) => (
+                  {displayedDemandes.map((demande) => (
                     <tr key={demande.id} className="hover:bg-muted/50">
                       <td className="px-4 py-3">
                         <span className="font-mono font-medium">{demande.numero}</span>

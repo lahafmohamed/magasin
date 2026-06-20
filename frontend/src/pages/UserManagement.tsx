@@ -1,11 +1,21 @@
-import { useState, useEffect } from 'react';
-import { Loader2, Plus, Shield, ShieldAlert, KeyRound, MapPin, Search } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Plus, Shield, ShieldAlert, KeyRound, MapPin, Search, Users } from 'lucide-react';
 import { adminUserService, stockLocationService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { EmptyState } from '@/components/ui/empty-state';
+import { LoadingState, Spinner } from '@/components/ui/loading';
+import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 
 interface User {
   id: number;
@@ -31,8 +41,6 @@ interface Location {
   nom: string;
   location_type: string;
 }
-
-const SELECT_CLS = 'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 
 export default function UserManagement() {
   const [users, setUsers] = useState<User[]>([]);
@@ -145,13 +153,29 @@ export default function UserManagement() {
     }
   };
 
-  const filteredUsers = users.filter(u => 
-    u.username.toLowerCase().includes(searchTerm.toLowerCase()) || 
+  const filteredUsers = users.filter(u =>
+    u.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (u.nom_complet && u.nom_complet.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
+  const [sort, setSort] = useState<SortState<'user' | 'role' | 'statut'> | null>(null);
+  const handleSort = (key: 'user' | 'role' | 'statut') => setSort(s => toggleSort(s, key));
+
+  const sortedUsers = useMemo(() => {
+    if (!sort) return filteredUsers;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    return [...filteredUsers].sort((a, b) => {
+      if (sort.key === 'statut') {
+        return ((a.actif ? 1 : 0) - (b.actif ? 1 : 0)) * dir;
+      }
+      const av = sort.key === 'role' ? a.role : (a.nom_complet || a.username);
+      const bv = sort.key === 'role' ? b.role : (b.nom_complet || b.username);
+      return String(av || '').localeCompare(String(bv || ''), 'fr') * dir;
+    });
+  }, [filteredUsers, sort]);
+
   if (loading) {
-    return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+    return <LoadingState />;
   }
 
   return (
@@ -187,22 +211,22 @@ export default function UserManagement() {
           <table className="w-full text-sm text-left">
             <thead className="bg-muted/50 text-muted-foreground border-b">
               <tr>
-                <th className="px-4 py-3 font-medium">Utilisateur</th>
-                <th className="px-4 py-3 font-medium">Rôle</th>
+                <SortableHeader columnKey="user" sort={sort} onSort={handleSort}>Utilisateur</SortableHeader>
+                <SortableHeader columnKey="role" sort={sort} onSort={handleSort}>Rôle</SortableHeader>
                 <th className="px-4 py-3 font-medium">Boutiques assignées</th>
-                <th className="px-4 py-3 font-medium">Statut</th>
+                <SortableHeader columnKey="statut" sort={sort} onSort={handleSort}>Statut</SortableHeader>
                 <th className="px-4 py-3 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {filteredUsers.length === 0 ? (
+              {sortedUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
-                    Aucun utilisateur trouvé
+                  <td colSpan={5}>
+                    <EmptyState icon={Users} title="Aucun utilisateur trouvé" />
                   </td>
                 </tr>
               ) : (
-                filteredUsers.map((user) => (
+                sortedUsers.map((user) => (
                   <tr key={user.id} className="hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-medium text-foreground">{user.nom_complet || '—'}</div>
@@ -310,18 +334,21 @@ export default function UserManagement() {
 
               <div className="space-y-2">
                 <Label htmlFor="role">Rôle assigné <span className="text-red-500">*</span></Label>
-                <select 
-                  id="role" 
-                  className={SELECT_CLS}
-                  value={formData.role_id}
-                  onChange={e => setFormData({...formData, role_id: e.target.value})}
+                <Select
                   required
+                  name="role"
+                  value={formData.role_id}
+                  onValueChange={v => setFormData({...formData, role_id: v})}
                 >
-                  <option value="">Sélectionner un rôle</option>
-                  {roles.map(r => (
-                    <option key={r.id} value={r.id}>{r.nom} - {r.description}</option>
-                  ))}
-                </select>
+                  <SelectTrigger id="role" className="w-full">
+                    <SelectValue placeholder="Sélectionner un rôle" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {roles.map(r => (
+                      <SelectItem key={r.id} value={String(r.id)}>{r.nom} - {r.description}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-2 flex flex-col justify-center">
@@ -368,7 +395,7 @@ export default function UserManagement() {
                 Annuler
               </Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Enregistrement...</> : 'Enregistrer'}
+                {submitting ? <><Spinner className="mr-2" /> Enregistrement...</> : 'Enregistrer'}
               </Button>
             </DialogFooter>
           </form>

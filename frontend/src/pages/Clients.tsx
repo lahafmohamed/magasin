@@ -9,7 +9,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
-import { Plus, Search, Pencil, Trash2, Users, Mail, Phone, Eye, Wallet, ArrowUpDown, Calendar, Banknote, Loader2 } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SortableHeader, type SortState } from '@/components/ui/sortable-header';
+import { LoadingState } from '@/components/ui/loading';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Plus, Search, Pencil, Trash2, Users, Mail, Phone, Eye, Wallet, Calendar, Banknote } from 'lucide-react';
 import { normalizeSearch } from '@/utils/format';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -235,21 +239,25 @@ export default function Clients() {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Rechercher un client..."
-                className="pl-10"
+                className="pl-10 sm:pl-10"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <select
-              className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 w-full sm:w-48"
+            <Select
               value={statutSoldeFilter}
-              onChange={(e) => { setStatutSoldeFilter(e.target.value as any); setPage(1); }}
+              onValueChange={(v) => { setStatutSoldeFilter(v as any); setPage(1); }}
             >
-              <option value="all">Tous les clients</option>
-              <option value="debiteur">Débiteurs</option>
-              <option value="crediteur">Créditeurs</option>
-              <option value="solde">Soldés</option>
-            </select>
+              <SelectTrigger className="w-full sm:w-48" aria-label="Filtrer par statut de solde">
+                <SelectValue placeholder="Tous les clients" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous les clients</SelectItem>
+                <SelectItem value="debiteur">Débiteurs</SelectItem>
+                <SelectItem value="crediteur">Créditeurs</SelectItem>
+                <SelectItem value="solde">Soldés</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>
@@ -338,12 +346,7 @@ export default function Clients() {
       </Dialog>
 
       {/* Tableau */}
-      {loading ? (
-        <div className="flex justify-center items-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : (
-        <Card>
+      <Card>
           <CardContent className="p-0">
             <Table>
               <TableHeader>
@@ -353,21 +356,27 @@ export default function Clients() {
                   <TableHead>Email</TableHead>
                   <TableHead>Téléphone</TableHead>
                   <TableHead>NIF</TableHead>
-                  <TableHead
-                    className="cursor-pointer hover:bg-muted/50 select-none"
-                    onClick={() => handleSort('solde')}
+                  <SortableHeader
+                    columnKey="solde"
+                    sort={{ key: sort, dir: order as SortState['dir'] }}
+                    onSort={handleSort}
                   >
-                    <div className="flex items-center gap-1">
-                      Solde
-                      {sort === 'solde' && <ArrowUpDown className="h-3 w-3" />}
-                    </div>
-                  </TableHead>
+                    Solde
+                  </SortableHeader>
                   <TableHead>Statut</TableHead>
                   <TableHead>Dernière activité</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="p-0">
+                      <LoadingState inCell />
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                <>
                 {clients.map((c: any) => (
                   <TableRow
                     key={c.id}
@@ -419,19 +428,20 @@ export default function Clients() {
                           onClick={() => viewClientAccount(c)}
                           className="gap-1 h-8 px-2"
                           title="Voir le compte"
+                          aria-label="Voir le compte du client"
                         >
                           <Eye className="h-3.5 w-3.5" />
                           <span className="hidden xl:inline text-xs">Compte</span>
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(c)}>
+                        <Button variant="ghost" size="sm" onClick={() => handleEdit(c)} aria-label="Modifier ce client">
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <Button
-                          variant="ghost"
+                          variant="destructive"
                           size="sm"
-                          className="text-destructive hover:text-destructive"
                           onClick={() => handleDelete(c.id)}
                           disabled={deleting === c.id}
+                          aria-label="Supprimer ce client"
                         >
                           {deleting === c.id ? (
                             <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -445,19 +455,17 @@ export default function Clients() {
                 ))}
                 {clients.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-12">
-                      <div className="flex flex-col items-center gap-2">
-                        <Users className="h-12 w-12 text-muted-foreground/50" />
-                        <p className="text-muted-foreground">Aucun client trouvé</p>
-                      </div>
+                    <TableCell colSpan={9} className="p-0">
+                      <EmptyState icon={Users} title="Aucun client trouvé" />
                     </TableCell>
                   </TableRow>
+                )}
+                </>
                 )}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
-      )}
 
       {/* Pagination */}
       {!loading && total > 0 && (
@@ -485,9 +493,7 @@ export default function Clients() {
           </DialogHeader>
 
           {accountLoading ? (
-            <div className="flex justify-center items-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
+            <LoadingState />
           ) : accountBalance ? (
             <div className="space-y-6">
               {/* KPI Tiles */}
@@ -552,17 +558,17 @@ export default function Clients() {
                         </div>
                         <div className="space-y-1 w-full sm:w-40">
                           <Label htmlFor="acompte-methode" className="text-xs text-muted-foreground">Méthode</Label>
-                          <select
-                            id="acompte-methode"
-                            className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            value={acompteMethode}
-                            onChange={(e) => setAcompteMethode(e.target.value)}
-                          >
-                            <option value="espece">Espèces</option>
-                            <option value="carte">Carte</option>
-                            <option value="cheque">Chèque</option>
-                            <option value="virement">Virement</option>
-                          </select>
+                          <Select value={acompteMethode} onValueChange={setAcompteMethode}>
+                            <SelectTrigger id="acompte-methode" aria-label="Méthode de paiement">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="espece">Espèces</SelectItem>
+                              <SelectItem value="carte">Carte</SelectItem>
+                              <SelectItem value="cheque">Chèque</SelectItem>
+                              <SelectItem value="virement">Virement</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                         <div className="space-y-1 flex-1 w-full">
                           <Label htmlFor="acompte-notes" className="text-xs text-muted-foreground">Notes (opt.)</Label>
@@ -702,20 +708,14 @@ export default function Clients() {
                 </Card>
               ) : (
                 <Card>
-                  <CardContent className="pt-6 text-center">
-                    <div className="flex flex-col items-center gap-2">
-                      <Wallet className="h-12 w-12 text-muted-foreground/50" />
-                      <p className="text-muted-foreground">Aucun mouvement pour ce client</p>
-                    </div>
+                  <CardContent className="p-0">
+                    <EmptyState icon={Wallet} title="Aucun mouvement pour ce client" />
                   </CardContent>
                 </Card>
               )}
             </div>
           ) : (
-            <div className="text-center py-8 text-muted-foreground">
-              <Wallet className="h-12 w-12 mx-auto mb-2 opacity-50" />
-              <p>Aucune information de compte disponible</p>
-            </div>
+            <EmptyState icon={Wallet} title="Aucune information de compte disponible" />
           )}
 
           <DialogFooter>

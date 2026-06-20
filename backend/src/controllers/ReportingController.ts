@@ -107,6 +107,59 @@ export class ReportingController {
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
+
+  static async getRevenueTrends(req: Request, res: Response): Promise<void> {
+    try {
+      const months = parseInt(req.query.months as string) || 12;
+      const data = await reportingService.getRevenueTrends(months);
+      res.json({ success: true, data });
+    } catch (error) {
+      consoleError('GET /api/reports/revenue-trends', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
+  static async getYoYComparison(req: Request, res: Response): Promise<void> {
+    try {
+      const months = parseInt(req.query.months as string) || 6;
+      const data = await reportingService.getYoYComparison(months);
+      res.json({ success: true, data });
+    } catch (error) {
+      consoleError('GET /api/reports/yoy', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
+  static async getRevenueForecast(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await reportingService.getRevenueForecast();
+      res.json({ success: true, data });
+    } catch (error) {
+      consoleError('GET /api/reports/forecast', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
+  static async getConsolidatedDashboard(req: Request, res: Response): Promise<void> {
+    try {
+      const magasinId = req.query.magasin_id ? parseInt(req.query.magasin_id as string) : undefined;
+      const data = await reportingService.getConsolidatedDashboard(magasinId);
+      res.json({ success: true, data });
+    } catch (error) {
+      consoleError('GET /api/reports/consolidated', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
+  static async getAlerts(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await reportingService.getAlerts();
+      res.json({ success: true, data });
+    } catch (error) {
+      consoleError('GET /api/reports/alerts', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
 }
 
 function consoleError(context: string, error: any) {

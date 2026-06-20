@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { produitService, tiersService, stockLocationService } from '../services/api';
 import { Produit } from '../types';
 import { Button } from '@/components/ui/button';
@@ -9,11 +10,15 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
 import { InlineEdit } from '@/components/ui/inline-edit';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EmptyState } from '@/components/ui/empty-state';
+import { LoadingState } from '@/components/ui/loading';
+import { SortableHeader, SortState } from '@/components/ui/sortable-header';
 
-import { Plus, Search, Pencil, Trash2, AlertCircle, CheckCircle, XCircle, Package, ChevronUp, ChevronDown, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, Loader2 } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, AlertCircle, CheckCircle, XCircle, Package, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { normalizeSearch } from '@/utils/format';
 import { downloadCsv } from '@/utils/csv';
@@ -43,6 +48,12 @@ export default function Inventaire() {
   const [selectedProductForHistory, setSelectedProductForHistory] = useState<Produit | null>(null);
   const [stockHistory, setStockHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  
+  // Purchase info (supplier, price, top buyer)
+  const [purchaseInfoDialogOpen, setPurchaseInfoDialogOpen] = useState(false);
+  const [selectedProductForPurchaseInfo, setSelectedProductForPurchaseInfo] = useState<Produit | null>(null);
+  const [purchaseInfo, setPurchaseInfo] = useState<any>(null);
+  const [loadingPurchaseInfo, setLoadingPurchaseInfo] = useState(false);
   
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -433,6 +444,22 @@ export default function Inventaire() {
     }
   };
 
+  const openPurchaseInfo = async (produit: Produit) => {
+    setSelectedProductForPurchaseInfo(produit);
+    setPurchaseInfoDialogOpen(true);
+    setLoadingPurchaseInfo(true);
+    setPurchaseInfo(null);
+    try {
+      const info = await produitService.getPurchaseInfo(produit.id);
+      setPurchaseInfo(info);
+    } catch (error) {
+      toast.error('Erreur lors du chargement des informations d\'achat');
+      console.error(error);
+    } finally {
+      setLoadingPurchaseInfo(false);
+    }
+  };
+
   const exportToCSV = () => {
     const headers = ['Référence', 'Nom', 'Catégorie', 'Prix Achat', 'Prix Vente', 'Marge', 'Stock', 'Stock Min'];
     const rows = produits.map(p => {
@@ -456,9 +483,122 @@ export default function Inventaire() {
     toast.success('Export CSV réussi');
   };
 
-  const SortIcon = ({ column }: { column: string }) => {
-    if (sort !== column) return <ChevronUp className="h-3 w-3 opacity-30" />;
-    return order === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />;
+  const sortState: SortState<'reference' | 'nom' | 'categorie' | 'prix_vente' | 'stock'> = {
+    key: sort as 'reference' | 'nom' | 'categorie' | 'prix_vente' | 'stock',
+    dir: order === 'desc' ? 'desc' : 'asc',
+  };
+
+  // --- Virtualization of the product table rows ---
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: produits.length,
+    getScrollElement: () => tableScrollRef.current,
+    estimateSize: () => 64, // estimated row height in px (refined via measureElement)
+    overscan: 10,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalSize = rowVirtualizer.getTotalSize();
+  const paddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const paddingBottom =
+    virtualRows.length > 0 ? totalSize - virtualRows[virtualRows.length - 1].end : 0;
+
+  const renderProductRow = (p: Produit, index: number) => {
+    const prixVente = parseFloat(p.prix_vente as any) || 0;
+    const prixAchat = parseFloat(p.prix_achat as any) || 0;
+    const marge = prixVente - prixAchat;
+    const margePercent = prixAchat > 0 ? ((marge / prixAchat) * 100).toFixed(1) : '0';
+    const stock = typeof p.stock === 'string' ? parseInt(p.stock) : p.stock;
+    const stockMin = typeof p.stock_min === 'string' ? parseInt(p.stock_min) : p.stock_min;
+
+    return (
+      <TableRow
+        key={p.id}
+        data-index={index}
+        ref={rowVirtualizer.measureElement}
+        className={`${selectedIds.includes(p.id) ? 'bg-primary/5' : ''} hover:bg-muted/50 transition-colors`}
+      >
+        <TableCell>
+          <input
+            type="checkbox"
+            checked={selectedIds.includes(p.id)}
+            onChange={() => toggleSelection(p.id)}
+            className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
+          />
+        </TableCell>
+        <TableCell className="font-mono text-sm">
+          <span
+            onClick={() => openPurchaseInfo(p)}
+            className="cursor-pointer hover:underline hover:text-primary transition-colors"
+          >
+            {p.reference}
+          </span>
+        </TableCell>
+        <TableCell className="font-semibold">
+          <InlineEdit
+            value={p.nom}
+            onSave={(value) => handleInlineEdit(p.id, 'nom', value)}
+            placeholder="Nom du produit"
+            displayClassName="font-semibold cursor-text border-b border-dashed border-muted-foreground/40"
+          />
+        </TableCell>
+        <TableCell>
+          <InlineEdit
+            value={p.categorie || ''}
+            onSave={(value) => handleInlineEdit(p.id, 'categorie', value)}
+            placeholder="Catégorie"
+          />
+        </TableCell>
+        <TableCell className="font-bold text-right">
+          <InlineEdit
+            value={prixVente.toFixed(2)}
+            onSave={(value) => handleInlineEdit(p.id, 'prix_vente', value)}
+            type="number"
+            placeholder="0.00"
+            displayClassName="font-bold text-right"
+          />
+          {' XOF'}
+        </TableCell>
+        <TableCell className="text-right">
+          <span className="text-sm font-medium text-muted-foreground">
+            +{margePercent}%
+          </span>
+        </TableCell>
+        <TableCell>{getStockBadge(stock, stockMin)}</TableCell>
+
+        <TableCell className="text-right">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => openHistory(p)}
+            className="gap-1"
+          >
+            <History className="h-4 w-4" />
+            <span className="text-xs">Voir</span>
+          </Button>
+        </TableCell>
+        <TableCell className="text-right">
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => handleEdit(p)} aria-label="Modifier le produit">
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={() => handleDeleteClick(p)}
+              disabled={deleting === p.id}
+              aria-label="Supprimer le produit"
+            >
+              {deleting === p.id ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
   };
 
   return (
@@ -484,28 +624,32 @@ export default function Inventaire() {
           <div className="flex gap-3 items-center flex-wrap">
             <div className="relative flex-1 min-w-[250px]">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Rechercher par nom ou référence..."
-                className="pl-10 h-10"
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-              />
+                <Input
+                  placeholder="Rechercher par nom ou référence..."
+                  className="pl-12 sm:pl-12 h-10"
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                />
             </div>
             
             {/* Category Filter */}
             {categories.length > 0 && (
               <div className="flex items-center gap-2">
                 <Filter className="h-4 w-4 text-muted-foreground" />
-                <select
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                <Select
                   value={categorieFilter}
-                  onChange={(e) => { setCategorieFilter(e.target.value); setPage(1); }}
+                  onValueChange={(v) => { setCategorieFilter(v); setPage(1); }}
                 >
-                  <option value="all">Toutes catégories</option>
-                  {categories.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
+                  <SelectTrigger className="h-9 w-auto" aria-label="Filtrer par catégorie">
+                    <SelectValue placeholder="Toutes catégories" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Toutes catégories</SelectItem>
+                    {categories.map(cat => (
+                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
             
@@ -521,18 +665,21 @@ export default function Inventaire() {
             {stockLocations.length > 0 && (
               <div className="flex items-center gap-2">
                 <Label htmlFor="adjust-location" className="text-xs text-muted-foreground">Depot:</Label>
-                <select
-                  id="adjust-location"
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                <Select
                   value={selectedAdjustLocationId}
-                  onChange={(e) => setSelectedAdjustLocationId(e.target.value)}
+                  onValueChange={(v) => setSelectedAdjustLocationId(v)}
                 >
-                  {stockLocations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.nom} ({location.code})
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger id="adjust-location" className="h-9 w-auto" aria-label="Selectionner le depot">
+                    <SelectValue placeholder="Depot" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {stockLocations.map((location) => (
+                      <SelectItem key={location.id} value={String(location.id)}>
+                        {location.nom} ({location.code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
 
@@ -550,15 +697,19 @@ export default function Inventaire() {
                     value={bulkAdjustQuantity}
                     onChange={(e) => setBulkAdjustQuantity(e.target.value)}
                   />
-                  <select 
-                    className="select select-xs h-8 w-16"
+                  <Select
                     value={bulkAdjustType}
-                    onChange={(e) => setBulkAdjustType(e.target.value as 'add' | 'subtract' | 'set')}
+                    onValueChange={(v) => setBulkAdjustType(v as 'add' | 'subtract' | 'set')}
                   >
-                    <option value="add">+</option>
-                    <option value="subtract">-</option>
-                    <option value="set">=</option>
-                  </select>
+                    <SelectTrigger className="h-8 w-16" aria-label="Type d'ajustement de stock">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="add">+</SelectItem>
+                      <SelectItem value="subtract">-</SelectItem>
+                      <SelectItem value="set">=</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Button 
                     variant="outline" 
                     size="sm" 
@@ -572,16 +723,20 @@ export default function Inventaire() {
                 </div>
 
                 {/* Bulk Category Change */}
-                <select 
-                  className="select select-xs h-8 w-32"
-                  value={bulkCategory}
-                  onChange={(e) => setBulkCategory(e.target.value)}
+                <Select
+                  value={bulkCategory === '' ? '__all' : bulkCategory}
+                  onValueChange={(v) => setBulkCategory(v === '__all' ? '' : v)}
                 >
-                  <option value="">Catégorie...</option>
-                  {categories.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
+                  <SelectTrigger className="h-8 w-32" aria-label="Changer la catégorie">
+                    <SelectValue placeholder="Catégorie..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">Catégorie...</SelectItem>
+                    {categories.map(cat => (
+                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -659,17 +814,20 @@ export default function Inventaire() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="fournisseur">Fournisseur</Label>
-                <select
-                  id="fournisseur"
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={formData.fournisseur_id || ''}
-                  onChange={(e) => setFormData({ ...formData, fournisseur_id: e.target.value ? parseInt(e.target.value) : null })}
+                <Select
+                  value={formData.fournisseur_id ? String(formData.fournisseur_id) : '__all'}
+                  onValueChange={(v) => setFormData({ ...formData, fournisseur_id: v === '__all' ? null : parseInt(v) })}
                 >
-                  <option value="">Aucun</option>
-                  {(Array.isArray(fournisseurs) ? fournisseurs : []).map((f) => (
-                    <option key={f.id} value={f.id}>{f.raison_sociale}</option>
-                  ))}
-                </select>
+                  <SelectTrigger id="fournisseur" className="h-9 w-full" aria-label="Fournisseur">
+                    <SelectValue placeholder="Aucun" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">Aucun</SelectItem>
+                    {(Array.isArray(fournisseurs) ? fournisseurs : []).map((f) => (
+                      <SelectItem key={f.id} value={String(f.id)}>{f.raison_sociale}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               {editingProduit ? (
                 <div className="space-y-2">
@@ -686,19 +844,22 @@ export default function Inventaire() {
                 <>
                   <div className="space-y-2">
                     <Label htmlFor="location_id">Depot cible</Label>
-                    <select
-                      id="location_id"
-                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                      value={formData.location_id}
-                      onChange={(e) => setFormData({ ...formData, location_id: e.target.value })}
+                    <Select
+                      value={formData.location_id === '' ? '__all' : formData.location_id}
+                      onValueChange={(v) => setFormData({ ...formData, location_id: v === '__all' ? '' : v })}
                     >
-                      <option value="">Selectionner...</option>
-                      {stockLocations.map((location) => (
-                        <option key={location.id} value={location.id}>
-                          {location.nom} ({location.code})
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger id="location_id" className="h-9 w-full" aria-label="Depot cible">
+                        <SelectValue placeholder="Selectionner..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all">Selectionner...</SelectItem>
+                        {stockLocations.map((location) => (
+                          <SelectItem key={location.id} value={String(location.id)}>
+                            {location.nom} ({location.code})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="initial_stock">Stock initial depot</Label>
@@ -762,14 +923,24 @@ export default function Inventaire() {
       </Dialog>
 
       {/* Tableau */}
-      {loading ? (
-        <div className="flex justify-center items-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : (
-        <Card>
+      <Card>
           <CardContent className="p-0">
-            <Table>
+            <div
+              ref={tableScrollRef}
+              className="relative w-full overflow-auto max-h-[calc(100vh-320px)]"
+            >
+            <table className="w-full caption-bottom text-sm table-fixed">
+              <colgroup>
+                <col style={{ width: '4%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '20%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '13%' }} />
+                <col style={{ width: '9%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '9%' }} />
+                <col style={{ width: '8%' }} />
+              </colgroup>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-12">
@@ -780,128 +951,52 @@ export default function Inventaire() {
                       className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
                     />
                   </TableHead>
-                  <TableHead className="cursor-pointer hover:bg-muted" onClick={() => handleSort('reference')}>
-                    <div className="flex items-center gap-1">Référence <SortIcon column="reference" /></div>
-                  </TableHead>
-                  <TableHead className="cursor-pointer hover:bg-muted" onClick={() => handleSort('nom')}>
-                    <div className="flex items-center gap-1">Nom <SortIcon column="nom" /></div>
-                  </TableHead>
-                  <TableHead className="cursor-pointer hover:bg-muted" onClick={() => handleSort('categorie')}>
-                    <div className="flex items-center gap-1">Catégorie <SortIcon column="categorie" /></div>
-                  </TableHead>
-                  <TableHead className="cursor-pointer hover:bg-muted text-right" onClick={() => handleSort('prix_vente')}>
-                    <div className="flex items-center gap-1 justify-end">Prix Vente <SortIcon column="prix_vente" /></div>
-                  </TableHead>
+                  <SortableHeader columnKey="reference" sort={sortState} onSort={handleSort}>Référence</SortableHeader>
+                  <SortableHeader columnKey="nom" sort={sortState} onSort={handleSort}>Nom</SortableHeader>
+                  <SortableHeader columnKey="categorie" sort={sortState} onSort={handleSort}>Catégorie</SortableHeader>
+                  <SortableHeader columnKey="prix_vente" sort={sortState} onSort={handleSort} align="right">Prix Vente</SortableHeader>
                   <TableHead className="text-right">Marge</TableHead>
-                  <TableHead className="cursor-pointer hover:bg-muted" onClick={() => handleSort('stock')}>
-                    <div className="flex items-center gap-1">Stock <SortIcon column="stock" /></div>
-                  </TableHead>
+                  <SortableHeader columnKey="stock" sort={sortState} onSort={handleSort}>Stock</SortableHeader>
 
                   <TableHead className="text-right">Historique</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {produits.map((p) => {
-                  const prixVente = parseFloat(p.prix_vente as any) || 0;
-                  const prixAchat = parseFloat(p.prix_achat as any) || 0;
-                  const marge = prixVente - prixAchat;
-                  const margePercent = prixAchat > 0 ? ((marge / prixAchat) * 100).toFixed(1) : '0';
-                  const stock = typeof p.stock === 'string' ? parseInt(p.stock) : p.stock;
-                  const stockMin = typeof p.stock_min === 'string' ? parseInt(p.stock_min) : p.stock_min;
-                  
-                  return (
-                  <TableRow key={p.id} className={`${selectedIds.includes(p.id) ? 'bg-primary/5' : ''} hover:bg-muted/50 transition-colors`}>
-                    <TableCell>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.includes(p.id)}
-                        onChange={() => toggleSelection(p.id)}
-                        className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
-                      />
-                    </TableCell>
-                    <TableCell className="font-mono text-sm">{p.reference}</TableCell>
-                    <TableCell className="font-semibold">
-                      <InlineEdit
-                        value={p.nom}
-                        onSave={(value) => handleInlineEdit(p.id, 'nom', value)}
-                        placeholder="Nom du produit"
-                        displayClassName="font-semibold"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <InlineEdit
-                        value={p.categorie || ''}
-                        onSave={(value) => handleInlineEdit(p.id, 'categorie', value)}
-                        placeholder="Catégorie"
-                      />
-                    </TableCell>
-                    <TableCell className="font-bold text-right">
-                      <InlineEdit
-                        value={prixVente.toFixed(2)}
-                        onSave={(value) => handleInlineEdit(p.id, 'prix_vente', value)}
-                        type="number"
-                        placeholder="0.00"
-                        displayClassName="font-bold text-right"
-                      />
-                      {' XOF'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className="text-sm font-medium text-muted-foreground">
-                        +{margePercent}%
-                      </span>
-                    </TableCell>
-                    <TableCell>{getStockBadge(stock, stockMin)}</TableCell>
-
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openHistory(p)}
-                        className="gap-1"
-                      >
-                        <History className="h-4 w-4" />
-                        <span className="text-xs">Voir</span>
-                      </Button>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => handleEdit(p)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => handleDeleteClick(p)}
-                          disabled={deleting === p.id}
-                        >
-                          {deleting === p.id ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                  );
-                })}
-                {produits?.length === 0 && (
+                {loading ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-12">
-                      <div className="flex flex-col items-center gap-2">
-                        <Package className="h-12 w-12 text-muted-foreground/50" />
-                        <p className="text-muted-foreground">Aucun produit trouvé</p>
-                      </div>
+                    <TableCell colSpan={9} className="p-0">
+                      <LoadingState inCell />
                     </TableCell>
                   </TableRow>
+                ) : produits?.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={9} className="p-0">
+                      <EmptyState icon={Package} title="Aucun produit trouvé" />
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  <>
+                    {paddingTop > 0 && (
+                      <tr aria-hidden="true">
+                        <td colSpan={9} style={{ height: paddingTop }} />
+                      </tr>
+                    )}
+                    {virtualRows.map((virtualRow) =>
+                      renderProductRow(produits[virtualRow.index], virtualRow.index)
+                    )}
+                    {paddingBottom > 0 && (
+                      <tr aria-hidden="true">
+                        <td colSpan={9} style={{ height: paddingBottom }} />
+                      </tr>
+                    )}
+                  </>
                 )}
               </TableBody>
-            </Table>
+            </table>
+            </div>
           </CardContent>
         </Card>
-      )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -1026,6 +1121,163 @@ export default function Inventaire() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Purchase Info Dialog */}
+      <Dialog open={purchaseInfoDialogOpen} onOpenChange={setPurchaseInfoDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5" />
+              Informations d'achat - {selectedProductForPurchaseInfo?.nom} ({selectedProductForPurchaseInfo?.reference})
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto space-y-4">
+            {loadingPurchaseInfo ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin" />
+              </div>
+            ) : purchaseInfo ? (
+              <>
+                {/* Default Supplier */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-4 rounded-lg bg-muted/50">
+                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Fournisseur par défaut</h4>
+                    {purchaseInfo.default_supplier ? (
+                      <div>
+                        <p className="font-medium">{purchaseInfo.default_supplier.raison_sociale}</p>
+                        {purchaseInfo.default_supplier.telephone && (
+                          <p className="text-sm text-muted-foreground">Tel: {purchaseInfo.default_supplier.telephone}</p>
+                        )}
+                        {purchaseInfo.default_supplier.email && (
+                          <p className="text-sm text-muted-foreground">Email: {purchaseInfo.default_supplier.email}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">Aucun fournisseur par défaut</p>
+                    )}
+                  </div>
+
+                  {/* Purchase Price Stats */}
+                  <div className="p-4 rounded-lg bg-muted/50">
+                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Prix d'achat</h4>
+                    {purchaseInfo.price_stats ? (
+                      <div className="space-y-2">
+                        {purchaseInfo.price_stats.prix_min === purchaseInfo.price_stats.prix_max ? (
+                          <p className="text-2xl font-bold">{purchaseInfo.price_stats.prix_min.toLocaleString('fr-FR')} XOF</p>
+                        ) : (
+                          <div>
+                            <p className="text-lg font-bold">
+                              {purchaseInfo.price_stats.prix_min.toLocaleString('fr-FR')} - {purchaseInfo.price_stats.prix_max.toLocaleString('fr-FR')} XOF
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Moyenne: {purchaseInfo.price_stats.prix_moyen.toLocaleString('fr-FR')} XOF · {purchaseInfo.price_stats.total_achats} achat(s)
+                            </p>
+                          </div>
+                        )}
+                        {purchaseInfo.recent_purchase && (
+                          <p className="text-xs text-muted-foreground border-t pt-1 mt-1">
+                            Dernier: {purchaseInfo.recent_purchase.prix_unitaire.toLocaleString('fr-FR')} XOF
+                            {purchaseInfo.recent_purchase.fournisseur && ` chez ${purchaseInfo.recent_purchase.fournisseur}`}
+                            {purchaseInfo.recent_purchase.date && ` (${new Date(purchaseInfo.recent_purchase.date).toLocaleDateString('fr-FR')})`}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-2xl font-bold">{purchaseInfo.prix_achat.toLocaleString('fr-FR')} XOF</p>
+                        <p className="text-xs text-muted-foreground mt-1">Prix par défaut (aucun achat enregistré)</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* All Purchase History (combined) */}
+                {(purchaseInfo.purchase_history?.length > 0 || purchaseInfo.order_history?.length > 0) && (
+                  <div>
+                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Tous les achats</h4>
+                    <div className="overflow-x-auto rounded-lg border">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted/50">
+                          <tr>
+                            <th className="text-left p-2">Date</th>
+                            <th className="text-left p-2">Fournisseur</th>
+                            <th className="text-left p-2">Document</th>
+                            <th className="text-right p-2">Qté</th>
+                            <th className="text-right p-2">Prix unitaire</th>
+                            <th className="text-right p-2">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[
+                            ...(purchaseInfo.purchase_history || []).map((item: any) => ({ ...item, source: 'Facture' })),
+                            ...(purchaseInfo.order_history || []).map((item: any) => ({ ...item, source: 'Commande' })),
+                          ]
+                            .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                            .map((item: any, i: number) => (
+                              <tr key={i} className="border-t hover:bg-muted/30">
+                                <td className="p-2 text-xs">{item.date ? new Date(item.date).toLocaleDateString('fr-FR') : '-'}</td>
+                                <td className="p-2">{item.fournisseur || '-'}</td>
+                                <td className="p-2">
+                                  <span className="text-xs font-mono">{item.numero || item.source || '-'}</span>
+                                  <span className="text-[10px] text-muted-foreground ml-1">{item.source}</span>
+                                </td>
+                                <td className="p-2 text-right">{item.quantite}</td>
+                                <td className="p-2 text-right font-semibold">{parseFloat(item.prix_unitaire).toLocaleString('fr-FR')}</td>
+                                <td className="p-2 text-right font-medium">{(parseFloat(item.prix_unitaire) * (item.quantite || 1)).toLocaleString('fr-FR')}</td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* No purchase history */}
+                {(!purchaseInfo.purchase_history || purchaseInfo.purchase_history.length === 0) &&
+                 (!purchaseInfo.order_history || purchaseInfo.order_history.length === 0) && (
+                  <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                    <Package className="h-12 w-12 mb-2 opacity-50" />
+                    <p>Aucun achat enregistré pour ce produit</p>
+                  </div>
+                )}
+
+                {/* Top Buyer */}
+                <div className="p-4 rounded-lg bg-muted/50">
+                  <h4 className="text-sm font-semibold text-muted-foreground mb-2">Qui achète le plus ?</h4>
+                  {purchaseInfo.top_buyer ? (
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-lg">
+                          {purchaseInfo.top_buyer.prenom
+                            ? `${purchaseInfo.top_buyer.prenom} ${purchaseInfo.top_buyer.raison_sociale}`
+                            : purchaseInfo.top_buyer.raison_sociale}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          {purchaseInfo.top_buyer.telephone && `Tel: ${purchaseInfo.top_buyer.telephone}`}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-2xl font-bold">{purchaseInfo.top_buyer.total_quantite} unités</p>
+                        <p className="text-sm text-muted-foreground">
+                          {purchaseInfo.top_buyer.nombre_factures} facture(s) · {parseFloat(purchaseInfo.top_buyer.total_depense).toLocaleString('fr-FR', { minimumFractionDigits: 0 })} XOF
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Aucune vente enregistrée pour ce produit</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Package className="h-12 w-12 mb-2 opacity-50" />
+                <p>Erreur de chargement</p>
               </div>
             )}
           </div>

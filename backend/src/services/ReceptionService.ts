@@ -218,12 +218,30 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
           );
         }
 
-        // Update purchase price to the latest reception cost (keeps valuation current
-        // instead of freezing at the first non-zero cost).
-        if (ligne.cout_unitaire > 0) {
+        // Calcul du Coût Moyen Pondéré (CMP)
+        if (ligne.cout_unitaire > 0 && ligne.quantite_recue > 0) {
+          const { rows: stockRow } = await client.query(
+            `SELECT quantite, valeur_stock, cmp FROM stock_par_location
+             WHERE produit_id = $1 AND location_id = $2`,
+            [ligne.produit_id, effectiveLocationId]
+          );
+
+          const qteExistante = stockRow.length > 0 ? Number(stockRow[0].quantite) : 0;
+          const valeurExistante = stockRow.length > 0 ? Number(stockRow[0].valeur_stock) : 0;
+          const nouvelleQuantite = qteExistante + ligne.quantite_recue;
+          const nouvelleValeur = valeurExistante + (ligne.quantite_recue * ligne.cout_unitaire);
+          const nouveauCmp = nouvelleQuantite > 0 ? Math.round(nouvelleValeur / nouvelleQuantite * 100) / 100 : ligne.cout_unitaire;
+
+          await client.query(
+            `UPDATE stock_par_location
+             SET valeur_stock = $1, cmp = $2
+             WHERE produit_id = $3 AND location_id = $4`,
+            [nouvelleValeur, nouveauCmp, ligne.produit_id, effectiveLocationId]
+          );
+
           await client.query(
             'UPDATE produits SET prix_achat = $1 WHERE id = $2',
-            [ligne.cout_unitaire, ligne.produit_id]
+            [nouveauCmp, ligne.produit_id]
           );
         }
       }

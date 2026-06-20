@@ -119,6 +119,87 @@ export class StockLocationService extends BaseService<StockLocationRecord> {
   }
 
   /**
+   * Update an existing location
+   */
+  async update(id: number, input: Partial<CreateLocationInput>): Promise<StockLocationRecord | null> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const { rows: existing } = await client.query('SELECT id FROM stock_locations WHERE id = $1 FOR UPDATE', [id]);
+      if (existing.length === 0) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      if (input.est_principal) {
+        await client.query('UPDATE stock_locations SET est_principal = false WHERE id <> $1', [id]);
+      }
+
+      const fields: string[] = [];
+      const params: any[] = [];
+      let i = 1;
+      for (const col of ['code', 'nom', 'adresse', 'responsable_id', 'est_principal'] as const) {
+        if (input[col] !== undefined) {
+          fields.push(`${col} = $${i++}`);
+          params.push(input[col]);
+        }
+      }
+      if (fields.length === 0) {
+        await client.query('ROLLBACK');
+        return this.getById(id);
+      }
+      params.push(id);
+      const { rows } = await client.query(
+        `UPDATE stock_locations SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
+        params
+      );
+
+      await client.query('COMMIT');
+      await logAudit({
+        utilisateur_id: input.req?.user?.id || null,
+        action: 'update',
+        table_name: 'stock_locations',
+        record_id: id,
+        req: input.req,
+        new_values: input,
+      });
+      return rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      logger.error({ err: error }, 'Error updating stock location');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Deactivate a location (soft). Blocked if it is principal or still holds stock.
+   */
+  async deactivate(id: number, req?: any): Promise<{ ok: boolean; reason?: string }> {
+    const { rows: locRows } = await pool.query('SELECT est_principal FROM stock_locations WHERE id = $1', [id]);
+    if (locRows.length === 0) return { ok: false, reason: 'not_found' };
+    if (locRows[0].est_principal) return { ok: false, reason: 'principal' };
+
+    const { rows: stockRows } = await pool.query(
+      'SELECT COALESCE(SUM(quantite), 0) AS qty FROM stock_par_location WHERE location_id = $1',
+      [id]
+    );
+    if (parseFloat(stockRows[0].qty) > 0) return { ok: false, reason: 'has_stock' };
+
+    await pool.query('UPDATE stock_locations SET actif = false WHERE id = $1', [id]);
+    await logAudit({
+      utilisateur_id: req?.user?.id || null,
+      action: 'deactivate',
+      table_name: 'stock_locations',
+      record_id: id,
+      req,
+    });
+    return { ok: true };
+  }
+
+  /**
    * Get stock levels for a location
    */
   async getStockLevels(locationId: number): Promise<any[]> {

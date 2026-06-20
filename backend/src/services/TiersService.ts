@@ -193,7 +193,7 @@ export class TiersService extends BaseService<TiersRecord> {
     const totauxClientQ = `
       WITH
         f  AS (SELECT COALESCE(SUM(total),0) as v FROM factures WHERE tiers_id=$1 AND statut!='annulee' AND deleted_at IS NULL),
-        fa AS (SELECT COALESCE(SUM(total),0) as v FROM factures_avoir WHERE tiers_id=$1 AND statut IN ('valide','utilise') AND deleted_at IS NULL),
+        fa AS (SELECT COALESCE(SUM(total),0) as v FROM factures_avoir WHERE tiers_id=$1 AND statut = 'valide' AND deleted_at IS NULL),
         ac AS (SELECT COALESCE(SUM(montant),0) as v FROM acomptes_clients WHERE tiers_id=$1 AND statut IN ('disponible','utilise')),
         p  AS (SELECT COALESCE(SUM(p.montant),0) as v FROM paiements p JOIN factures f2 ON f2.id=p.facture_id WHERE f2.tiers_id=$1 AND f2.deleted_at IS NULL)
       SELECT f.v as total_facture, p.v as total_paye, fa.v as total_avoir, ac.v as total_acompte,
@@ -223,7 +223,7 @@ export class TiersService extends BaseService<TiersRecord> {
         UNION ALL
         SELECT date_avoir::timestamp, 'avoir_client', numero_avoir,
           'Avoir ' || numero_avoir, 0, total, id, 3
-        FROM factures_avoir WHERE tiers_id=$1 AND statut IN ('valide','utilise') AND deleted_at IS NULL
+        FROM factures_avoir WHERE tiers_id=$1 AND statut = 'valide' AND deleted_at IS NULL
 
         UNION ALL
         SELECT date_acompte::timestamp, 'acompte_client', 'ACO-'||id,

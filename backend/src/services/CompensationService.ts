@@ -49,28 +49,28 @@ export class CompensationService {
         throw new Error(`Montant de compensation (${input.montant}) supérieur au minimum compensable (${maxComp})`);
       }
 
-      // Find or create accounting accounts 401 and 411
-      const get401 = await client.query(`SELECT id FROM plan_comptable WHERE numero='401' LIMIT 1`);
-      const get411 = await client.query(`SELECT id FROM plan_comptable WHERE numero='411' LIMIT 1`);
-
-      if (!get401.rows.length || !get411.rows.length) {
+      // Ensure the 401/411 accounts exist in the plan comptable (069 schema
+      // references accounts by their numero, so no id lookup is needed).
+      const getAccounts = await client.query(
+        `SELECT numero FROM plan_comptable WHERE numero IN ('401','411')`
+      );
+      const numeros = new Set(getAccounts.rows.map((r: any) => r.numero));
+      if (!numeros.has('401') || !numeros.has('411')) {
         throw new Error('Comptes comptables 401/411 introuvables dans le plan comptable');
       }
-      const compte401 = get401.rows[0].id;
-      const compte411 = get411.rows[0].id;
 
       const pieceNum = `COMP-${input.tiers_id}-${Date.now()}`;
 
       // OD entry: Débit 401 (reduces AP), Crédit 411 (reduces AR)
       const { rows: ecritureRows } = await client.query(
         `INSERT INTO ecritures_comptables
-           (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, description)
+           (numero_piece, date_ecriture, journal, compte_numero, tiers_id, libelle, debit, credit, reference_type, reference_id)
          VALUES
-           ($1, $2, 'OD', NULL, 'compensation', 1, $3, $4, 0, $5),
-           ($1, $2, 'OD', NULL, 'compensation', 2, $6, 0, $4, $5)
+           ($1, $2, 'OD', '401', $3, $4, $5, 0, 'compensation', NULL),
+           ($1, $2, 'OD', '411', $3, $4, 0, $5, 'compensation', NULL)
          RETURNING id`,
-        [pieceNum, input.date_compensation, compte401, input.montant,
-         `Compensation tiers ${tiers.raison_sociale}`, compte411]
+        [pieceNum, input.date_compensation, input.tiers_id,
+         `Compensation tiers ${tiers.raison_sociale}`, input.montant]
       );
       const ecritureId = ecritureRows[0]?.id || null;
 

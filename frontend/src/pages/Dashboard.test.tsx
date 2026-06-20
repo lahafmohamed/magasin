@@ -10,12 +10,20 @@ vi.mock('../services/api', () => ({
     getRevenueTrends: vi.fn(),
     getTopProducts: vi.fn(),
     getTopClients: vi.fn(),
+    getAll: vi.fn().mockResolvedValue({ data: [] }),
   },
   produitService: {
     getStockByCategory: vi.fn(),
+    getAll: vi.fn().mockResolvedValue({ data: [] }),
   },
   commandeService: {
     getStats: vi.fn(),
+  },
+  paiementService: {
+    getStats: vi.fn().mockResolvedValue(null),
+  },
+  reportService: {
+    getAlerts: vi.fn().mockResolvedValue(null),
   },
 }));
 
@@ -34,8 +42,11 @@ vi.mock('recharts', () => ({
   Area: () => null,
   BarChart: ({ children }: any) => <div data-testid="bar-chart">{children}</div>,
   Bar: () => null,
+  LineChart: ({ children }: any) => <div data-testid="line-chart">{children}</div>,
+  Line: () => null,
   PieChart: ({ children }: any) => <div data-testid="pie-chart">{children}</div>,
   Pie: () => null,
+  Legend: () => null,
   XAxis: () => null,
   YAxis: () => null,
   CartesianGrid: () => null,

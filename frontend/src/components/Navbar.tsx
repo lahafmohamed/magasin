@@ -33,9 +33,11 @@ import {
   ClipboardList,
   ShieldCheck,
   KeyRound,
-  Percent
+  Sun,
+  Moon
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
+import { useTheme } from '../lib/ThemeContext';
 import { NotificationBell } from './NotificationBell';
 
 interface NavItem {
@@ -53,6 +55,7 @@ interface NavCategory {
 export default function Navbar() {
   const location = useLocation();
   const { user, logout, hasRole } = useAuth();
+  const { resolvedTheme, setTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const isAdminOrManager = hasRole('admin', 'manager');
@@ -140,7 +143,6 @@ export default function Navbar() {
       items: [
         { path: '/admin/users', label: 'Utilisateurs', icon: Users },
         { path: '/admin/permissions', label: 'Permissions', icon: KeyRound },
-        { path: '/admin/tva', label: 'Taux de TVA', icon: Percent },
       ],
     }] : []),
   ].filter(cat => cat.items.length > 0);
@@ -155,6 +157,7 @@ export default function Navbar() {
             size="sm"
             className="lg:hidden h-8 w-8 p-0"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-label={mobileMenuOpen ? 'Fermer le menu' : 'Ouvrir le menu'}
           >
             {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
           </Button>
@@ -177,6 +180,7 @@ export default function Navbar() {
                 size="sm"
                 className="h-8 px-2"
                 title="Dashboard"
+                aria-label="Dashboard"
               >
                 <LayoutDashboard className="h-4 w-4" />
               </Button>
@@ -210,7 +214,9 @@ export default function Navbar() {
                             <ItemIcon className="h-4 w-4" />
                             <span>{item.label}</span>
                             {isActive && (
-                              <span className="ml-auto text-xs text-primary">●</span>
+                              <span className="ml-auto text-primary">
+                                <span className="h-1.5 w-1.5 rounded-full bg-current inline-block" aria-hidden="true" />
+                              </span>
                             )}
                           </Link>
                         </DropdownMenuItem>
@@ -228,11 +234,21 @@ export default function Navbar() {
           {/* User section */}
           {user && (
             <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+                aria-label={resolvedTheme === 'dark' ? 'Activer le mode clair' : 'Activer le mode sombre'}
+                title={resolvedTheme === 'dark' ? 'Mode clair' : 'Mode sombre'}
+              >
+                {resolvedTheme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </Button>
               <NotificationBell />
               <div className="flex items-center gap-1.5 px-1.5 py-0.5 text-xs">
                 <User className="h-3.5 w-3.5" />
                 <span className="hidden lg:inline text-xs">{user.username}</span>
-                <span className="inline-flex items-center rounded-full border px-1.5 py-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                <span className="inline-flex items-center rounded-full border px-1.5 py-0 text-xs uppercase tracking-wide text-muted-foreground">
                   {user.role}
                 </span>
               </div>

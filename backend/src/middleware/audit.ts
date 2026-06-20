@@ -55,7 +55,7 @@ export const audit = (tableName: string, action: AuditAction, getIdFn?: (req: Re
         if (recordId) {
           // Fire-and-forget audit logging (don't block the response)
           pool.query(
-            `INSERT INTO audit_log (utilisateur_id, action, table_name, record_id, ip_address, user_agent, new_values)
+            `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent, new_values)
              VALUES ($1, $2, $3, $4, $5, $6, $7)`,
             [
               userId || null,
@@ -93,7 +93,7 @@ export const logAudit = async (params: {
 }): Promise<void> => {
   try {
     await pool.query(
-      `INSERT INTO audit_log (utilisateur_id, action, table_name, record_id, ip_address, user_agent, old_values, new_values)
+      `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent, old_values, new_values)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         params.utilisateur_id ?? null,

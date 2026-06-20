@@ -21,6 +21,6 @@ router.put('/:id', authorize(['admin', 'manager']), PaiementController.update);
 router.delete('/:id', authorize(['admin']), PaiementController.delete);
 
 // Create standalone payment
-router.post('/', validateBody(createPaiementSchema), PaiementController.create);
+router.post('/', authorize('admin', 'manager', 'magasin_staff', 'caissier'), validateBody(createPaiementSchema), PaiementController.create);
 
 export default router;

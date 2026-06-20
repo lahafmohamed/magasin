@@ -290,6 +290,28 @@ export class StockTransferService extends BaseService<TransferRecord> {
       client.release();
     }
   }
+
+  /**
+   * Cancel a transfer that is still in preparation. No stock has moved yet
+   * (stock only moves on complete), so this is a pure status change.
+   */
+  async cancel(transferId: number, userId?: number, req?: any): Promise<boolean> {
+    const { rowCount } = await pool.query(
+      `UPDATE stock_transfers SET statut = 'annule' WHERE id = $1 AND statut = 'en_preparation'`,
+      [transferId]
+    );
+    if ((rowCount ?? 0) === 0) return false;
+
+    await logAudit({
+      utilisateur_id: userId,
+      action: 'cancel',
+      table_name: 'stock_transfers',
+      record_id: transferId,
+      req,
+    });
+    logger.info({ transferId }, 'Stock transfer cancelled');
+    return true;
+  }
 }
 
 export const stockTransferService = new StockTransferService();

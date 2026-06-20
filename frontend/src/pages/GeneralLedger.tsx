@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Download, FileText } from 'lucide-react';
 import { generalLedgerService } from '../services/api';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { downloadCsv } from '../utils/csv';
 
 interface Compte {
   id: number;
@@ -116,6 +119,63 @@ export default function GeneralLedger() {
     }
   };
 
+  const exportToPDF = async () => {
+    try {
+      const blob = await generalLedgerService.exportPdf({
+        journal: filterJournal || undefined,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        type: activeTab === 'ecritures' ? 'ecritures' : activeTab === 'chart' ? 'chart' : 'balance',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${activeTab}_${dateDebut}_${dateFin}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Export PDF réussi');
+    } catch {
+      toast.error('Erreur lors de l\'export PDF');
+    }
+  };
+
+  const exportToCSV = () => {
+    if (activeTab === 'ecritures') {
+      const headers = ['N° pièce', 'Date', 'Journal', 'Compte', 'Description', 'Débit', 'Crédit'];
+      const rows = ecritures.map((e) => [
+        e.numero_piece,
+        new Date(e.date_ecriture).toLocaleDateString('fr-FR'),
+        e.journal,
+        `${e.compte_numero} — ${e.compte_intitule}`,
+        e.description,
+        parseFloat(e.debit).toFixed(0),
+        parseFloat(e.credit).toFixed(0),
+      ]);
+      downloadCsv(`ecritures_${dateDebut}_${dateFin}.csv`, headers, rows);
+    } else if (activeTab === 'chart') {
+      const headers = ['N°', 'Intitulé', 'Type', 'Catégorie', 'Statut'];
+      const rows = chartOfAccounts.map((c) => [
+        c.numero,
+        c.intitule,
+        c.type_compte,
+        c.categorie || '',
+        c.actif ? 'Actif' : 'Inactif',
+      ]);
+      downloadCsv('plan_comptable.csv', headers, rows);
+    } else if (activeTab === 'trial-balance') {
+      const headers = ['N°', 'Compte', 'Total débit', 'Total crédit', 'Solde'];
+      const rows = trialBalance.map((b) => [
+        b.compte_numero,
+        b.compte_intitule,
+        parseFloat(b.total_debit).toFixed(0),
+        parseFloat(b.total_credit).toFixed(0),
+        parseFloat(b.solde).toFixed(0),
+      ]);
+      downloadCsv(`balance_${dateDebut}_${dateFin}.csv`, headers, rows);
+    }
+    toast.success('Export CSV réussi');
+  };
+
   if (loading) {
     return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
@@ -124,6 +184,16 @@ export default function GeneralLedger() {
     <div className="container mx-auto p-6">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Grand livre comptable</h1>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={exportToPDF} className="gap-2">
+            <FileText className="h-4 w-4" />
+            Exporter en PDF
+          </Button>
+          <Button variant="outline" onClick={exportToCSV} className="gap-2">
+            <Download className="h-4 w-4" />
+            Exporter en CSV
+          </Button>
+        </div>
       </div>
 
       <div className="mb-6 inline-flex rounded-md border bg-card p-1">
@@ -157,18 +227,18 @@ export default function GeneralLedger() {
           {activeTab === 'ecritures' && (
             <div className="space-y-1.5">
               <Label htmlFor="gl-journal">Journal</Label>
-              <select
-                id="gl-journal"
-                className={SELECT_CLS}
-                value={filterJournal}
-                onChange={(e) => setFilterJournal(e.target.value)}
-              >
-                <option value="">Tous les journaux</option>
-                <option value="ACHATS">ACHATS</option>
-                <option value="VENTES">VENTES</option>
-                <option value="TRESORERIE">TRESORERIE</option>
-                <option value="OD">OD (Opérations diverses)</option>
-              </select>
+              <Select value={filterJournal || '__all'} onValueChange={(v) => setFilterJournal(v === '__all' ? '' : v)}>
+                <SelectTrigger id="gl-journal" className={SELECT_CLS}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all">Tous les journaux</SelectItem>
+                  <SelectItem value="ACHATS">ACHATS</SelectItem>
+                  <SelectItem value="VENTES">VENTES</SelectItem>
+                  <SelectItem value="TRESORERIE">TRESORERIE</SelectItem>
+                  <SelectItem value="OD">OD (Opérations diverses)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           )}
         </div>

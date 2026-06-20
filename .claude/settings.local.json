@@ -9,7 +9,13 @@
       "Bash(xargs grep -l \"Acompte\\\\|acompte\")",
       "Bash(timeout 60 npx vitest run src/controllers/AcompteFournisseurController.test.ts)",
       "Bash(PGPASSWORD= psql -U postgres -h localhost -d magasin_db -c \"SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name;\")",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "Bash(npx vitest *)",
+      "Bash(curl -s -m 5 http://localhost:6000/api/health -w \"\\\\n6000-health:%{http_code}\\\\n\")",
+      "Bash(curl -s -m 5 http://localhost:5173/api/health -w \"\\\\nproxy-health:%{http_code}\\\\n\")"
     ]
-  }
+  },
+  "disabledMcpjsonServers": [
+    "gemini-api-docs-mcp"
+  ]
 }

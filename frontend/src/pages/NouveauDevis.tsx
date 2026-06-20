@@ -1,25 +1,21 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { devisService, stockLocationService, ventesService } from '@/services/api';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useForm, useFieldArray, useWatch, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { devisService, stockLocationService, ventesService, tiersService } from '@/services/api';
+import { useDraft } from '@/hooks/useDraft';
 import { TiersPicker } from '@/components/TiersPicker';
 import { Tiers, Produit } from '@/types';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Check, FileText, Search, ShoppingCart, X } from 'lucide-react';
 import { formatFCFA as formatXOF } from '@/utils/format';
 import { toast } from 'sonner';
-
-interface LigneDevis {
-  produit_id: number;
-  produit_nom: string;
-  produit_reference: string;
-  quantite: number;
-  prix_unitaire: number;
-  prix_revient: number;
-  stock_dispo: number;
-}
 
 interface StockLocation {
   id: number;
@@ -33,21 +29,91 @@ interface StockLevel {
   quantite_disponible: number;
 }
 
+// --- zod schema -----------------------------------------------------------
+// Required (matches the original handleSubmit guards): a client must be
+// selected and at least one line item with quantité > 0 / prix >= 0.
+// location_id, date_validite and notes are optional, exactly like before
+// (the payload sent them as `value || undefined`).
+const ligneSchema = z.object({
+  produit_id: z.number(),
+  produit_nom: z.string(),
+  produit_reference: z.string(),
+  quantite: z.number().int().min(1, 'Quantité invalide'),
+  prix_unitaire: z.number().min(0, 'Prix invalide'),
+  prix_revient: z.number(),
+  stock_dispo: z.number(),
+});
+
+const devisSchema = z.object({
+  client: z.custom<Tiers | null>((v) => v != null, 'Veuillez sélectionner un client'),
+  location_id: z.number().nullable(),
+  date_validite: z.string(),
+  notes: z.string(),
+  lignes: z.array(ligneSchema).min(1, 'Veuillez ajouter au moins un produit'),
+});
+
+type DevisFormValues = z.infer<typeof devisSchema>;
+
 export default function NouveauDevis() {
   const navigate = useNavigate();
-  const [selectedClient, setSelectedClient] = useState<Tiers | null>(null);
+  const { id } = useParams<{ id: string }>();
+  const isEdit = !!id;
 
+  // Local-only search / UI state (does not feed the payload directly).
   const [produits, setProduits] = useState<Produit[]>([]);
   const [produitSearch, setProduitSearch] = useState('');
   const [showProduitDropdown, setShowProduitDropdown] = useState(false);
-
-  const [lignes, setLignes] = useState<LigneDevis[]>([]);
-  const [dateValidite, setDateValidite] = useState('');
-  const [notes, setNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
   const [locations, setLocations] = useState<StockLocation[]>([]);
-  const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
   const [locationStockMap, setLocationStockMap] = useState<Record<number, number>>({});
+
+  const {
+    control,
+    register,
+    handleSubmit,
+    setValue,
+    getValues,
+    watch,
+    reset,
+    formState: { errors, isSubmitting, isDirty },
+  } = useForm<DevisFormValues>({
+    resolver: zodResolver(devisSchema),
+    defaultValues: {
+      client: null,
+      location_id: null,
+      date_validite: '',
+      notes: '',
+      lignes: [],
+    },
+  });
+
+  // --- Draft autosave + unsaved-changes guard (create mode only) -----------
+  const { draft, save, clear, hasDraft } = useDraft<DevisFormValues>('devis:new');
+  const [showDraftBanner, setShowDraftBanner] = useState(!isEdit && hasDraft);
+
+  useEffect(() => {
+    if (isEdit) return;
+    const sub = watch((v) => save(v as DevisFormValues));
+    return () => sub.unsubscribe();
+  }, [watch, save, isEdit]);
+
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
+  const { fields, append, remove, replace } = useFieldArray({ control, name: 'lignes' });
+
+  // Live values for computed totals / margins and effect dependencies.
+  const selectedClient = useWatch({ control, name: 'client' });
+  const selectedLocationId = useWatch({ control, name: 'location_id' });
+  const watchedLignes = useWatch({ control, name: 'lignes' }) ?? [];
 
   useEffect(() => {
     const loadMagasins = async () => {
@@ -57,7 +123,7 @@ export default function NouveauDevis() {
         setLocations(magasins);
         const defaultMagasin = magasins.find((m) => m.est_principal) || magasins[0];
         if (defaultMagasin) {
-          setSelectedLocationId(defaultMagasin.id);
+          setValue('location_id', defaultMagasin.id);
         } else {
           toast.error('Aucun magasin actif disponible pour les devis');
         }
@@ -67,7 +133,7 @@ export default function NouveauDevis() {
     };
 
     void loadMagasins();
-  }, []);
+  }, [setValue]);
 
   useEffect(() => {
     if (!selectedLocationId) return;
@@ -89,13 +155,54 @@ export default function NouveauDevis() {
 
   useEffect(() => {
     if (!selectedLocationId) return;
-    setLignes((prev) =>
-      prev.map((ligne) => ({
+    const current = getValues('lignes');
+    if (current.length === 0) return;
+    replace(
+      current.map((ligne) => ({
         ...ligne,
         stock_dispo: locationStockMap[ligne.produit_id] ?? ligne.stock_dispo,
       })),
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationStockMap, selectedLocationId]);
+
+  useEffect(() => {
+    if (!isEdit || !id) return;
+    const load = async () => {
+      try {
+        setEditLoading(true);
+        const res = await devisService.getById(Number(id));
+        const devis = res?.data || res;
+        if (devis.tiers_id) {
+          const tiersRes = await tiersService.getById(devis.tiers_id);
+          setValue('client', tiersRes?.data || tiersRes);
+        }
+        setValue('location_id', devis.location_id || null);
+        setValue('date_validite', devis.date_validite || '');
+        setValue('notes', devis.notes || '');
+        if (Array.isArray(devis.lignes)) {
+          replace(
+            devis.lignes.map((l: any) => ({
+              produit_id: l.produit_id,
+              produit_nom: l.produit_nom || '',
+              produit_reference: l.reference || '',
+              quantite: l.quantite,
+              prix_unitaire: Number(l.prix_unitaire),
+              prix_revient: Number(l.prix_revient || 0),
+              stock_dispo: Number(l.stock_dispo || 0),
+            })),
+          );
+        }
+      } catch {
+        toast.error('Impossible de charger le devis');
+        navigate('/devis');
+      } finally {
+        setEditLoading(false);
+      }
+    };
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   useEffect(() => {
     if (produitSearch.length >= 2) {
@@ -111,7 +218,8 @@ export default function NouveauDevis() {
   }, [produitSearch, selectedLocationId]);
 
   const addProduit = (produit: Produit) => {
-    if (lignes.some((l) => l.produit_id === produit.id)) {
+    const current = getValues('lignes');
+    if (current.some((l) => l.produit_id === produit.id)) {
       toast.warning('Ce produit est déjà dans le devis');
       return;
     }
@@ -124,87 +232,78 @@ export default function NouveauDevis() {
       ? locationStockMap[produit.id] ?? fallbackStock
       : fallbackStock;
 
-    setLignes((prev) => [
-      ...prev,
-      {
-        produit_id: produit.id,
-        produit_nom: produit.nom,
-        produit_reference: produit.reference,
-        quantite: 1,
-        prix_unitaire: prixVente,
-        prix_revient: prixAchat,
-        stock_dispo: stock,
-      },
-    ]);
+    append({
+      produit_id: produit.id,
+      produit_nom: produit.nom,
+      produit_reference: produit.reference,
+      quantite: 1,
+      prix_unitaire: prixVente,
+      prix_revient: prixAchat,
+      stock_dispo: stock,
+    });
     setProduitSearch('');
     setProduits([]);
     setShowProduitDropdown(false);
   };
 
   const updateQuantite = (index: number, quantite: number) => {
-    setLignes((prev) => {
-      const copy = [...prev];
-      copy[index].quantite = quantite;
-      return copy;
-    });
+    setValue(`lignes.${index}.quantite`, quantite, { shouldValidate: true, shouldDirty: true });
   };
 
   const updatePrix = (index: number, prix: number) => {
-    setLignes((prev) => {
-      const copy = [...prev];
-      copy[index].prix_unitaire = prix;
-      return copy;
-    });
+    setValue(`lignes.${index}.prix_unitaire`, prix, { shouldValidate: true, shouldDirty: true });
   };
 
   const removeLigne = (index: number) => {
-    setLignes((prev) => prev.filter((_, i) => i !== index));
+    remove(index);
   };
 
-  const total = lignes.reduce((sum, l) => sum + l.quantite * l.prix_unitaire, 0);
+  // Identical math: montant total = Σ (quantité × prix_unitaire).
+  const total = watchedLignes.reduce((sum, l) => sum + l.quantite * l.prix_unitaire, 0);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!selectedClient) {
-      toast.error('Veuillez sélectionner un client');
-      return;
-    }
-
-    if (lignes.length === 0) {
-      toast.error('Veuillez ajouter au moins un produit');
-      return;
-    }
-
-    for (const ligne of lignes) {
-      if (ligne.quantite <= 0) {
-        toast.error(`Quantité invalide pour "${ligne.produit_nom}"`);
-        return;
-      }
-    }
-
-    setSubmitting(true);
+  const onValid = async (values: DevisFormValues) => {
     try {
-      await devisService.create({
-        tiers_id: selectedClient!.id,
-        location_id: selectedLocationId || undefined,
-        lignes: lignes.map((l) => ({
+      const payload = {
+        tiers_id: values.client!.id,
+        location_id: values.location_id || undefined,
+        lignes: values.lignes.map((l) => ({
           produit_id: l.produit_id,
           quantite: l.quantite,
           prix_unitaire: l.prix_unitaire,
         })),
-        valid_until: dateValidite || undefined,
-        notes: notes || undefined,
-      });
+        valid_until: values.date_validite || undefined,
+        notes: values.notes || undefined,
+      };
 
-      toast.success('Devis créé avec succès');
+      if (isEdit && id) {
+        await devisService.update(Number(id), payload);
+        toast.success('Devis modifié avec succès');
+      } else {
+        await devisService.create(payload);
+        clear();
+        toast.success('Devis créé avec succès');
+      }
       navigate('/devis');
     } catch (error: any) {
-      toast.error(error?.response?.data?.error || 'Erreur lors de la création du devis');
-    } finally {
-      setSubmitting(false);
+      toast.error(error?.response?.data?.error || 'Erreur lors de la sauvegarde du devis');
     }
   };
+
+  if (editLoading) {
+    return (
+      <div className="p-3 sm:p-6 w-full space-y-6">
+        <div className="flex items-center gap-4">
+          <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Retour
+          </Button>
+          <h1 className="text-3xl font-bold tracking-tight">Chargement du devis...</h1>
+        </div>
+      </div>
+    );
+  }
+
+  const lignesError = errors.lignes?.message ?? errors.lignes?.root?.message;
 
   return (
     <div className="p-3 sm:p-6 w-full space-y-6">
@@ -216,20 +315,60 @@ export default function NouveauDevis() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <FileText className="h-8 w-8" />
-            Nouveau Devis
+            {isEdit ? 'Modifier le Devis' : 'Nouveau Devis'}
           </h1>
-          <p className="text-muted-foreground mt-1">Créez un nouveau devis client</p>
+          <p className="text-muted-foreground mt-1">{isEdit ? 'Modifiez le devis client' : 'Créez un nouveau devis client'}</p>
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit(onValid)} className="space-y-6">
+        {showDraftBanner && (
+          <div className="rounded-lg border bg-muted/50 p-3 text-sm flex items-center justify-between gap-3">
+            <span>Un brouillon non enregistré a été récupéré.</span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  if (draft) reset(draft);
+                  setShowDraftBanner(false);
+                }}
+              >
+                Restaurer
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  clear();
+                  setShowDraftBanner(false);
+                }}
+              >
+                Ignorer
+              </Button>
+            </div>
+          </div>
+        )}
+
         <Card>
           <CardHeader>
-            <CardTitle>Client</CardTitle>
+            <CardTitle>Client<span className="text-destructive"> *</span></CardTitle>
             <CardDescription>Sélectionnez le client</CardDescription>
           </CardHeader>
           <CardContent>
-            <TiersPicker role="client" value={selectedClient} onChange={setSelectedClient} />
+            <Controller
+              control={control}
+              name="client"
+              render={({ field }) => (
+                <TiersPicker role="client" value={field.value} onChange={field.onChange} />
+              )}
+            />
+            {errors.client && (
+              <p role="alert" className="mt-1.5 text-xs font-medium text-danger">
+                {errors.client.message}
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -244,24 +383,46 @@ export default function NouveauDevis() {
           <CardContent className="space-y-4">
             {locations.length > 1 && (
               <div className="max-w-xs">
-                <label className="text-xs text-muted-foreground block mb-1.5">Magasin (stock)</label>
-                <select
-                  className="w-full px-3 py-2 text-sm rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={selectedLocationId || ''}
-                  onChange={(e) => setSelectedLocationId(parseInt(e.target.value, 10))}
+                <Label
+                  htmlFor="devis-location"
+                  className="text-xs text-muted-foreground block mb-1.5 font-normal"
                 >
-                  {locations.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.nom} ({l.code})
-                    </option>
-                  ))}
-                </select>
+                  Magasin (stock)
+                </Label>
+                <Controller
+                  control={control}
+                  name="location_id"
+                  render={({ field }) => (
+                    <Select
+                      value={field.value ? String(field.value) : ''}
+                      onValueChange={(v) => field.onChange(parseInt(v, 10))}
+                    >
+                      <SelectTrigger id="devis-location" className="w-full" aria-label="Magasin (stock)">
+                        <SelectValue placeholder="Choisir un magasin" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {locations.map((l) => (
+                          <SelectItem key={l.id} value={String(l.id)}>
+                            {l.nom} ({l.code})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
               </div>
             )}
 
+            <Label
+              htmlFor="devis-produit-search"
+              className="text-xs text-muted-foreground block mb-1.5 font-normal"
+            >
+              Rechercher un produit
+            </Label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input
+                id="devis-produit-search"
                 className="w-full pl-10 pr-3 py-2.5 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
                 placeholder="Rechercher un produit par nom ou référence…"
                 value={produitSearch}
@@ -321,15 +482,15 @@ export default function NouveauDevis() {
               )}
             </div>
 
-            {lignes.length > 0 ? (
+            {fields.length > 0 ? (
               <div className="mt-4 border rounded-lg overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm tabular-nums">
                     <thead className="bg-muted/50">
                       <tr className="text-[11px] uppercase tracking-wider text-muted-foreground">
                         <th className="text-left font-semibold px-3 py-2.5">Produit</th>
-                        <th className="text-right font-semibold px-3 py-2.5 w-[150px]">Prix unitaire</th>
-                        <th className="text-center font-semibold px-3 py-2.5 w-[90px]">Qté</th>
+                        <th className="text-right font-semibold px-3 py-2.5 w-[150px]">Prix unitaire<span className="text-destructive"> *</span></th>
+                        <th className="text-center font-semibold px-3 py-2.5 w-[90px]">Qté<span className="text-destructive"> *</span></th>
                         <th className="text-center font-semibold px-3 py-2.5 w-[80px]">Stock</th>
                         <th className="text-right font-semibold px-3 py-2.5 w-[110px]">Marge</th>
                         <th className="text-right font-semibold px-3 py-2.5 w-[120px]">Total</th>
@@ -337,7 +498,8 @@ export default function NouveauDevis() {
                       </tr>
                     </thead>
                     <tbody>
-                      {lignes.map((ligne, index) => {
+                      {fields.map((field, index) => {
+                        const ligne = watchedLignes[index] ?? field;
                         const lineTotal = ligne.quantite * ligne.prix_unitaire;
                         const marginPct =
                           ligne.prix_unitaire > 0
@@ -346,8 +508,10 @@ export default function NouveauDevis() {
                         const marginAbs = (ligne.prix_unitaire - ligne.prix_revient) * ligne.quantite;
                         const belowCost = ligne.prix_revient > 0 && ligne.prix_unitaire < ligne.prix_revient;
                         const overstock = ligne.quantite > ligne.stock_dispo;
+                        const prixError = errors.lignes?.[index]?.prix_unitaire?.message;
+                        const qteError = errors.lignes?.[index]?.quantite?.message;
                         return (
-                          <tr key={`${ligne.produit_id}-${index}`} className="border-t align-middle">
+                          <tr key={field.id} className="border-t align-middle">
                             <td className="px-3 py-3">
                               <div className="font-medium">{ligne.produit_nom}</div>
                               <div className="text-xs font-mono text-muted-foreground">
@@ -370,6 +534,11 @@ export default function NouveauDevis() {
                                 <span className="uppercase tracking-wider">P. revient</span>
                                 <span className="font-mono">{formatXOF(ligne.prix_revient)}</span>
                               </div>
+                              {prixError && (
+                                <p role="alert" className="mt-1 text-[10px] font-medium text-danger">
+                                  {prixError}
+                                </p>
+                              )}
                             </td>
                             <td className="px-3 py-3 text-center">
                               <input
@@ -387,6 +556,11 @@ export default function NouveauDevis() {
                                 }}
                                 className="w-16 px-2 py-1 text-center text-sm border rounded font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
                               />
+                              {qteError && (
+                                <p role="alert" className="mt-1 text-[10px] font-medium text-danger">
+                                  {qteError}
+                                </p>
+                              )}
                             </td>
                             <td className={`px-3 py-3 text-center font-mono ${overstock ? 'text-destructive' : ''}`}>
                               {ligne.stock_dispo}
@@ -433,6 +607,11 @@ export default function NouveauDevis() {
                 Aucun produit. Recherchez pour ajouter.
               </div>
             )}
+            {lignesError && (
+              <p role="alert" className="text-xs font-medium text-danger">
+                {lignesError}
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -441,21 +620,13 @@ export default function NouveauDevis() {
             <CardTitle>Informations complémentaires</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <label className="text-sm font-medium">Date de validité</label>
-              <Input
-                type="date"
-                value={dateValidite}
-                onChange={(e) => setDateValidite(e.target.value)}
-              />
+            <div className="space-y-1.5">
+              <Label htmlFor="devis-validite">Date de validité</Label>
+              <Input id="devis-validite" type="date" {...register('date_validite')} />
             </div>
-            <div>
-              <label className="text-sm font-medium">Notes</label>
-              <Textarea
-                placeholder="Ajoutez une note..."
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-              />
+            <div className="space-y-1.5">
+              <Label htmlFor="devis-notes">Notes</Label>
+              <Textarea id="devis-notes" placeholder="Ajoutez une note..." {...register('notes')} />
             </div>
           </CardContent>
         </Card>
@@ -466,9 +637,9 @@ export default function NouveauDevis() {
               <p className="text-sm text-muted-foreground">Montant total estimé</p>
               <p className="text-2xl font-bold">{formatXOF(total)}</p>
             </div>
-            <Button type="submit" disabled={submitting || !selectedClient || lignes.length === 0}>
+            <Button type="submit" disabled={isSubmitting || editLoading || !selectedClient || fields.length === 0}>
               <Check className="h-4 w-4 mr-2" />
-              {submitting ? 'Création...' : 'Créer le devis'}
+              {isSubmitting ? (isEdit ? 'Enregistrement...' : 'Création...') : (isEdit ? 'Enregistrer les modifications' : 'Créer le devis')}
             </Button>
           </CardContent>
         </Card>

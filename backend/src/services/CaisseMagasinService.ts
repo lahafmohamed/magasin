@@ -458,7 +458,78 @@ export class CaisseMagasinService {
       ]
     );
 
+    // Post the cash movement to the general journal (double-entry).
+    await this.postMouvementToGL(client, input);
+
     return rows[0];
+  }
+
+  /**
+   * Post a cash movement to the general ledger (ecritures_comptables, 069 schema).
+   * Cash side = 53 (espèces) or 54 (mobile money); counter-account depends on the
+   * movement category. Unmapped categories are skipped (logged), not posted.
+   * Runs inside the caller's transaction so a failure rolls back the whole movement.
+   */
+  private async postMouvementToGL(client: any, input: CreateMouvementInput): Promise<void> {
+    const MOBILE = ['mobile_money', 'orange_money', 'mtn_money', 'wave'];
+    const cashAccount = MOBILE.includes(input.methode_paiement) ? '54' : '53';
+
+    // categorie -> counter (non-cash) account number
+    const counterByCategorie: Record<string, string> = {
+      // encaissements (cash in): Dr cash / Cr counter
+      paiement_client: '411',
+      acompte_client: '419',
+      acompte: '419',
+      apport: '75',
+      autre_entree: '75',
+      // décaissements (cash out): Dr counter / Cr cash
+      paiement_fournisseur: '401',
+      acompte_fournisseur: '409',
+      depense: '604',
+      remboursement_client: '411',
+      retrait_banque: '51',
+      autre_sortie: '65',
+    };
+
+    const counter = counterByCategorie[input.categorie];
+    if (!counter) {
+      logger.warn({ categorie: input.categorie }, 'Caisse→GL: catégorie non mappée, écriture ignorée');
+      return;
+    }
+
+    // Build the two balanced legs
+    const cashLeg = { compte: cashAccount, debit: 0, credit: 0 };
+    const counterLeg = { compte: counter, debit: 0, credit: 0, tiers: false as boolean };
+    if (input.type === 'encaissement') {
+      cashLeg.debit = input.montant;       // cash increases
+      counterLeg.credit = input.montant;
+    } else {
+      counterLeg.debit = input.montant;
+      cashLeg.credit = input.montant;      // cash decreases
+    }
+    const { rows: seqRows } = await client.query("SELECT nextval('piece_comptable_seq') as num");
+    const numeroPiece = `PC-${new Date().getFullYear()}-${String(seqRows[0].num).padStart(5, '0')}`;
+    const libelle = input.libelle || `Mouvement caisse ${input.categorie}`;
+
+    // tiers_id is left null: reference_id here is the source document id (paiement/
+    // depense/…), not a tiers id. reference_type/reference_id capture the link.
+    for (const leg of [cashLeg, counterLeg]) {
+      await client.query(
+        `INSERT INTO ecritures_comptables
+           (journal, numero_piece, date_ecriture, compte_numero, tiers_id, libelle, debit, credit, reference_type, reference_id, cree_par)
+         VALUES ('BQ', $1, CURRENT_DATE, $2, NULL, $3, $4, $5, $6, $7, $8)`,
+        [
+          numeroPiece,
+          leg.compte,
+          libelle,
+          leg.debit,
+          leg.credit,
+          'caisse_mouvement',
+          input.reference_id || null,
+          input.user_id || null,
+        ]
+      );
+    }
   }
 
   /**

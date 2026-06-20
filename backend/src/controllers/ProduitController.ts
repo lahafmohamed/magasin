@@ -329,8 +329,9 @@ export class ProduitController {
   static async addStockMovement(req: Request, res: Response): Promise<void> {
     try {
       const id = parseInt(req.params.id);
-      const { type_mouvement, quantite, raison, reference_liee } = req.body;
-      const result = await produitService.addStockMovement(id, type_mouvement, quantite, raison, reference_liee);
+      const { type_mouvement, quantite, location_id, raison, reference_liee } = req.body;
+      // NOTE: service signature is (produitId, type, quantite, locationId?, raison?, reference_liee?)
+      const result = await produitService.addStockMovement(id, type_mouvement, quantite, location_id, raison, reference_liee);
 
       if (!result) {
         res.status(404).json({ success: false, error: 'Produit non trouvé' });
@@ -349,6 +350,181 @@ export class ProduitController {
       res.status(201).json(successResponse(result, 'Mouvement enregistré'));
     } catch (error) {
       loggerError('POST /api/produits/:id/mouvements', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
+  /**
+   * GET /api/produits/:id/info-achat
+   * Returns supplier info, purchase prices, and top buyer for a product.
+   */
+  static async getPurchaseInfo(req: Request, res: Response): Promise<void> {
+    try {
+      const productId = parseInt(req.params.id, 10);
+      if (!productId) {
+        res.status(400).json({ success: false, error: 'ID produit invalide' });
+        return;
+      }
+
+      // 1. Default supplier + purchase price from product record
+      const supplierResult = await pool.query(
+        `SELECT t.id, t.raison_sociale, t.telephone, t.email, p.prix_achat
+         FROM produits p
+         LEFT JOIN tiers t ON p.fournisseur_id = t.id
+         WHERE p.id = $1 AND p.deleted_at IS NULL`,
+        [productId],
+      );
+
+      if (supplierResult.rows.length === 0) {
+        res.status(404).json({ success: false, error: 'Produit non trouvé' });
+        return;
+      }
+
+      const defaultSupplier = supplierResult.rows[0];
+
+      // 2. Purchase price stats (min, max, avg, count)
+      const priceStatsResult = await pool.query(
+        `SELECT COUNT(*)::int as total_achats,
+                MIN(prix_unitaire) as prix_min,
+                MAX(prix_unitaire) as prix_max,
+                ROUND(AVG(prix_unitaire), 0)::numeric(15,0) as prix_moyen
+         FROM (
+           SELECT ffl.prix_unitaire
+           FROM facture_fournisseur_lignes ffl
+           JOIN factures_fournisseur ff ON ffl.facture_id = ff.id AND ff.statut != 'annulee'
+           WHERE ffl.produit_id = $1
+           UNION ALL
+           SELECT cl.prix_unitaire
+           FROM commande_lignes cl
+           JOIN commandes_fournisseur cf ON cl.commande_id = cf.id AND cf.statut NOT IN ('annulee')
+           WHERE cl.produit_id = $1
+         ) all_prices`,
+        [productId],
+      );
+
+      // 3. Most recent actual purchase price (from supplier invoices or orders)
+      const recentPurchaseResult = await pool.query(
+        `SELECT prix_unitaire, fournisseur_nom, source, date_achat FROM (
+           SELECT ffl.prix_unitaire, t.raison_sociale as fournisseur_nom,
+                  'facture' as source, ff.date_facture as date_achat
+           FROM facture_fournisseur_lignes ffl
+           JOIN factures_fournisseur ff ON ffl.facture_id = ff.id AND ff.statut != 'annulee'
+           LEFT JOIN tiers t ON ff.tiers_id = t.id
+           WHERE ffl.produit_id = $1
+           UNION ALL
+           SELECT cl.prix_unitaire, t.raison_sociale as fournisseur_nom,
+                  'commande' as source, cf.date_commande as date_achat
+           FROM commande_lignes cl
+           JOIN commandes_fournisseur cf ON cl.commande_id = cf.id AND cf.statut NOT IN ('annulee')
+           LEFT JOIN tiers t ON cf.tiers_id = t.id
+           WHERE cl.produit_id = $1
+         ) combined
+         ORDER BY date_achat DESC
+         LIMIT 1`,
+        [productId],
+      );
+
+      // 4. Purchase history from supplier invoices
+      const purchaseHistoryResult = await pool.query(
+        `SELECT ff.numero_facture_fournisseur, ff.date_facture,
+                ffl.prix_unitaire, ffl.quantite,
+                t.raison_sociale as fournisseur_nom
+         FROM facture_fournisseur_lignes ffl
+         JOIN factures_fournisseur ff ON ffl.facture_id = ff.id
+           AND ff.statut != 'annulee'
+         LEFT JOIN tiers t ON ff.tiers_id = t.id
+         WHERE ffl.produit_id = $1
+         ORDER BY ff.date_facture DESC
+         LIMIT 10`,
+        [productId],
+      );
+
+      // 4. Also try from commandes_fournisseur for additional purchase history
+      const orderHistoryResult = await pool.query(
+        `SELECT cl.prix_unitaire, cl.quantite,
+                cf.numero_commande, cf.date_commande,
+                t.raison_sociale as fournisseur_nom
+         FROM commande_lignes cl
+         JOIN commandes_fournisseur cf ON cl.commande_id = cf.id
+           AND cf.statut NOT IN ('annulee')
+         LEFT JOIN tiers t ON cf.tiers_id = t.id
+         WHERE cl.produit_id = $1
+         ORDER BY cf.date_commande DESC
+         LIMIT 10`,
+        [productId],
+      );
+
+      // 5. Top buyer (client who buys this product the most)
+      const topBuyerResult = await pool.query(
+        `SELECT t.id, t.raison_sociale, t.prenom, t.telephone,
+                SUM(dl.quantite)::int as total_quantite,
+                SUM(dl.total_ligne) as total_depense,
+                COUNT(DISTINCT f.id) as nombre_factures
+         FROM document_lignes dl
+         JOIN factures f ON dl.document_id = f.id
+           AND f.deleted_at IS NULL AND f.statut != 'annulee'
+         JOIN tiers t ON f.tiers_id = t.id
+         WHERE dl.document_type = 'facture' AND dl.produit_id = $1
+         GROUP BY t.id, t.raison_sociale, t.prenom, t.telephone
+         ORDER BY total_quantite DESC
+         LIMIT 1`,
+        [productId],
+      );
+
+      const recentPurchase = recentPurchaseResult.rows[0];
+      const priceStats = priceStatsResult.rows[0];
+
+      res.json(
+        successResponse({
+          default_supplier: defaultSupplier.raison_sociale
+            ? { id: defaultSupplier.id, raison_sociale: defaultSupplier.raison_sociale, telephone: defaultSupplier.telephone, email: defaultSupplier.email }
+            : null,
+          prix_achat: parseFloat(defaultSupplier.prix_achat) || 0,
+          price_stats: priceStats?.total_achats > 0
+            ? {
+                total_achats: priceStats.total_achats,
+                prix_min: parseFloat(priceStats.prix_min) || 0,
+                prix_max: parseFloat(priceStats.prix_max) || 0,
+                prix_moyen: parseFloat(priceStats.prix_moyen) || 0,
+              }
+            : null,
+          recent_purchase: recentPurchase
+            ? {
+                prix_unitaire: parseFloat(recentPurchase.prix_unitaire) || 0,
+                fournisseur: recentPurchase.fournisseur_nom,
+                source: recentPurchase.source,
+                date: recentPurchase.date_achat,
+              }
+            : null,
+          purchase_history: purchaseHistoryResult.rows.map((r) => ({
+            fournisseur: r.fournisseur_nom,
+            numero: r.numero_facture_fournisseur,
+            date: r.date_facture,
+            prix_unitaire: parseFloat(r.prix_unitaire) || 0,
+            quantite: r.quantite,
+          })),
+          order_history: orderHistoryResult.rows.map((r) => ({
+            fournisseur: r.fournisseur_nom,
+            numero: r.numero_commande,
+            date: r.date_commande,
+            prix_unitaire: parseFloat(r.prix_unitaire) || 0,
+            quantite: r.quantite,
+          })),
+          top_buyer: topBuyerResult.rows[0]
+            ? {
+                id: topBuyerResult.rows[0].id,
+                raison_sociale: topBuyerResult.rows[0].raison_sociale,
+                prenom: topBuyerResult.rows[0].prenom,
+                telephone: topBuyerResult.rows[0].telephone,
+                total_quantite: parseInt(topBuyerResult.rows[0].total_quantite) || 0,
+                total_depense: parseFloat(topBuyerResult.rows[0].total_depense) || 0,
+                nombre_factures: parseInt(topBuyerResult.rows[0].nombre_factures) || 0,
+              }
+            : null,
+        }),
+      );
+    } catch (error: any) {
+      loggerError('GET /api/produits/:id/info-achat', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }

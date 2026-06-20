@@ -3,6 +3,7 @@ import { Loader2, ShieldCheck, Check, RotateCcw, Shield, CheckSquare, Square } f
 import { adminUserService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface User {
   id: number;
@@ -156,17 +157,21 @@ export default function PermissionsPage() {
         <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
           Utilisateur
         </label>
-        <select
-          value={selectedUserId}
-          onChange={e => setSelectedUserId(e.target.value ? Number(e.target.value) : '')}
-          className="h-10 w-64 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        <Select
+          value={selectedUserId === '' ? undefined : String(selectedUserId)}
+          onValueChange={v => setSelectedUserId(Number(v))}
         >
-          {users.map(u => (
-            <option key={u.id} value={u.id}>
-              {u.nom_complet || u.username} ({u.username})
-            </option>
-          ))}
-        </select>
+          <SelectTrigger className="h-10 w-64 text-sm" aria-label="Sélectionner un utilisateur">
+            <SelectValue placeholder="Sélectionner un utilisateur" />
+          </SelectTrigger>
+          <SelectContent>
+            {users.map(u => (
+              <SelectItem key={u.id} value={String(u.id)}>
+                {u.nom_complet || u.username} ({u.username})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {loadingPermissions ? (
@@ -288,13 +293,23 @@ export default function PermissionsPage() {
                       return (
                         <div
                           key={p.id}
+                          role="button"
+                          tabIndex={isDisabled ? -1 : 0}
+                          aria-pressed={p.is_enabled}
+                          aria-disabled={isDisabled}
                           onClick={() => !isDisabled && handleTogglePermission(p.id)}
-                          className={`flex items-start gap-3 p-4 rounded-lg border transition-all ${
+                          onKeyDown={(e) => {
+                            if (!isDisabled && (e.key === 'Enter' || e.key === ' ')) {
+                              e.preventDefault();
+                              handleTogglePermission(p.id);
+                            }
+                          }}
+                          className={`flex items-start gap-3 p-4 rounded-lg border transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                             isDisabled ? 'opacity-85' : 'cursor-pointer hover:bg-muted/30'
                           } ${
-                            p.is_enabled 
-                              ? 'bg-emerald-50/20 border-emerald-200 dark:bg-emerald-950/5 dark:border-emerald-900/50' 
-                              : 'bg-background hover:border-gray-300'
+                            p.is_enabled
+                              ? 'bg-emerald-50/20 border-emerald-200 dark:bg-emerald-950/5 dark:border-emerald-900/50'
+                              : 'bg-background hover:border-primary hover:shadow-sm'
                           }`}
                         >
                           {/* Checkbox Icon */}

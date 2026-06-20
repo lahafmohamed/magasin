@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, FileCheck, Trash2, Printer, Download } from 'lucide-react';
+import { ArrowLeft, FileCheck, Trash2, Printer, Download, Pencil, Loader2 } from 'lucide-react';
 import { devisService } from '@/services/api';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { DocumentPrint } from '@/components/ui/print-layout';
+import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
 
 export default function DevisDetail() {
   const { id } = useParams();
@@ -15,6 +25,9 @@ export default function DevisDetail() {
   const [devis, setDevis] = useState<any>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [showPrint, setShowPrint] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [printFormat, setPrintFormat] = useState<'A4' | 'A5'>(() => (localStorage.getItem('print_format') as 'A4' | 'A5') || 'A4');
   const canConfirm = (statut: string) => ['brouillon', 'envoye'].includes(statut);
   const downloadPDF = () => {
     setShowPrint(true);
@@ -48,12 +61,12 @@ export default function DevisDetail() {
 
   const handleConfirm = async () => {
     if (!devis?.id) return;
-    if (!confirm('Confirmer ce devis ? Cela générera automatiquement un bon de livraison.')) return;
 
     try {
       setActionLoading(true);
       await devisService.updateStatut(Number(devis.id), 'accepte');
       toast.success('Devis confirmé et bon de livraison généré');
+      setShowConfirmDialog(false);
       const refreshed = await devisService.getById(Number(devis.id));
       setDevis(refreshed?.data || refreshed);
     } catch (error: any) {
@@ -65,7 +78,6 @@ export default function DevisDetail() {
 
   const handleDelete = async () => {
     if (!devis?.id) return;
-    if (!confirm('Supprimer ce devis ? Cette action est irreversible.')) return;
 
     try {
       setActionLoading(true);
@@ -80,7 +92,12 @@ export default function DevisDetail() {
   };
 
   if (loading) {
-    return <div className="p-6">Chargement...</div>;
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-muted-foreground">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <p>Chargement...</p>
+      </div>
+    );
   }
 
   if (!devis) {
@@ -118,17 +135,36 @@ export default function DevisDetail() {
             Télécharger PDF
           </Button>
           {canConfirm(devis.statut) && (
-            <Button onClick={handleConfirm} disabled={actionLoading}>
+            <Button variant="outline" onClick={() => navigate(`/devis/${devis.id}/edit`)}>
+              <Pencil className="h-4 w-4 mr-2" />
+              Modifier
+            </Button>
+          )}
+          {canConfirm(devis.statut) && (
+            <Button onClick={() => setShowConfirmDialog(true)} disabled={actionLoading}>
               <FileCheck className="h-4 w-4 mr-2" />
               Confirmer
             </Button>
           )}
-          <Button variant="destructive" onClick={handleDelete} disabled={actionLoading}>
+          <Button variant="destructive" onClick={() => setShowDeleteDialog(true)} disabled={actionLoading}>
             <Trash2 className="h-4 w-4 mr-2" />
             Supprimer
           </Button>
         </div>
       </div>
+
+      <DocumentLifecycle
+        steps={[
+          { label: 'Devis', numero: devis.numero_devis || `Devis #${devis.id}`, current: true },
+          { label: 'Bon de livraison', numero: null },
+          {
+            label: 'Facture',
+            numero: devis.facture_numero,
+            to: devis.facture_id ? `/factures/${devis.facture_id}` : null,
+          },
+          { label: 'Avoir', numero: null },
+        ]}
+      />
 
       <Card>
         <CardHeader>
@@ -193,7 +229,22 @@ export default function DevisDetail() {
           <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8 print:max-w-none print:w-full print:my-0 print:shadow-none print:rounded-none">
             <div className="sticky top-0 z-10 bg-white border-b p-4 flex justify-between items-center print:hidden">
               <h2 className="text-lg font-semibold">Aperçu d'impression</h2>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Format:</span>
+                  <Select
+                    value={printFormat}
+                    onValueChange={(v) => { const f = v as 'A4' | 'A5'; setPrintFormat(f); localStorage.setItem('print_format', f); }}
+                  >
+                    <SelectTrigger className="h-8 w-auto px-2 text-xs" aria-label="Format d'impression">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="A4">A4</SelectItem>
+                      <SelectItem value="A5">Ticket A5</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button variant="outline" onClick={() => setShowPrint(false)}>Fermer</Button>
                 <Button onClick={() => window.print()}>
                   <Printer className="h-4 w-4 mr-2" />
@@ -202,6 +253,7 @@ export default function DevisDetail() {
               </div>
             </div>
             <DocumentPrint
+              format={printFormat}
               docType="devis"
               numero={devis.numero_devis || `S${String(devis.id).padStart(5, '0')}`}
               dateDoc={devis.date_devis}
@@ -213,6 +265,58 @@ export default function DevisDetail() {
           </div>
         </div>
       )}
+
+      {/* Confirm devis Dialog */}
+      <Dialog
+        open={showConfirmDialog}
+        onOpenChange={(open) => {
+          if (!actionLoading) setShowConfirmDialog(open);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirmer le devis</DialogTitle>
+            <DialogDescription>
+              Confirmer ce devis ? Cela générera automatiquement un bon de livraison.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowConfirmDialog(false)} disabled={actionLoading}>
+              Annuler
+            </Button>
+            <Button onClick={handleConfirm} disabled={actionLoading}>
+              <FileCheck className="h-4 w-4 mr-2" />
+              {actionLoading ? 'En cours...' : 'Confirmer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete devis Dialog */}
+      <Dialog
+        open={showDeleteDialog}
+        onOpenChange={(open) => {
+          if (!actionLoading) setShowDeleteDialog(open);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Supprimer le devis</DialogTitle>
+            <DialogDescription>
+              Supprimer ce devis ? Cette action est irréversible.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)} disabled={actionLoading}>
+              Annuler
+            </Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={actionLoading}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              {actionLoading ? 'Suppression...' : 'Supprimer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

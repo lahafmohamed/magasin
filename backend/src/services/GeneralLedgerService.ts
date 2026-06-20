@@ -8,14 +8,12 @@ export interface EcritureComptableRecord {
   numero_piece: string | null;
   date_ecriture: string;
   journal: string;
-  piece_id: number | null;
-  piece_type: string | null;
-  ligne_numero: number;
-  compte_id: number;
+  reference_id: number | null;
+  reference_type: string | null;
+  compte_numero: string;
   debit: number;
   credit: number;
-  description: string | null;
-  created_at: string;
+  libelle: string | null;
 }
 
 export interface PlanComptableRecord {
@@ -38,7 +36,7 @@ export interface BalanceComptable {
 
 export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
   protected tableName = 'ecritures_comptables';
-  protected selectColumns = 'ec.id, ec.numero_piece, ec.date_ecriture, ec.journal, ec.piece_id, ec.piece_type, ec.ligne_numero, ec.compte_id, ec.debit, ec.credit, ec.description, ec.created_at, pc.numero as compte_numero, pc.intitule as compte_intitule';
+  protected selectColumns = 'ec.id, ec.numero_piece, ec.date_ecriture, ec.journal, ec.reference_id, ec.reference_type, ec.compte_numero, ec.debit, ec.credit, ec.libelle, ec.libelle as description, ec.date_saisie, pc.numero as compte_pc_numero, pc.intitule as compte_intitule';
   protected defaultSortColumn = 'date_ecriture';
   protected allowedSortColumns = ['date_ecriture', 'journal', 'numero_piece'];
 
@@ -53,7 +51,7 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
     let query = `
       SELECT ${this.selectColumns}
       FROM ecritures_comptables ec
-      LEFT JOIN plan_comptable pc ON ec.compte_id = pc.id
+      LEFT JOIN plan_comptable pc ON pc.numero = ec.compte_numero
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -74,11 +72,12 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
     }
 
     if (options?.compte_id) {
-      query += ` AND ec.compte_id = $${params.length + 1}`;
+      // compte_id from the API is the plan_comptable.id; resolve to its numero.
+      query += ` AND ec.compte_numero = (SELECT numero FROM plan_comptable WHERE id = $${params.length + 1})`;
       params.push(options.compte_id);
     }
 
-    query += ' ORDER BY ec.date_ecriture DESC, ec.ligne_numero ASC';
+    query += ' ORDER BY ec.date_ecriture DESC, ec.id ASC';
     query += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
@@ -100,7 +99,7 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
       countParams.push(options.date_fin);
     }
     if (options?.compte_id) {
-      countQuery += ` AND ec.compte_id = $${countParams.length + 1}`;
+      countQuery += ` AND ec.compte_numero = (SELECT numero FROM plan_comptable WHERE id = $${countParams.length + 1})`;
       countParams.push(options.compte_id);
     }
     const { rows: countRows } = await pool.query(countQuery, countParams);
@@ -140,7 +139,7 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
         COALESCE(SUM(ec.credit), 0) as total_credit,
         COALESCE(SUM(ec.debit), 0) - COALESCE(SUM(ec.credit), 0) as solde
        FROM plan_comptable pc
-       LEFT JOIN ecritures_comptables ec ON pc.id = ec.compte_id 
+       LEFT JOIN ecritures_comptables ec ON pc.numero = ec.compte_numero
          AND ec.date_ecriture BETWEEN $1::timestamp AND $2::timestamp
        WHERE pc.actif = true
        GROUP BY pc.id, pc.numero, pc.intitule
@@ -156,13 +155,13 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
    */
   async getAccountLedger(compteId: number, dateDebut: string, dateFin: string): Promise<any[]> {
     const { rows } = await pool.query(
-      `SELECT ec.*, pc.numero as compte_numero, pc.intitule as compte_intitule,
-              SUM(ec.debit - ec.credit) OVER (ORDER BY ec.date_ecriture, ec.ligne_numero) as solde_cumule
+      `SELECT ec.*, pc.intitule as compte_intitule,
+              SUM(ec.debit - ec.credit) OVER (ORDER BY ec.date_ecriture, ec.id) as solde_cumule
        FROM ecritures_comptables ec
-       JOIN plan_comptable pc ON ec.compte_id = pc.id
-       WHERE ec.compte_id = $1 
+       JOIN plan_comptable pc ON pc.numero = ec.compte_numero
+       WHERE ec.compte_numero = (SELECT numero FROM plan_comptable WHERE id = $1)
          AND ec.date_ecriture BETWEEN $2::timestamp AND $3::timestamp
-       ORDER BY ec.date_ecriture ASC, ec.ligne_numero ASC`,
+       ORDER BY ec.date_ecriture ASC, ec.id ASC`,
       [compteId, dateDebut, dateFin]
     );
     return rows;
@@ -175,9 +174,9 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
     const { rows } = await pool.query(
       `SELECT ${this.selectColumns}
        FROM ecritures_comptables ec
-       LEFT JOIN plan_comptable pc ON ec.compte_id = pc.id
-       WHERE ec.piece_type = $1 AND ec.piece_id = $2
-       ORDER BY ec.ligne_numero ASC`,
+       LEFT JOIN plan_comptable pc ON pc.numero = ec.compte_numero
+       WHERE ec.reference_type = $1 AND ec.reference_id = $2
+       ORDER BY ec.id ASC`,
       [pieceType, pieceId]
     );
     return rows;
@@ -229,14 +228,24 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
         }
       }
 
-      // Insert each line
+      // Insert each line. The API passes compte_id (plan_comptable.id); resolve
+      // it to the canonical compte_numero used by the 069 schema.
       for (let i = 0; i < lignes.length; i++) {
         const ligne = lignes[i];
+        const { rows: compteRows } = await client.query(
+          `SELECT numero FROM plan_comptable WHERE id = $1`,
+          [ligne.compte_id]
+        );
+        if (!compteRows.length) {
+          throw new Error(`Ligne ${i + 1}: compte introuvable (id ${ligne.compte_id})`);
+        }
+        const compteNumero = compteRows[0].numero;
+
         await client.query(
-          `INSERT INTO ecritures_comptables 
-           (numero_piece, date_ecriture, journal, ligne_numero, compte_id, debit, credit, description)
+          `INSERT INTO ecritures_comptables
+           (numero_piece, date_ecriture, journal, compte_numero, debit, credit, libelle, cree_par)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [numeroPiece, dateEcriture, journal, i + 1, ligne.compte_id, ligne.debit, ligne.credit, ligne.description || null]
+          [numeroPiece, dateEcriture, journal, compteNumero, ligne.debit, ligne.credit, ligne.description || null, userId || null]
         );
       }
 

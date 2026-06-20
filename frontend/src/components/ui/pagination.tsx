@@ -1,4 +1,11 @@
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 
 interface PaginationProps {
@@ -32,16 +39,21 @@ export function Pagination({ page, totalPages, total, limit, onPageChange, onLim
         <div className="flex items-center space-x-2">
           <span className="text-sm text-muted-foreground">Lignes par page</span>
           {onLimitChange && (
-            <select
-              className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-              value={limit}
-              onChange={(e) => onLimitChange(parseInt(e.target.value))}
+            <Select
+              value={String(limit)}
+              onValueChange={(v) => onLimitChange(parseInt(v))}
             >
-              <option value={10}>10</option>
-              <option value={20}>20</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-            </select>
+              <SelectTrigger className="h-8 w-[72px] text-xs" aria-label="Lignes par page">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[10, 20, 50, 100].map((n) => (
+                  <SelectItem key={n} value={String(n)}>
+                    {n}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
         </div>
 

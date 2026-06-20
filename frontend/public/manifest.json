@@ -1,0 +1,26 @@
+{
+  "name": "Hitek-CI - Gestion Magasin Informatique",
+  "short_name": "Hitek-CI",
+  "description": "ERP de gestion de magasin informatique — factures, stocks, caisse",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1e40af",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "finance"],
+  "lang": "fr-FR"
+}

@@ -77,6 +77,7 @@ export const adjustStockSchema = z.object({
 export const stockMovementSchema = z.object({
   type_mouvement: z.enum(['vente', 'ajustement', 'retour', 'commande', 'perte', 'autre']),
   quantite: z.coerce.number().int().refine(val => val !== 0, 'La quantité ne peut pas être zéro'),
+  location_id: z.coerce.number().int().positive('Location ID invalide').optional(),
   raison: z.string().max(500).optional().or(z.literal('')),
   reference_liee: z.string().max(50).optional().or(z.literal('')),
 });
@@ -184,11 +185,20 @@ export const updateFactureStatutSchema = z.object({
 // Paiement schemas
 // ============================================
 export const createPaiementSchema = z.object({
+  // facture_id is optional here: present in body for the standalone POST /paiements route,
+  // or supplied via the URL param on POST /factures/:factureId/paiements
+  facture_id: z.coerce.number().int().positive().optional(),
   montant: z.coerce.number().positive('Montant doit être positif'),
-  methode_paiement: z.enum(['espece', 'carte', 'cheque', 'virement']),
+  methode_paiement: z.enum([
+    'espece', 'carte', 'cheque', 'virement',
+    'mobile_money', 'orange_money', 'mtn_money', 'wave',
+  ]),
+  date_paiement: z.string().optional(),
   reference: z.string().max(100).optional().or(z.literal('')),
   notes: z.string().max(1000).optional().or(z.literal('')),
   session_caisse_id: z.coerce.number().int().positive().optional(),
+  idempotency_key: z.string().max(255).optional(),
+  skip_acompte_application: z.boolean().optional(),
 });
 
 // ============================================
@@ -316,4 +326,65 @@ export const createAvoirManualSchema = z.object({
 
 export const updateAvoirStatutSchema = z.object({
   statut: z.enum(['brouillon', 'valide', 'annule', 'utilise']),
+});
+
+// ============================================
+// Company Settings schema
+// ============================================
+export const companySettingsSchema = z.object({
+  nom: z.string().min(1, 'Nom requis').max(100, 'Nom max 100 caractères').optional(),
+  adresse: z.string().max(500).nullable().optional().or(z.literal('')),
+  telephone: z.string().max(50).nullable().optional().or(z.literal('')),
+  email: z.string().email('Email invalide').max(100).nullable().optional().or(z.literal('')),
+  site_web: z.string().max(100).nullable().optional().or(z.literal('')),
+  nif: z.string().max(50).nullable().optional().or(z.literal('')),
+  rc: z.string().max(50).nullable().optional().or(z.literal('')),
+  ai: z.string().max(50).nullable().optional().or(z.literal('')),
+  cb: z.string().max(100).nullable().optional().or(z.literal('')),
+  devise: z.string().min(1, 'Devise requise').max(10, 'Devise max 10 caractères').optional(),
+  logo_url: z.string().max(2 * 1024 * 1024, 'Le logo ne doit pas dépasser 2 Mo').nullable().optional().or(z.literal('')),
+  taux_conversion: z.coerce.number().positive('Taux de conversion doit être positif').max(999999).optional(),
+});
+
+// ============================================
+// Lot / batch tracking schemas (migration 015)
+// ============================================
+export const createLotSchema = z.object({
+  produit_id: z.coerce.number().int().positive('Produit ID requis'),
+  numero_lot: z.string().min(1, 'Numéro de lot requis').max(100),
+  quantite: z.coerce.number().int().positive('Quantité doit être positive'),
+  date_fabrication: z.string().optional().or(z.literal('')),
+  date_expiration: z.string().optional().or(z.literal('')),
+  prix_achat_unitaire: z.coerce.number().nonnegative().optional(),
+  fournisseur_id: z.coerce.number().int().positive('Fournisseur (tiers) ID invalide').optional(),
+  notes: z.string().max(2000).optional().or(z.literal('')),
+});
+
+export const adjustLotQuantiteSchema = z.object({
+  delta: z.coerce.number().int().refine(val => val !== 0, 'Le delta ne peut pas être zéro'),
+});
+
+// ============================================
+// Serial number tracking schemas (migration 016)
+// ============================================
+export const registerSerialSchema = z.object({
+  produit_id: z.coerce.number().int().positive('Produit ID requis'),
+  numero_serie: z.string().min(1, 'Numéro de série requis').max(100),
+  lot_id: z.coerce.number().int().positive('Lot ID invalide').optional(),
+  statut: z.enum(['en_stock', 'vendu', 'retourne', 'en_garantie', 'reforme']).optional(),
+  date_achat: z.string().optional().or(z.literal('')),
+  prix_vente: z.coerce.number().nonnegative().optional(),
+  notes: z.string().max(2000).optional().or(z.literal('')),
+});
+
+export const markSerialSoldSchema = z.object({
+  client_id: z.coerce.number().int().positive('Client (tiers) ID invalide').optional(),
+  facture_id: z.coerce.number().int().positive('Facture ID invalide').optional(),
+  prix_vente: z.coerce.number().nonnegative().optional(),
+  garantie_jusqu: z.string().optional().or(z.literal('')),
+  date_vente: z.string().optional().or(z.literal('')),
+});
+
+export const markSerialWarrantySchema = z.object({
+  garantie_jusqu: z.string().optional().or(z.literal('')),
 });

@@ -1,320 +1,325 @@
 import PDFDocument from 'pdfkit';
 import pool from '../db/connection';
 
-export type DocumentType = 'facture' | 'devis' | 'bl' | 'avoir';
-
-interface DocumentConfig {
-  title: string;
-  numeroField: string;
-  dateField: string;
-  recipientLabel: string;
-  statusLabels: Record<string, string>;
-  statusColors: Record<string, string>;
-  showPayments: boolean;
-  showTVA: boolean;
+interface LedgerRow {
+  numero_piece?: string;
+  date_ecriture?: string;
+  journal?: string;
+  compte_numero?: string;
+  compte_intitule?: string;
+  description?: string;
+  debit?: string | number;
+  credit?: string | number;
 }
 
-const DOCUMENT_CONFIGS: Record<DocumentType, DocumentConfig> = {
-  facture: {
-    title: 'FACTURE',
-    numeroField: 'numero_facture',
-    dateField: 'date_facture',
-    recipientLabel: 'Facturé à:',
-    statusLabels: { payee: 'PAYÉE', partielle: 'PARTIELLEMENT PAYÉE', en_attente: 'EN ATTENTE', annulee: 'ANNULÉE' },
-    statusColors: { payee: '#22c55e', partielle: '#f59e0b', en_attente: '#6b7280', annulee: '#ef4444' },
-    showPayments: true,
-    showTVA: true,
-  },
-  devis: {
-    title: 'DEVIS',
-    numeroField: 'numero_devis',
-    dateField: 'date_devis',
-    recipientLabel: 'Devis pour:',
-    statusLabels: { brouillon: 'BROUILLON', envoye: 'ENVOYÉ', accepte: 'ACCEPTÉ', refuse: 'REFUSÉ', converti: 'CONVERTI', annule: 'ANNULÉ' },
-    statusColors: { brouillon: '#6b7280', envoye: '#3b82f6', accepte: '#22c55e', refuse: '#ef4444', converti: '#8b5cf6', annule: '#9ca3af' },
-    showPayments: false,
-    showTVA: true,
-  },
-  bl: {
-    title: 'BON DE LIVRAISON',
-    numeroField: 'numero_bl',
-    dateField: 'date_bl',
-    recipientLabel: 'Livré à:',
-    statusLabels: { brouillon: 'BROUILLON', valide: 'VALIDÉ', livre: 'LIVRÉ', facture: 'FACTURÉ', annule: 'ANNULÉ' },
-    statusColors: { brouillon: '#6b7280', valide: '#3b82f6', livre: '#22c55e', facture: '#8b5cf6', annule: '#9ca3af' },
-    showPayments: false,
-    showTVA: false,
-  },
-  avoir: {
-    title: 'AVOIR',
-    numeroField: 'numero_avoir',
-    dateField: 'date_avoir',
-    recipientLabel: 'Client:',
-    statusLabels: { brouillon: 'BROUILLON', en_attente: 'EN ATTENTE', valide: 'VALIDÉ', utilise: 'UTILISÉ', annule: 'ANNULÉ' },
-    statusColors: { brouillon: '#6b7280', en_attente: '#f59e0b', valide: '#22c55e', utilise: '#8b5cf6', annule: '#ef4444' },
-    showPayments: false,
-    showTVA: true,
-  },
-};
+interface ChartRow {
+  numero: string;
+  intitule: string;
+  type_compte: string;
+  categorie?: string;
+  actif: boolean;
+}
 
-const METHODE_LABELS: Record<string, string> = {
-  espece: 'Espèces',
-  carte: 'Carte bancaire',
-  cheque: 'Chèque',
-  virement: 'Virement',
-};
+interface BalanceRow {
+  compte_numero: string;
+  compte_intitule: string;
+  total_debit: string;
+  total_credit: string;
+  solde: string;
+}
+
+async function getSettings() {
+  const { rows } = await pool.query(
+    'SELECT devise, taux_conversion, nom, adresse, telephone, nif, rc, ai, cb, logo_url FROM company_settings WHERE id = 1'
+  );
+  return rows[0] || { devise: 'FCFA', taux_conversion: 1, nom: '' };
+}
 
 export class PDFService {
-  /**
-   * Generate PDF for any document type
-   */
-  async generateDocumentPDF(type: DocumentType, id: number): Promise<Buffer> {
-    const config = DOCUMENT_CONFIGS[type];
+  static generateLedgerPDF(
+    data: LedgerRow[] | ChartRow[] | BalanceRow[],
+    type: 'ecritures' | 'chart' | 'balance',
+    title: string,
+    dateDebut?: string,
+    dateFin?: string
+  ): PDFKit.PDFDocument {
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
+    const pageWidth = doc.page.width - 80;
 
-    // Fetch document data
-    const tableMap: Record<DocumentType, string> = {
-      facture: 'factures',
-      devis: 'devis',
-      bl: 'bons_livraison',
-      avoir: 'factures_avoir',
-    };
-    const table = tableMap[type];
-
-    const { rows: docRows } = await pool.query(
-      `SELECT t.*, c.raison_sociale as client_nom, c.prenom as client_prenom, c.adresse as client_adresse,
-              c.telephone as client_telephone, c.email as client_email, c.nif as client_nif
-       FROM ${table} t
-       LEFT JOIN tiers c ON t.tiers_id = c.id
-       WHERE t.id = $1`,
-      [id]
-    );
-
-    if (docRows.length === 0) {
-      throw new Error(`${config.title} non trouvé(e)`);
+    doc.fontSize(16).font('Helvetica-Bold').text(title, { align: 'center' });
+    doc.moveDown(0.5);
+    if (dateDebut && dateFin) {
+      doc.fontSize(10).font('Helvetica').text(`Période: ${dateDebut} au ${dateFin}`, { align: 'center' });
     }
-
-    const document = docRows[0];
-
-    // Fetch lines from unified table
-    const { rows: lignesRows } = await pool.query(
-      `SELECT dl.*, p.nom as produit_nom, p.reference as produit_reference
-       FROM document_lignes dl
-       LEFT JOIN produits p ON dl.produit_id = p.id
-       WHERE dl.document_type = $1 AND dl.document_id = $2`,
-      [type, id]
-    );
-
-    // Fetch payments (only for invoices)
-    let paiementsRows: any[] = [];
-    if (type === 'facture') {
-      const { rows } = await pool.query(
-        `SELECT montant, methode_paiement, date_paiement, reference
-         FROM paiements
-         WHERE facture_id = $1
-         ORDER BY date_paiement ASC`,
-        [id]
-      );
-      paiementsRows = rows;
-    }
-
-    return this.createPDFBuffer(document, lignesRows, paiementsRows, config);
-  }
-
-  // Convenience wrappers
-  generateInvoicePDF(factureId: number) { return this.generateDocumentPDF('facture', factureId); }
-  generateDevisPDF(devisId: number) { return this.generateDocumentPDF('devis', devisId); }
-  generateBLPDF(blId: number) { return this.generateDocumentPDF('bl', blId); }
-  generateAvoirPDF(avoirId: number) { return this.generateDocumentPDF('avoir', avoirId); }
-
-  private createPDFBuffer(
-    document: any,
-    lignes: any[],
-    paiements: any[],
-    config: DocumentConfig
-  ): Promise<Buffer> {
-    const doc = new PDFDocument({
-      size: 'A4',
-      margin: 50,
-      info: {
-        Title: `${config.title} ${document[config.numeroField]}`,
-        Author: 'Magasin Info',
-        Creator: 'Magasin ERP System',
-      },
-    });
-
-    const buffers: Buffer[] = [];
-    doc.on('data', (chunk) => buffers.push(chunk));
-
-    return new Promise<Buffer>((resolve, reject) => {
-      doc.on('end', () => resolve(Buffer.concat(buffers)));
-      doc.on('error', reject);
-
-      this.buildDocumentPDF(doc, document, lignes, paiements, config);
-      doc.end();
-    });
-  }
-
-  private buildDocumentPDF(
-    doc: PDFKit.PDFDocument,
-    document: any,
-    lignes: any[],
-    paiements: any[],
-    config: DocumentConfig
-  ): void {
-    const pageWidth = doc.page.width;
-    const margin = 50;
-    const contentWidth = pageWidth - 2 * margin;
-
-    // Header
-    doc.fontSize(24).font('Helvetica-Bold').fillColor('#1a1a1a')
-      .text(config.title, { align: 'right' });
-
-    doc.fontSize(12).font('Helvetica').fillColor('#666666')
-      .text(document[config.numeroField], { align: 'right' });
-
-    doc.fontSize(10).fillColor('#999999')
-      .text(`Date: ${new Date(document[config.dateField]).toLocaleDateString('fr-FR')}`, { align: 'right' });
-
     doc.moveDown(1);
 
-    // Company info
-    doc.fontSize(14).font('Helvetica-Bold').fillColor('#1a1a1a')
-      .text('Magasin Info', margin, doc.y);
+    const columns = type === 'ecritures'
+      ? ['N° pièce', 'Date', 'Journal', 'Compte', 'Description', 'Débit', 'Crédit']
+      : type === 'chart'
+      ? ['N°', 'Intitulé', 'Type', 'Catégorie', 'Statut']
+      : ['N°', 'Compte', 'Total Débit', 'Total Crédit', 'Solde'];
 
-    doc.fontSize(10).font('Helvetica').fillColor('#666666')
-      .text('Adresse du magasin')
-      .text('Téléphone: XX XX XX XX')
-      .text('Email: contact@magasin.dz');
+    const colWidths = type === 'ecritures'
+      ? [60, 50, 50, 40, 80, 50, 50]
+      : type === 'chart'
+      ? [40, 100, 60, 60, 50]
+      : [40, 100, 60, 60, 50];
 
-    // Client info
-    const clientX = pageWidth / 2;
-    doc.fontSize(12).font('Helvetica-Bold').fillColor('#1a1a1a')
-      .text(config.recipientLabel, clientX, doc.y - 60);
+    const totalColWidth = colWidths.reduce((a, b) => a + b, 0);
+    const startX = 40;
 
-    doc.fontSize(10).font('Helvetica').fillColor('#333333')
-      .text(`${document.client_nom} ${document.client_prenom || ''}`, clientX)
-      .text(document.client_adresse || '', clientX)
-      .text(document.client_telephone ? `Tél: ${document.client_telephone}` : '', clientX)
-      .text(document.client_email || '', clientX);
-
-    if (document.client_nif) {
-      doc.text(`NIF: ${document.client_nif}`, clientX);
-    }
-
-    doc.moveDown(2);
-
-    // Items table
-    const tableTop = doc.y + 10;
-    const tableColumns = [
-      { key: 'produit', x: margin, width: contentWidth * 0.4 },
-      { key: 'quantite', x: margin + contentWidth * 0.4, width: contentWidth * 0.15 },
-      { key: 'prix', x: margin + contentWidth * 0.55, width: contentWidth * 0.2 },
-      { key: 'total', x: margin + contentWidth * 0.75, width: contentWidth * 0.25 },
-    ];
-
-    doc.rect(margin, tableTop, contentWidth, 25).fill('#f5f5f5');
-
-    doc.fontSize(10).font('Helvetica-Bold').fillColor('#333333');
-    const colLabels: Record<string, string> = { produit: 'Produit', quantite: 'Qté', prix: 'Prix Unitaire', total: 'Total' };
-    tableColumns.forEach(col => {
-      doc.text(colLabels[col.key] || col.key, col.x + 5, tableTop + 7, { width: col.width - 10 });
+    let y = doc.y;
+    doc.fontSize(8).font('Helvetica-Bold');
+    doc.rect(startX, y, totalColWidth, 18).fill('#f0f0f0');
+    doc.fill('#111');
+    let x = startX;
+    columns.forEach((col, i) => {
+      doc.text(col, x + 2, y + 4, { width: colWidths[i], align: 'left' });
+      x += colWidths[i];
     });
+    doc.moveDown(1.5);
 
-    let currentY = tableTop + 30;
-    doc.fontSize(10).font('Helvetica').fillColor('#333333');
-
-    lignes.forEach((ligne, index) => {
-      if (index % 2 === 1) {
-        doc.rect(margin, currentY - 5, contentWidth, 20).fill('#fafafa');
+    doc.font('Helvetica').fontSize(7);
+    (data as any[]).forEach((row, index) => {
+      y = doc.y;
+      if (y > 750) {
+        doc.addPage();
+        y = doc.y;
       }
 
-      const produitNom = ligne.produit_nom || ligne.description || 'N/A';
-      const quantite = parseInt(ligne.quantite);
-      const prixUnitaire = parseFloat(ligne.prix_unitaire);
-      const totalLigne = parseFloat(ligne.total_ligne);
+      const values = type === 'ecritures'
+        ? [(row as LedgerRow).numero_piece || '',
+           (row as LedgerRow).date_ecriture ? new Date((row as LedgerRow).date_ecriture!).toLocaleDateString('fr-FR') : '',
+           (row as LedgerRow).journal || '',
+           `${(row as LedgerRow).compte_numero || ''} ${(row as LedgerRow).compte_intitule || ''}`.trim(),
+           (row as LedgerRow).description || '',
+           (row as LedgerRow).debit ? Number((row as LedgerRow).debit).toFixed(0) : '',
+           (row as LedgerRow).credit ? Number((row as LedgerRow).credit).toFixed(0) : '']
+        : type === 'chart'
+        ? [(row as ChartRow).numero, (row as ChartRow).intitule, (row as ChartRow).type_compte, (row as ChartRow).categorie || '', (row as ChartRow).actif ? 'Actif' : 'Inactif']
+        : [(row as BalanceRow).compte_numero, (row as BalanceRow).compte_intitule,
+           Number((row as BalanceRow).total_debit).toFixed(0), Number((row as BalanceRow).total_credit).toFixed(0),
+           Number((row as BalanceRow).solde).toFixed(0)];
 
-      doc.text(produitNom, tableColumns[0].x + 5, currentY, { width: tableColumns[0].width - 10 });
-      doc.text(String(quantite), tableColumns[1].x + 5, currentY, { width: tableColumns[1].width - 10, align: 'center' });
-      doc.text(`${prixUnitaire.toFixed(2)} XOF`, tableColumns[2].x + 5, currentY, { width: tableColumns[2].width - 10 });
-      doc.text(`${totalLigne.toFixed(2)} XOF`, tableColumns[3].x + 5, currentY, { width: tableColumns[3].width - 10 });
-
-      currentY += 20;
+      if (index % 2 === 0) {
+        doc.rect(startX, y, totalColWidth, 14).fill('#fafafa');
+        doc.fill('#111');
+      }
+      x = startX;
+      values.forEach((val, i) => {
+        doc.text(String(val || '-'), x + 2, y + 3, { width: colWidths[i], align: 'left' });
+        x += colWidths[i];
+      });
+      doc.y = y + 14;
     });
 
-    doc.rect(margin, currentY, contentWidth, 1).fill('#cccccc');
-    currentY += 10;
+    doc.fontSize(8).text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, { align: 'center' });
+    return doc;
+  }
 
-    // Totals
-    const sousTotal = parseFloat(document.sous_total || 0);
-    const total = parseFloat(document.total || 0);
-    const remise = parseFloat(document.remise_globale || 0);
-    const tva = parseFloat(document.tva || 0);
+  async generateInvoicePDF(factureId: number): Promise<Buffer> {
+    const settings = await getSettings();
+    const { rows } = await pool.query(
+      `SELECT f.*, t.raison_sociale as client_nom, t.adresse as client_adresse, t.telephone as client_telephone
+       FROM factures f LEFT JOIN tiers t ON f.client_id = t.id WHERE f.id = $1 AND f.deleted_at IS NULL`,
+      [factureId]
+    );
+    if (!rows[0]) throw new Error('Facture introuvable');
+    const facture = rows[0];
 
-    doc.fontSize(10).font('Helvetica').fillColor('#333333');
+    const { rows: lignes } = await pool.query(
+      `SELECT fl.*, p.nom as produit_nom, p.reference as produit_reference
+       FROM facture_lignes fl LEFT JOIN produits p ON fl.produit_id = p.id WHERE fl.facture_id = $1`,
+      [factureId]
+    );
 
-    if (remise > 0) {
-      doc.text('Sous-total:', pageWidth - margin - 150, currentY, { width: 100, align: 'right' });
-      doc.text(`${sousTotal.toFixed(2)} XOF`, pageWidth - margin, currentY, { width: 50, align: 'right' });
-      currentY += 15;
+    return this.buildDocumentPDF(facture, lignes, 'FACTURE', facture.numero_facture || facture.numero);
+  }
 
-      doc.text('Remise:', pageWidth - margin - 150, currentY, { width: 100, align: 'right' });
-      doc.text(`-${remise.toFixed(2)} XOF`, pageWidth - margin, currentY, { width: 50, align: 'right' });
-      currentY += 15;
-    }
+  async generateDevisPDF(devisId: number): Promise<Buffer> {
+    const settings = await getSettings();
+    const { rows } = await pool.query(
+      `SELECT d.*, t.raison_sociale as client_nom, t.adresse as client_adresse, t.telephone as client_telephone
+       FROM devis d LEFT JOIN tiers t ON d.client_id = t.id WHERE d.id = $1 AND d.deleted_at IS NULL`,
+      [devisId]
+    );
+    if (!rows[0]) throw new Error('Devis introuvable');
+    const doc = rows[0];
 
-    if (config.showTVA && tva > 0) {
-      doc.text('Sous-total:', pageWidth - margin - 150, currentY, { width: 100, align: 'right' });
-      doc.text(`${sousTotal.toFixed(2)} XOF`, pageWidth - margin, currentY, { width: 50, align: 'right' });
-      currentY += 15;
+    const { rows: lignes } = await pool.query(
+      `SELECT dl.*, p.nom as produit_nom, p.reference as produit_reference
+       FROM devis_lignes dl LEFT JOIN produits p ON dl.produit_id = p.id WHERE dl.devis_id = $1`,
+      [devisId]
+    );
 
-      const tvaRate = document.tva_rate || 19;
-      doc.text(`TVA (${tvaRate}%):`, pageWidth - margin - 150, currentY, { width: 100, align: 'right' });
-      doc.text(`${tva.toFixed(2)} XOF`, pageWidth - margin, currentY, { width: 50, align: 'right' });
-      currentY += 15;
-    }
+    return this.buildDocumentPDF(doc, lignes, 'DEVIS', doc.numero_devis || doc.numero);
+  }
 
-    doc.fontSize(14).font('Helvetica-Bold').fillColor('#1a1a1a');
-    doc.text('TOTAL:', pageWidth - margin - 150, currentY, { width: 100, align: 'right' });
-    doc.text(`${total.toFixed(2)} XOF`, pageWidth - margin, currentY, { width: 50, align: 'right' });
-    currentY += 30;
+  async generateBLPDF(blId: number): Promise<Buffer> {
+    const settings = await getSettings();
+    const { rows } = await pool.query(
+      `SELECT bl.*, t.raison_sociale as client_nom, t.adresse as client_adresse, t.telephone as client_telephone
+       FROM bons_livraison bl LEFT JOIN tiers t ON bl.client_id = t.id WHERE bl.id = $1 AND bl.deleted_at IS NULL`,
+      [blId]
+    );
+    if (!rows[0]) throw new Error('Bon de livraison introuvable');
+    const doc = rows[0];
 
-    // Payments
-    if (config.showPayments && paiements.length > 0) {
-      doc.fontSize(12).font('Helvetica-Bold').fillColor('#1a1a1a')
-        .text('Paiements effectués:', margin, currentY);
-      currentY += 20;
+    const { rows: lignes } = await pool.query(
+      `SELECT bll.*, p.nom as produit_nom, p.reference as produit_reference
+       FROM bon_livraison_lignes bll LEFT JOIN produits p ON bll.produit_id = p.id WHERE bll.bon_livraison_id = $1`,
+      [blId]
+    );
 
-      doc.fontSize(10).font('Helvetica').fillColor('#333333');
-      paiements.forEach(paiement => {
-        const montant = parseFloat(paiement.montant);
-        const date = new Date(paiement.date_paiement).toLocaleDateString('fr-FR');
-        doc.text(
-          `- ${date}: ${montant.toFixed(2)} XOF (${METHODE_LABELS[paiement.methode_paiement] || paiement.methode_paiement})`,
-          margin + 10, currentY
-        );
-        currentY += 15;
+    return this.buildDocumentPDF(doc, lignes, 'BON DE LIVRAISON', doc.numero_bl || doc.numero);
+  }
+
+  async generateAvoirPDF(avoirId: number): Promise<Buffer> {
+    const settings = await getSettings();
+    const { rows } = await pool.query(
+      `SELECT a.*, t.raison_sociale as client_nom, t.adresse as client_adresse
+       FROM avoirs a LEFT JOIN tiers t ON a.client_id = t.id WHERE a.id = $1 AND a.deleted_at IS NULL`,
+      [avoirId]
+    );
+    if (!rows[0]) throw new Error('Avoir introuvable');
+    const doc = rows[0];
+
+    const { rows: lignes } = await pool.query(
+      `SELECT al.*, p.nom as produit_nom
+       FROM avoir_lignes al LEFT JOIN produits p ON al.produit_id = p.id WHERE al.avoir_id = $1`,
+      [avoirId]
+    );
+
+    return this.buildDocumentPDF(doc, lignes, 'AVOIR', doc.numero_avoir || doc.numero);
+  }
+
+  private async buildDocumentPDF(
+    header: any,
+    lignes: any[],
+    title: string,
+    numero: string
+  ): Promise<Buffer> {
+    const settings = await getSettings();
+    const devise = settings.devise || 'FCFA';
+
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 40, size: 'A4' });
+      const chunks: Buffer[] = [];
+      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      // Header
+      let logoRendered = false;
+      const logoUrl = settings.logo_url;
+      if (logoUrl && logoUrl.startsWith('data:image/')) {
+        try {
+          const base64Data = logoUrl.split(';base64,').pop();
+          if (base64Data) {
+            const buffer = Buffer.from(base64Data, 'base64');
+            doc.image(buffer, 40, 40, { fit: [120, 50] });
+            logoRendered = true;
+          }
+        } catch (err) {
+          console.error('Erreur lors du décodage du logo PDF:', err);
+        }
+      }
+
+      if (logoRendered) {
+        doc.fontSize(16).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', 200, 40, { align: 'right', width: 355 });
+        doc.fontSize(9).font('Helvetica');
+        let currentY = doc.y;
+        if (settings.adresse) {
+          doc.text(settings.adresse, 200, currentY, { align: 'right', width: 355 });
+          currentY = doc.y;
+        }
+        if (settings.telephone) {
+          doc.text(`Tel: ${settings.telephone}`, 200, currentY, { align: 'right', width: 355 });
+          currentY = doc.y;
+        }
+        if (settings.nif) {
+          doc.fontSize(7).text(`NIF: ${settings.nif} | RC: ${settings.rc || '-'} | AI: ${settings.ai || '-'}`, 200, currentY, { align: 'right', width: 355 });
+        }
+        doc.y = Math.max(doc.y, 100);
+      } else {
+        doc.fontSize(18).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', { align: 'center' });
+        doc.fontSize(10).font('Helvetica');
+        if (settings.adresse) doc.text(settings.adresse, { align: 'center' });
+        if (settings.telephone) doc.text(`Tel: ${settings.telephone}`, { align: 'center' });
+        if (settings.nif) doc.fontSize(8).text(`NIF: ${settings.nif} | RC: ${settings.rc || '-'} | AI: ${settings.ai || '-'}`, { align: 'center' });
+      }
+      doc.moveDown(1);
+
+      // Title
+      doc.fontSize(14).font('Helvetica-Bold').text(`${title} N° ${numero}`, { align: 'center' });
+      doc.moveDown(0.5);
+
+      // Client info
+      if (header.client_nom) {
+        doc.fontSize(9).font('Helvetica');
+        doc.text(`Client: ${header.client_nom}`, { continued: false });
+        if (header.client_adresse) doc.text(`Adresse: ${header.client_adresse}`);
+        if (header.client_telephone) doc.text(`Tel: ${header.client_telephone}`);
+        doc.moveDown(0.5);
+      }
+
+      // Table
+      const tableTop = doc.y;
+      const colWidths = [30, 200, 60, 70, 70, 70];
+      const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+
+      doc.fontSize(8).font('Helvetica-Bold');
+      let y = tableTop;
+      doc.rect(40, y, totalWidth, 16).fill('#f0f0f0');
+      doc.fill('#111');
+      ['#', 'Produit', 'Qté', 'PU', 'Remise', 'Total'].forEach((col, i) => {
+        const x = 40 + colWidths.slice(0, i).reduce((a, b) => a + b, 0);
+        doc.text(col, x + 2, y + 4, { width: colWidths[i], align: 'left' });
       });
-    }
+      doc.y = y + 18;
 
-    // Status
-    currentY += 10;
-    const statut = document.statut;
-    doc.fontSize(12).font('Helvetica-Bold')
-      .fillColor(config.statusColors[statut] || '#666666')
-      .text(`Statut: ${config.statusLabels[statut] || statut}`, margin, currentY);
+      doc.font('Helvetica').fontSize(8);
+      lignes.forEach((ligne, index) => {
+        y = doc.y;
+        if (y > 740) {
+          doc.addPage();
+          y = doc.y;
+        }
+        const values = [
+          String(index + 1),
+          ligne.produit_nom || ligne.description || '-',
+          String(ligne.quantite_recue || ligne.quantite || 0),
+          Number(ligne.cout_unitaire || ligne.prix_unitaire || 0).toLocaleString('fr-FR'),
+          ligne.remise ? `${ligne.remise}%` : '-',
+          Number(ligne.total_ligne || (ligne.quantite * ligne.prix_unitaire) || 0).toLocaleString('fr-FR'),
+        ];
+        if (index % 2 === 0) {
+          doc.rect(40, y, totalWidth, 14).fill('#fafafa');
+          doc.fill('#111');
+        }
+        let x = 40;
+        values.forEach((val, i) => {
+          doc.text(val, x + 2, y + 3, { width: colWidths[i], align: 'left' });
+          x += colWidths[i];
+        });
+        doc.y = y + 14;
+      });
 
-    // Notes
-    if (document.notes) {
-      currentY += 30;
-      doc.fontSize(10).font('Helvetica-Bold').fillColor('#333333')
-        .text('Notes:', margin, currentY);
-      doc.fontSize(9).font('Helvetica').fillColor('#666666')
-        .text(document.notes, margin, currentY + 15);
-    }
+      // Total
+      doc.moveDown(1);
+      const total = Array.isArray(lignes) ? lignes.reduce((sum, l) => {
+        return sum + Number(l.total_ligne || (l.quantite * l.prix_unitaire) || 0);
+      }, 0) : 0;
+      doc.fontSize(10).font('Helvetica-Bold');
+      doc.text(`Total: ${total.toLocaleString('fr-FR')} ${devise}`, { align: 'right' });
 
-    // Footer
-    doc.fontSize(8).fillColor('#999999')
-      .text('Magasin Info - Document généré automatiquement', margin, pageWidth - 100, { align: 'center' });
+      // Footer
+      doc.moveDown(2);
+      doc.fontSize(7).font('Helvetica').fillColor('#666');
+      doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, { align: 'center' });
+
+      doc.end();
+    });
   }
 }
 

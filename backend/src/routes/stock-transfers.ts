@@ -11,5 +11,6 @@ router.get('/', StockTransferController.getAll);
 router.get('/:id', StockTransferController.getById);
 router.post('/', authorize(['admin', 'manager', 'depot_staff']), StockTransferController.create);
 router.post('/:id/complete', authorize(['admin', 'manager', 'depot_staff']), StockTransferController.complete);
+router.post('/:id/cancel', authorize(['admin', 'manager', 'depot_staff']), StockTransferController.cancel);
 
 export default router;

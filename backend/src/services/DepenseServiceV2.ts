@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { caisseMagasinService } from './CaisseMagasinService';
+import { checkPeriodIsOpen } from './PeriodService';
 
 export interface CreateDepenseInputV2 {
   magasin_id: number;
@@ -49,11 +50,14 @@ export class DepenseServiceV2 {
     try {
       await client.query('BEGIN');
 
-      const { 
+      const {
         magasin_id, categorie_id, montant, methode_paiement,
         date_depense, description, beneficiaire_libre, fournisseur_id,
-        justificatif_url, cree_par 
+        justificatif_url, cree_par
       } = input;
+
+      // Reject postings into a closed accounting period
+      await checkPeriodIsOpen(date_depense ? new Date(date_depense) : new Date(), client);
 
       // Verify category exists
       const { rows: catRows } = await client.query(

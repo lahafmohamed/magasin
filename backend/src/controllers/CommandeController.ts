@@ -1,12 +1,18 @@
 import { Request, Response } from 'express';
 import pool from '../db/connection';
 import { AuthRequest } from '../middleware/auth';
+import { logAudit } from '../middleware/audit';
 
 export class CommandeController {
 
   static async getAll(req: Request, res: Response): Promise<void> {
     try {
       const { statut, search } = req.query;
+      // Bounded result set (the endpoint was previously unbounded). Optional ?page/?limit.
+      const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 100));
+      const page = Math.max(1, parseInt(req.query.page as string) || 1);
+      const offset = (page - 1) * limit;
+
       let query = `
         SELECT c.*, t.raison_sociale as fournisseur_nom
         FROM commandes_fournisseur c
@@ -25,7 +31,8 @@ export class CommandeController {
         params.push(`%${search}%`, `%${search}%`);
       }
 
-      query += ' ORDER BY c.date_commande DESC';
+      query += ` ORDER BY c.date_commande DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+      params.push(limit, offset);
 
       const { rows } = await pool.query(query, params);
       res.json(rows);
@@ -53,7 +60,7 @@ export class CommandeController {
       }
 
       const { rows: lignesRows } = await pool.query(
-        `SELECT cl.*, p.nom as produit_nom, p.reference as produit_reference
+        `SELECT cl.*, p.nom as produit_nom, p.reference as produit_reference, p.stock as stock, p.stock_min as stock_min
          FROM commande_lignes cl
          LEFT JOIN produits p ON cl.produit_id = p.id
          WHERE cl.commande_id = $1`,
@@ -209,20 +216,167 @@ export class CommandeController {
     }
   }
 
-  static async delete(req: Request, res: Response): Promise<void> {
-    try {
-      const { id } = req.params;
-      const { rowCount } = await pool.query('DELETE FROM commandes_fournisseur WHERE id = $1', [id]);
+  static async update(req: Request, res: Response): Promise<void> {
+    const client = await pool.connect();
 
-      if (rowCount === 0) {
+    try {
+      await client.query('BEGIN');
+
+      const { id } = req.params;
+      const { tiers_id, fournisseur_id, lignes, notes, date_livraison_prevue }: {
+        tiers_id?: number;
+        fournisseur_id?: number;
+        lignes: { produit_id: number; quantite: number; prix_unitaire: number }[];
+        notes?: string;
+        date_livraison_prevue?: string;
+      } = req.body;
+      const resolvedTiersId = tiers_id ?? fournisseur_id;
+
+      if (!lignes || lignes.length === 0) {
+        await client.query('ROLLBACK');
+        res.status(400).json({ error: 'La commande doit contenir au moins un produit' });
+        return;
+      }
+
+      // Check current order status
+      const { rows: commandeRows } = await client.query(
+        'SELECT statut FROM commandes_fournisseur WHERE id = $1',
+        [id]
+      );
+
+      if (commandeRows.length === 0) {
+        await client.query('ROLLBACK');
         res.status(404).json({ error: 'Commande non trouvée' });
         return;
       }
 
+      if (commandeRows[0].statut !== 'en_attente') {
+        await client.query('ROLLBACK');
+        res.status(400).json({ error: 'Seules les commandes en attente peuvent être modifiées' });
+        return;
+      }
+
+      // Calculate new total
+      let sousTotal = 0;
+      for (const ligne of lignes) {
+        sousTotal += ligne.quantite * ligne.prix_unitaire;
+      }
+
+      // Update commande
+      await client.query(
+        `UPDATE commandes_fournisseur 
+         SET tiers_id = $1, sous_total = $2, notes = $3, date_livraison_prevue = $4
+         WHERE id = $5`,
+        [resolvedTiersId, sousTotal, notes || null, date_livraison_prevue || null, id]
+      );
+
+      // Delete old lines
+      await client.query('DELETE FROM commande_lignes WHERE commande_id = $1', [id]);
+
+      // Insert new lines
+      for (const ligne of lignes) {
+        const totalLigne = ligne.quantite * ligne.prix_unitaire;
+        await client.query(
+          'INSERT INTO commande_lignes (commande_id, produit_id, quantite, prix_unitaire, total_ligne) VALUES ($1, $2, $3, $4, $5)',
+          [id, ligne.produit_id, ligne.quantite, ligne.prix_unitaire, totalLigne]
+        );
+      }
+
+      // Update associated invoice (facture_fournisseur) if it exists and is still in draft ('en_attente')
+      const { rows: ffRows } = await client.query(
+        'SELECT id, statut FROM factures_fournisseur WHERE commande_id = $1',
+        [id]
+      );
+
+      if (ffRows.length > 0 && ffRows[0].statut === 'en_attente') {
+        const factureId = ffRows[0].id;
+        await client.query(
+          `UPDATE factures_fournisseur
+           SET tiers_id = $1, sous_total = $2, total = $3, notes = $4
+           WHERE id = $5`,
+          [resolvedTiersId, sousTotal, sousTotal, notes || null, factureId]
+        );
+
+        // Delete old invoice lines
+        await client.query('DELETE FROM facture_fournisseur_lignes WHERE facture_id = $1', [factureId]);
+
+        // Insert new invoice lines
+        for (const ligne of lignes) {
+          const totalLigne = ligne.quantite * ligne.prix_unitaire;
+          await client.query(
+            `INSERT INTO facture_fournisseur_lignes
+             (facture_id, produit_id, quantite, prix_unitaire, total_ligne)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [factureId, ligne.produit_id, ligne.quantite, ligne.prix_unitaire, totalLigne]
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+      res.json({ message: 'Commande mise à jour avec succès' });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('Erreur PUT /api/commandes/:id:', error);
+      res.status(500).json({ error: 'Erreur serveur lors de la mise à jour' });
+    } finally {
+      client.release();
+    }
+  }
+
+  static async delete(req: Request, res: Response): Promise<void> {
+    const client = await pool.connect();
+    try {
+      const { id } = req.params;
+      await client.query('BEGIN');
+
+      const { rows: cmdRows } = await client.query(
+        'SELECT id FROM commandes_fournisseur WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+      if (cmdRows.length === 0) {
+        await client.query('ROLLBACK');
+        res.status(404).json({ error: 'Commande non trouvée' });
+        return;
+      }
+
+      // Clean up the auto-created supplier invoice (and its lines) linked to this order.
+      // Block deletion if that invoice already has payments recorded.
+      const { rows: ffRows } = await client.query(
+        'SELECT id, COALESCE(montant_paye, 0) AS montant_paye FROM factures_fournisseur WHERE commande_id = $1 FOR UPDATE',
+        [id]
+      );
+      for (const ff of ffRows) {
+        if (parseFloat(ff.montant_paye) > 0) {
+          await client.query('ROLLBACK');
+          res.status(400).json({ error: 'Impossible de supprimer: une facture fournisseur liée a des paiements.' });
+          return;
+        }
+      }
+      for (const ff of ffRows) {
+        await client.query('DELETE FROM facture_fournisseur_lignes WHERE facture_id = $1', [ff.id]);
+        await client.query('DELETE FROM factures_fournisseur WHERE id = $1', [ff.id]);
+      }
+
+      await client.query('DELETE FROM commande_lignes WHERE commande_id = $1', [id]);
+      await client.query('DELETE FROM commandes_fournisseur WHERE id = $1', [id]);
+
+      await client.query('COMMIT');
+
+      await logAudit({
+        utilisateur_id: (req as AuthRequest).user?.id || null,
+        action: 'delete',
+        table_name: 'commandes_fournisseur',
+        record_id: parseInt(id),
+        req,
+      });
+
       res.json({ message: 'Commande supprimée' });
     } catch (error) {
+      await client.query('ROLLBACK');
       console.error('Erreur DELETE /api/commandes/:id:', error);
       res.status(500).json({ error: 'Erreur serveur' });
+    } finally {
+      client.release();
     }
   }
 

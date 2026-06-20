@@ -4,6 +4,7 @@ import { Paiement, PaiementWithFacture } from '../models/Paiement';
 import { parsePagination } from '../utils/pagination';
 import { logger } from '../utils/logger';
 import { ClientAllocationService } from '../services/ClientAllocationService';
+import { checkPeriodIsOpen } from '../services/PeriodService';
 import { caisseMagasinService } from '../services/CaisseMagasinService';
 import { AuthRequest } from '../middleware/auth';
 
@@ -25,7 +26,12 @@ export class PaiementController {
     const client = await pool.connect();
 
     try {
-      const { factureId } = req.params;
+      // Support both /factures/:factureId/paiements and standalone /paiements (facture_id in body)
+      const factureId = req.params.factureId ?? (req.body.facture_id != null ? String(req.body.facture_id) : undefined);
+      if (!factureId || Number.isNaN(Number(factureId))) {
+        res.status(400).json({ error: 'facture_id requis' });
+        return;
+      }
       const {
         montant,
         methode_paiement,
@@ -62,6 +68,9 @@ export class PaiementController {
       const datePaiement = date_paiement || new Date().toISOString();
 
       await client.query('BEGIN');
+
+      // Reject postings into a closed accounting period
+      await checkPeriodIsOpen(new Date(datePaiement), client);
 
       // Idempotency
       if (idempotency_key) {

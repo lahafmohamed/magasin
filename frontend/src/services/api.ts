@@ -14,15 +14,8 @@ type UpdateProduitPayload = Partial<Omit<Produit, 'id'>> & {
 
 const api = axios.create({
   baseURL: '/api',
-});
-
-// Request interceptor: attach auth token
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
+  // Auth is carried by the httpOnly `auth_token` cookie — send it on every request.
+  withCredentials: true,
 });
 
 // Response interceptor: unwrap { success, data, pagination } envelope
@@ -51,7 +44,7 @@ api.interceptors.response.use(
     const url: string = error.config?.url || '';
     const isAuthCall = url.includes('/auth/login');
     if (status === 401 && !isAuthCall) {
-      localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_user');
       if (!window.location.pathname.startsWith('/login')) {
         window.location.href = '/login';
       }
@@ -123,6 +116,11 @@ export const produitService = {
 
   getStockHistory: async (id: number, limit = 50): Promise<any[]> => {
     const { data } = await api.get(`/produits/${id}/mouvements?limit=${limit}`);
+    return data;
+  },
+
+  getPurchaseInfo: async (id: number): Promise<any> => {
+    const { data } = await api.get(`/produits/${id}/info-achat`);
     return data;
   },
 
@@ -522,6 +520,14 @@ export const factureService = {
     return data.data || data;
   },
 
+  exportAll: async (search?: string, statut?: string): Promise<any> => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (statut) params.append('statut', statut);
+    const { data } = await api.get(`/factures/export?${params}`);
+    return data;
+  },
+
   getRevenueTrends: async (days = 30): Promise<any[]> => {
     const { data } = await api.get(`/factures/revenue-trends?days=${days}`);
     return data;
@@ -641,6 +647,16 @@ export const commandeService = {
   }): Promise<{ id: number; numero_commande: string }> => {
     const { data } = await api.post('/commandes', commande);
     return data;
+  },
+
+  update: async (id: number, commande: {
+    tiers_id: number;
+    fournisseur_id?: number;
+    lignes: { produit_id: number; quantite: number; prix_unitaire: number }[];
+    notes?: string;
+    date_livraison_prevue?: string;
+  }): Promise<void> => {
+    await api.put(`/commandes/${id}`, commande);
   },
 
   updateStatut: async (id: number, statut: string): Promise<void> => {
@@ -953,6 +969,22 @@ export const generalLedgerService = {
     });
     return data;
   },
+
+  exportAll: async (params: { journal?: string; date_debut?: string; date_fin?: string; compte_id?: number }): Promise<any> => {
+    const { data } = await api.get('/general-ledger/export', { params });
+    return data;
+  },
+
+  exportPdf: async (params: { journal?: string; date_debut?: string; date_fin?: string; compte_id?: number; type?: string }): Promise<Blob> => {
+    const q = new URLSearchParams();
+    if (params.journal) q.append('journal', params.journal);
+    if (params.date_debut) q.append('date_debut', params.date_debut);
+    if (params.date_fin) q.append('date_fin', params.date_fin);
+    if (params.compte_id) q.append('compte_id', String(params.compte_id));
+    if (params.type) q.append('type', params.type);
+    const response = await api.get(`/general-ledger/export-pdf?${q.toString()}`, { responseType: 'blob' });
+    return response.data;
+  },
 };
 
 // ========== EMPLOYES ==========
@@ -1033,7 +1065,7 @@ export const devisService = {
     params.append('page', page.toString());
     params.append('limit', limit.toString());
     const { data } = await api.get(`/devis?${params}`);
-    return data.data || data;
+    return data;
   },
 
   getById: async (id: number): Promise<any> => {
@@ -1062,8 +1094,35 @@ export const devisService = {
     return data;
   },
 
+  update: async (id: number, devis: {
+    tiers_id?: number;
+    client_id?: number;
+    location_id?: number;
+    lignes?: { produit_id: number; quantite: number; prix_unitaire: number }[];
+    notes?: string;
+    valid_until?: string;
+  }): Promise<any> => {
+    const { data } = await api.put(`/devis/${id}`, devis);
+    return data;
+  },
+
   delete: async (id: number): Promise<void> => {
     await api.delete(`/devis/${id}`);
+  },
+
+  getStats: async (): Promise<any> => {
+    const { data } = await api.get('/devis/stats');
+    return data.data || data;
+  },
+
+  exportAll: async (search?: string, statut?: string): Promise<any[]> => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (statut) params.append('statut', statut);
+    params.append('page', '1');
+    params.append('limit', '10000');
+    const { data } = await api.get(`/devis?${params}`);
+    return data.data || data;
   },
 };
 
@@ -1106,6 +1165,21 @@ export const bonLivraisonService = {
 
   delete: async (id: number): Promise<void> => {
     await api.delete(`/bons-livraison/${id}`);
+  },
+
+  getStats: async (): Promise<any> => {
+    const { data } = await api.get('/bons-livraison/stats');
+    return data.data || data;
+  },
+
+  exportAll: async (search?: string, statut?: string): Promise<any[]> => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (statut) params.append('statut', statut);
+    params.append('page', '1');
+    params.append('limit', '10000');
+    const { data } = await api.get(`/bons-livraison?${params}`);
+    return data.data ?? data;
   },
 };
 
@@ -1181,6 +1255,11 @@ export const caisseService = {
   getSessionPaiements: async (sessionId: number): Promise<any> => {
     const { data } = await api.get(`/caisse/${sessionId}/paiements`);
     return data;
+  },
+
+  getMagasins: async (): Promise<any[]> => {
+    const { data } = await api.get('/stock-locations');
+    return data?.data || data || [];
   },
 
   getAudit: async (params: {
@@ -1417,40 +1496,227 @@ export const adminUserService = {
   },
 };
 
-// ========== TVA RATES (ADMIN) ==========
-export interface TauxTva {
+// ========== REPORTS ==========
+export const reportService = {
+  getAlerts: async (): Promise<any> => {
+    const { data } = await api.get('/reports/alerts');
+    return data;
+  },
+
+  getRevenueTrends: async (months = 12): Promise<any> => {
+    const { data } = await api.get(`/reports/revenue-trends?months=${months}`);
+    return data?.data || data;
+  },
+
+  getYoYComparison: async (months = 6): Promise<any> => {
+    const { data } = await api.get(`/reports/yoy?months=${months}`);
+    return data?.data || data;
+  },
+
+  getRevenueForecast: async (): Promise<any> => {
+    const { data } = await api.get('/reports/forecast');
+    return data?.data || data;
+  },
+
+  getConsolidatedDashboard: async (magasinId?: number): Promise<any> => {
+    const params = magasinId ? `?magasin_id=${magasinId}` : '';
+    const { data } = await api.get(`/reports/consolidated${params}`);
+    return data?.data || data;
+  },
+};
+
+// ========== COMPANY SETTINGS ==========
+export interface CompanySettings {
   id: number;
-  code: string;
-  taux: number;
-  description: string | null;
-  actif: boolean;
-  date_debut?: string;
-  date_fin?: string | null;
-  created_at?: string;
+  nom: string;
+  adresse: string | null;
+  telephone: string | null;
+  email: string | null;
+  site_web: string | null;
+  nif: string | null;
+  rc: string | null;
+  ai: string | null;
+  cb: string | null;
+  devise: string;
+  logo_url: string | null;
+  taux_conversion: number;
 }
 
-export const tvaService = {
-  getAll: async (): Promise<TauxTva[]> => {
-    const { data } = await api.get('/admin/tva');
+let cachedSettings: CompanySettings | null = null;
+let settingsCacheTimestamp = 0;
+const SETTINGS_CACHE_TTL = 60_000;
+
+export const companySettingsService = {
+  get: async (force = false): Promise<CompanySettings> => {
+    const now = Date.now();
+    if (!force && cachedSettings && (now - settingsCacheTimestamp) < SETTINGS_CACHE_TTL) {
+      return cachedSettings;
+    }
+    const { data } = await api.get('/company-settings');
+    cachedSettings = data;
+    settingsCacheTimestamp = now;
+    return data;
+  },
+
+  update: async (settings: Partial<CompanySettings>): Promise<CompanySettings> => {
+    const { data } = await api.put('/company-settings', settings);
+    cachedSettings = data;
+    settingsCacheTimestamp = Date.now();
+    return data;
+  },
+
+  getCached: (): CompanySettings | null => cachedSettings,
+};
+
+// ========== CRM ==========
+export const crmService = {
+  getInteractions: async (tiersId: number): Promise<any[]> => {
+    const { data } = await api.get(`/crm/interactions/${tiersId}`);
+    return data?.data || data || [];
+  },
+
+  createInteraction: async (interaction: {
+    tiers_id: number;
+    type: string;
+    sujet: string;
+    description?: string;
+    date_rappel?: string;
+    priorite?: string;
+  }): Promise<any> => {
+    const { data } = await api.post('/crm/interactions', interaction);
     return data?.data || data;
   },
 
-  getActive: async (): Promise<TauxTva[]> => {
-    const { data } = await api.get('/tva/active');
+  deleteInteraction: async (id: number): Promise<void> => {
+    await api.delete(`/crm/interactions/${id}`);
+  },
+
+  getTaches: async (tiersId: number): Promise<any[]> => {
+    const { data } = await api.get(`/crm/taches?tiers_id=${tiersId}`);
+    return data?.data || data || [];
+  },
+
+  createTache: async (tache: {
+    tiers_id?: number;
+    titre: string;
+    description?: string;
+    priorite?: string;
+    date_echeance?: string;
+  }): Promise<any> => {
+    const { data } = await api.post('/crm/taches', tache);
     return data?.data || data;
   },
 
-  create: async (payload: { code: string; taux: number; description?: string; actif?: boolean }): Promise<TauxTva> => {
-    const { data } = await api.post('/admin/tva', payload);
+  updateTacheStatut: async (id: number, statut: string): Promise<void> => {
+    await api.patch(`/crm/taches/${id}/statut`, { statut });
+  },
+
+  deleteTache: async (id: number): Promise<void> => {
+    await api.delete(`/crm/taches/${id}`);
+  },
+
+  getRappels: async (): Promise<any[]> => {
+    const { data } = await api.get('/crm/rappels');
+    return data?.data || data || [];
+  },
+
+  marquerRappelFait: async (id: number): Promise<void> => {
+    await api.post(`/crm/rappels/${id}/done`);
+  },
+};
+
+// ========== AUDIT LOG ==========
+export const auditService = {
+  getLogs: async (filters: {
+    table?: string;
+    record_id?: number;
+    action?: string;
+    date_from?: string;
+    date_to?: string;
+    user_id?: number;
+    page?: number;
+    limit?: number;
+  } = {}): Promise<any> => {
+    const params = new URLSearchParams();
+    if (filters.table) params.append('table', filters.table);
+    if (filters.record_id) params.append('record_id', filters.record_id.toString());
+    if (filters.action) params.append('action', filters.action);
+    if (filters.date_from) params.append('date_from', filters.date_from);
+    if (filters.date_to) params.append('date_to', filters.date_to);
+    if (filters.user_id) params.append('user_id', filters.user_id.toString());
+    params.append('page', (filters.page || 1).toString());
+    params.append('limit', (filters.limit || 50).toString());
+    const { data } = await api.get(`/admin/audit?${params}`);
+    return data;
+  },
+};
+
+// ========== COMPTABILITÉ ==========
+export const comptabiliteService = {
+  getPlanComptable: async (classe?: number): Promise<any[]> => {
+    const params = classe ? `?classe=${classe}` : '';
+    const { data } = await api.get(`/comptabilite/plan-comptable${params}`);
     return data?.data || data;
   },
 
-  update: async (id: number, payload: { taux?: number; description?: string; actif?: boolean }): Promise<TauxTva> => {
-    const { data } = await api.put(`/admin/tva/${id}`, payload);
+  getEcritures: async (params: {
+    date_debut?: string;
+    date_fin?: string;
+    journal?: string;
+    compte_numero?: string;
+    page?: number;
+    limit?: number;
+  } = {}): Promise<any> => {
+    const q = new URLSearchParams();
+    if (params.date_debut) q.append('date_debut', params.date_debut);
+    if (params.date_fin) q.append('date_fin', params.date_fin);
+    if (params.journal) q.append('journal', params.journal);
+    if (params.compte_numero) q.append('compte_numero', params.compte_numero);
+    if (params.page) q.append('page', params.page.toString());
+    if (params.limit) q.append('limit', params.limit.toString());
+    const { data } = await api.get(`/comptabilite/ecritures?${q}`);
+    return data;
+  },
+
+  getJournal: async (params: {
+    date_debut?: string;
+    date_fin?: string;
+    journal?: string;
+  } = {}): Promise<any[]> => {
+    const q = new URLSearchParams();
+    if (params.date_debut) q.append('date_debut', params.date_debut);
+    if (params.date_fin) q.append('date_fin', params.date_fin);
+    if (params.journal) q.append('journal', params.journal);
+    const { data } = await api.get(`/comptabilite/journal?${q}`);
     return data?.data || data;
   },
 
-  remove: async (id: number): Promise<void> => {
-    await api.delete(`/admin/tva/${id}`);
+  getBalance: async (date_debut?: string, date_fin?: string): Promise<any[]> => {
+    const q = new URLSearchParams();
+    if (date_debut) q.append('date_debut', date_debut);
+    if (date_fin) q.append('date_fin', date_fin);
+    const { data } = await api.get(`/comptabilite/balance?${q}`);
+    return data?.data || data;
+  },
+
+  getGrandLivre: async (compteNumero: string, date_debut?: string, date_fin?: string): Promise<any[]> => {
+    const q = new URLSearchParams();
+    if (date_debut) q.append('date_debut', date_debut);
+    if (date_fin) q.append('date_fin', date_fin);
+    const { data } = await api.get(`/comptabilite/grand-livre/${compteNumero}?${q}`);
+    return data?.data || data;
+  },
+
+  getTresorerie: async (jours: number = 90): Promise<any> => {
+    const { data } = await api.get(`/comptabilite/tresorerie?jours=${jours}`);
+    return data?.data || data;
+  },
+
+  getRatios: async (date_debut?: string, date_fin?: string): Promise<any> => {
+    const q = new URLSearchParams();
+    if (date_debut) q.append('date_debut', date_debut);
+    if (date_fin) q.append('date_fin', date_fin);
+    const { data } = await api.get(`/comptabilite/ratios?${q}`);
+    return data?.data || data;
   },
 };

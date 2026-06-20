@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { Button } from './button';
 import { Printer } from 'lucide-react';
+import { companySettingsService, CompanySettings } from '../../services/api';
 
 interface PrintLayoutProps {
   title: string;
@@ -54,6 +56,7 @@ interface DocumentPrintProps {
   lignes: PrintLigne[];
   tvaIncluded?: boolean;
   hideTotals?: boolean;
+  format?: 'A4' | 'A5';
 }
 
 const titleLabel: Record<DocType, string> = {
@@ -79,8 +82,8 @@ const fmtDate = (d?: string | Date | null) => {
   }
 };
 
-const fmtMoney = (n: number) =>
-  new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(n) + ' FCFA';
+const fmtMoney = (n: number, devise = 'FCFA') =>
+  new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(n) + ' ' + devise;
 
 const fmtQty = (n: number) =>
   new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
@@ -96,7 +99,16 @@ export function DocumentPrint({
   lignes,
   tvaIncluded = true,
   hideTotals = false,
+  format = 'A4',
 }: DocumentPrintProps) {
+  const [settings, setSettings] = useState<CompanySettings | null>(null);
+
+  useEffect(() => {
+    companySettingsService.get().then(setSettings).catch(() => {});
+  }, []);
+
+  const isTicket = format === 'A5';
+
   const rows = lignes.map((l) => {
     const qte = Number(docType === 'bl' ? (l.quantite_livree ?? l.quantite) : l.quantite) || 0;
     const pu = Number(l.prix_unitaire) || 0;
@@ -113,17 +125,23 @@ export function DocumentPrint({
 
   const labels = dateLabels[docType];
   const clientFull = [clientNom, clientPrenom].filter(Boolean).join(' ').trim();
+  const devise = settings?.devise || 'FCFA';
+  const companyName = settings?.nom || '';
+  const contactInfo = [settings?.adresse, settings?.telephone, settings?.email].filter(Boolean).join(' | ');
 
   return (
     <div className="pbd-print-doc">
-      <div className="pbd-print-page">
+      <div className={`pbd-print-page ${isTicket ? 'pbd-ticket' : ''}`}>
         {/* Header: logo + company addr */}
         <div className="pbd-header">
-          <img src="/logo.png" alt="Logo" className="pbd-logo" />
+          <img src={settings?.logo_url || "/logo.png"} alt="Logo" className="pbd-logo" />
           <div className="pbd-company">
-            <div>Hitek-CI</div>
-            <div>[ADRESSE DE LA SOCIETE]</div>
-            <div>[VILLE - PAYS]</div>
+            <div className="pbd-company-name">{companyName}</div>
+            {settings?.adresse && <div>{settings.adresse}</div>}
+            <div className="pbd-tax-ids">
+              {settings?.nif && <span>NIF: {settings.nif}</span>}
+              {settings?.rc && <span> RC: {settings.rc}</span>}
+            </div>
           </div>
         </div>
 
@@ -158,7 +176,7 @@ export function DocumentPrint({
               <th className="pbd-col-desc">Description</th>
               <th className="pbd-col-qte">Quantité</th>
               <th className="pbd-col-pu">Prix unitaire</th>
-              {docType !== 'bl' && <th className="pbd-col-tva">TVA</th>}
+              {!isTicket && docType !== 'bl' && <th className="pbd-col-tva">TVA</th>}
               <th className="pbd-col-mt">Montant</th>
             </tr>
           </thead>
@@ -179,11 +197,11 @@ export function DocumentPrint({
                     {fmtQty(r.qte)}<br />
                     <span className="pbd-unite">Unité(s)</span>
                   </td>
-                  <td className="pbd-col-pu">{fmtQty(r.pu)}</td>
-                  {docType !== 'bl' && (
+                  <td className="pbd-col-pu">{fmtMoney(r.pu, devise)}</td>
+                  {!isTicket && docType !== 'bl' && (
                     <td className="pbd-col-tva">{r.tva > 0 ? `${r.tva}%` : '-'}</td>
                   )}
-                  <td className="pbd-col-mt">{fmtMoney(r.montant)}</td>
+                  <td className="pbd-col-mt">{fmtMoney(r.montant, devise)}</td>
                 </tr>
               );
             })}
@@ -196,27 +214,31 @@ export function DocumentPrint({
             <div className="pbd-totals-box">
               <div className="pbd-total-row">
                 <span>Montant hors taxes</span>
-                <span>{fmtMoney(sousTotal)}</span>
+                <span>{fmtMoney(sousTotal, devise)}</span>
               </div>
-              {hasTva && (
+              {hasTva && !isTicket && (
                 <div className="pbd-total-row">
                   <span>T.V.A. {tvaPctDisplay}%</span>
-                  <span>{fmtMoney(totalTva)}</span>
+                  <span>{fmtMoney(totalTva, devise)}</span>
                 </div>
               )}
               <div className="pbd-total-row pbd-total-grand">
                 <span>Total</span>
-                <span>{fmtMoney(total)}</span>
+                <span>{fmtMoney(total, devise)}</span>
               </div>
             </div>
           </div>
         )}
 
+        {/* Tax IDs in footer */}
+        <div className="pbd-footer-ids">
+          {settings?.ai && <span>AI: {settings.ai}</span>}
+          {settings?.cb && <span> CB: {settings.cb}</span>}
+        </div>
+
         {/* Footer */}
         <div className="pbd-footer">
-          <span>
-            [ADRESSE POSTALE / TELEPHONE / EMAIL / BANQUE]
-          </span>
+          <span>{contactInfo}</span>
           <span className="pbd-page">Page 1 / 1</span>
         </div>
       </div>
@@ -234,6 +256,11 @@ export function DocumentPrint({
           position: relative;
           min-height: 1050px;
         }
+        .pbd-print-page.pbd-ticket {
+          max-width: 200mm;
+          min-height: auto;
+          padding: 16px 20px 60px;
+        }
         .pbd-header {
           display: flex;
           flex-direction: column;
@@ -249,6 +276,21 @@ export function DocumentPrint({
           font-size: 12px;
           line-height: 1.5;
           color: #222;
+        }
+        .pbd-company-name {
+          font-size: 14px;
+          font-weight: 700;
+        }
+        .pbd-tax-ids {
+          font-size: 10px;
+          color: #555;
+          margin-top: 4px;
+        }
+        .pbd-footer-ids {
+          text-align: center;
+          font-size: 10px;
+          color: #555;
+          margin-top: 8px;
         }
         .pbd-client {
           text-align: center;
@@ -348,7 +390,7 @@ export function DocumentPrint({
           white-space: nowrap;
         }
         @media print {
-          @page { size: A4; margin: 0; }
+          @page A4 { size: A4; margin: 0; }
           html, body { background: #fff !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
           body * { visibility: hidden !important; }
           .pbd-print-doc, .pbd-print-doc * { visibility: visible !important; }

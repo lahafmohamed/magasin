@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useMemo } from 'react';
+import { useEffect, useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 interface Shortcut {
@@ -7,9 +7,13 @@ interface Shortcut {
   metaKey?: boolean;
   shiftKey?: boolean;
   altKey?: boolean;
+  gKey?: boolean;
   action: () => void;
   description: string;
 }
+
+let gPressed = false;
+let gTimeout: ReturnType<typeof setTimeout> | null = null;
 
 export function useKeyboardShortcuts(shortcuts: Shortcut[]) {
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
@@ -23,7 +27,31 @@ export function useKeyboardShortcuts(shortcuts: Shortcut[]) {
       return;
     }
 
+    // Handle G+letter sequences
+    if (event.key.toLowerCase() === 'g' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      gPressed = true;
+      if (gTimeout) clearTimeout(gTimeout);
+      gTimeout = setTimeout(() => { gPressed = false; }, 800);
+      return;
+    }
+
+    if (gPressed) {
+      for (const shortcut of shortcuts) {
+        if (shortcut.gKey && event.key.toLowerCase() === shortcut.key.toLowerCase()) {
+          event.preventDefault();
+          event.stopPropagation();
+          gPressed = false;
+          if (gTimeout) clearTimeout(gTimeout);
+          shortcut.action();
+          return;
+        }
+      }
+      gPressed = false;
+      if (gTimeout) clearTimeout(gTimeout);
+    }
+
     for (const shortcut of shortcuts) {
+      if (shortcut.gKey) continue;
       const keyMatches = event.key.toLowerCase() === shortcut.key.toLowerCase();
       const ctrlMatches = !!shortcut.ctrlKey === event.ctrlKey;
       const metaMatches = !!shortcut.metaKey === event.metaKey;
@@ -40,14 +68,16 @@ export function useKeyboardShortcuts(shortcuts: Shortcut[]) {
   }, [shortcuts]);
 
   useEffect(() => {
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    const handler = (e: KeyboardEvent) => handleKeyDown(e);
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
   }, [handleKeyDown]);
 }
 
 // Default ERP shortcuts
 export function useERPShortcuts() {
   const navigate = useNavigate();
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const shortcuts: Shortcut[] = useMemo(() => [
     {
@@ -91,17 +121,50 @@ export function useERPShortcuts() {
       description: 'Réceptions',
     },
     {
+      key: 'i',
+      gKey: true,
+      action: () => navigate('/inventaire'),
+      description: 'G+I → Inventaire',
+    },
+    {
+      key: 'f',
+      gKey: true,
+      action: () => navigate('/factures'),
+      description: 'G+F → Factures',
+    },
+    {
+      key: 'c',
+      gKey: true,
+      action: () => navigate('/caisse'),
+      description: 'G+C → Caisse',
+    },
+    {
+      key: 'd',
+      gKey: true,
+      action: () => navigate('/'),
+      description: 'G+D → Dashboard',
+    },
+    {
+      key: 's',
+      gKey: true,
+      action: () => navigate('/settings'),
+      description: 'G+S → Paramètres',
+    },
+    {
+      key: '/',
+      ctrlKey: true,
+      action: () => setHelpOpen(true),
+      description: 'Ctrl+/ → Aide raccourcis',
+    },
+    {
       key: 'h',
       ctrlKey: true,
-      action: () => {
-        // Toggle help modal or show shortcuts
-        const shortcutsList = shortcuts.map(s => `${s.key}: ${s.description}`).join('\n');
-        alert('Raccourcis clavier:\n\n' + shortcutsList);
-      },
-      description: 'Afficher l\'aide',
+      action: () => setHelpOpen(true),
+      description: 'Ctrl+H → Aide raccourcis',
     },
   ], [navigate]);
 
   useKeyboardShortcuts(shortcuts);
-  return shortcuts;
+
+  return { shortcuts, helpOpen, setHelpOpen };
 }

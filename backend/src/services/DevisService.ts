@@ -348,6 +348,28 @@ export class DevisService {
   }
 
   /**
+   * Aggregate KPIs for the quotes list header.
+   */
+  async getStats(): Promise<any> {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(*)::int AS total_count,
+        COALESCE(SUM(total), 0) AS total_montant,
+        COUNT(*) FILTER (WHERE statut IN ('brouillon', 'envoye'))::int AS en_cours_count,
+        COUNT(*) FILTER (WHERE date_trunc('month', date_devis) = date_trunc('month', CURRENT_DATE))::int AS mois_count,
+        COALESCE(SUM(total) FILTER (WHERE date_trunc('month', date_devis) = date_trunc('month', CURRENT_DATE)), 0) AS mois_montant
+      FROM devis
+      WHERE deleted_at IS NULL
+    `);
+    const r = rows[0];
+    return {
+      total: { count: r.total_count, montant: Number(r.total_montant) },
+      en_cours: { count: r.en_cours_count },
+      mois: { count: r.mois_count, montant: Number(r.mois_montant) },
+    };
+  }
+
+  /**
    * Get quote by ID with lines
    */
   async getById(id: number): Promise<any> {

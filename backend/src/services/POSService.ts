@@ -1,5 +1,7 @@
 import pool from '../db/connection';
 import { caisseMagasinService } from './CaisseMagasinService';
+import { generateDocumentNumber } from './NumberingService';
+import { checkPeriodIsOpen } from './PeriodService';
 
 export class POSService {
   /**
@@ -125,6 +127,9 @@ export class POSService {
     try {
       await client.query('BEGIN');
 
+      // Reject sales into a closed accounting period
+      await checkPeriodIsOpen(new Date(), client);
+
       const { rows: sessionRows } = await client.query(
         'SELECT id, statut, location_id FROM pos_sessions WHERE id = $1 FOR UPDATE',
         [sessionId]
@@ -140,9 +145,28 @@ export class POSService {
 
       const sessionLocationId = sessionRows[0].location_id || await this.getPrincipalLocationId(client);
 
-      // Generate invoice number
-      const { rows: seqRows } = await client.query("SELECT nextval('facture_numero_seq') as num");
-      const numeroFacture = `POS-${new Date().getFullYear()}-${String(seqRows[0].num).padStart(5, '0')}`;
+      if (!items || items.length === 0) {
+        throw new Error('Aucun article dans la vente');
+      }
+
+      // SECURITY: never trust client-supplied prices. Resolve the authoritative
+      // sale price (prix_vente) from the product catalogue and overwrite each line.
+      for (const item of items) {
+        if (!item.quantite || item.quantite <= 0) {
+          throw new Error(`Quantité invalide pour le produit ${item.produit_id}`);
+        }
+        const { rows: prixRows } = await client.query(
+          'SELECT prix_vente FROM produits WHERE id = $1 AND deleted_at IS NULL',
+          [item.produit_id]
+        );
+        if (prixRows.length === 0) {
+          throw new Error(`Produit ${item.produit_id} introuvable`);
+        }
+        item.prix_unitaire = parseFloat(prixRows[0].prix_vente);
+      }
+
+      // Generate invoice number — same FAC sequence/format as the rest of the app
+      const numeroFacture = await generateDocumentNumber('facture', client);
 
       // Calculate totals (no TVA)
       let sousTotal = 0;

@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { cashVarianceService } from '../services/CashVarianceService';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authorize } from '../middleware/auth';
 
 const router = Router();
 
-// All cash variance routes require authentication
+// Cash variance / performance is sensitive — admin & manager only
 router.use(authenticate);
+router.use(authorize('admin', 'manager'));
 
 // Get daily cash variance
 router.get('/daily', async (req, res) => {

@@ -84,6 +84,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setMontant(parseFloat(remainingDue as any).toFixed(2));
   };
 
+  const montantNum = parseFloat(montant);
+  const isAmountInvalid = isNaN(montantNum) || montantNum <= 0 || montantNum > remainingDue;
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-lg">
@@ -174,7 +177,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
               Annuler
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button type="submit" disabled={loading || isAmountInvalid}>
               {loading ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />

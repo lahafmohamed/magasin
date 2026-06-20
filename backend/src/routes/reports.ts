@@ -15,5 +15,10 @@ router.get('/turnover', ReportingController.getInventoryTurnover);
 router.get('/sales-by-category', ReportingController.getSalesByCategory);
 router.get('/products', ReportingController.getProductPerformance);
 router.get('/margins', ReportingController.getMarginsReport);
+router.get('/revenue-trends', ReportingController.getRevenueTrends);
+router.get('/yoy', ReportingController.getYoYComparison);
+router.get('/forecast', ReportingController.getRevenueForecast);
+router.get('/consolidated', ReportingController.getConsolidatedDashboard);
+router.get('/alerts', ReportingController.getAlerts);
 
 export default router;

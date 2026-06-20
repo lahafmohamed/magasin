@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './lib/AuthContext';
 import { Toaster } from 'sonner';
@@ -6,6 +6,9 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import { useERPShortcuts } from './hooks/useKeyboardShortcuts';
+import { useSseNotifications } from './hooks/useSseNotifications';
+import { Command } from 'lucide-react';
+import { LoadingScreen } from './components/ui/loading';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Inventaire = lazy(() => import('./pages/Inventaire'));
@@ -32,7 +35,6 @@ const GeneralLedger = lazy(() => import('./pages/GeneralLedger'));
 const Employes = lazy(() => import('./pages/Employes'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const PermissionsPage = lazy(() => import('./pages/PermissionsPage'));
-const TvaSettings = lazy(() => import('./pages/TvaSettings'));
 // Phase 5 - New modules
 const Devis = lazy(() => import('./pages/Devis'));
 const NouveauDevis = lazy(() => import('./pages/NouveauDevis'));
@@ -49,12 +51,47 @@ const Depenses = lazy(() => import('./pages/DepensesV2'));
 const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 const TiersPage = lazy(() => import('./pages/Tiers'));
 const TiersDetail = lazy(() => import('./pages/TiersDetail'));
+const CompanySettings = lazy(() => import('./pages/CompanySettings'));
+const AuditLog = lazy(() => import('./pages/AuditLog'));
+const Comptabilite = lazy(() => import('./pages/Comptabilite'));
+const Tresorerie = lazy(() => import('./pages/Tresorerie'));
 
 function AppWithShortcuts() {
-  useERPShortcuts();
+  useSseNotifications();
+  const { shortcuts, helpOpen, setHelpOpen } = useERPShortcuts();
+
+  useEffect(() => {
+    if (helpOpen) {
+      const handler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setHelpOpen(false);
+      };
+      document.addEventListener('keydown', handler);
+      return () => document.removeEventListener('keydown', handler);
+    }
+  }, [helpOpen, setHelpOpen]);
 
   return (
-    <Suspense fallback={<div className="p-6">Chargement...</div>}>
+    <Suspense fallback={<LoadingScreen />}>
+      {/* Shortcuts help modal */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4" onClick={() => setHelpOpen(false)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-bold mb-4">Raccourcis clavier</h2>
+            <div className="space-y-2">
+              {shortcuts.map((s, i) => (
+                <div key={i} className="flex justify-between items-center text-sm">
+                  <span className="text-muted-foreground">{s.description}</span>
+                  <kbd className="inline-flex items-center gap-1 rounded border bg-muted px-2 py-0.5 font-mono text-xs">
+                    {s.gKey ? <><Command className="h-3 w-3" />G puis {s.key.toUpperCase()}</> : s.key}
+                  </kbd>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-4 text-center">Appuyez sur Échap pour fermer</p>
+          </div>
+        </div>
+      )}
+
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/change-password" element={
@@ -147,6 +184,11 @@ function AppWithShortcuts() {
         <Route path="/devis/:id" element={
           <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff']}>
             <Layout><DevisDetail /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/devis/:id/edit" element={
+          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff']}>
+            <Layout><NouveauDevis /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/bons-livraison" element={
@@ -265,9 +307,24 @@ function AppWithShortcuts() {
             <Layout><PermissionsPage /></Layout>
           </ProtectedRoute>
         } />
-        <Route path="/admin/tva" element={
+        <Route path="/settings" element={
+          <ProtectedRoute requiredRoles={['admin', 'manager']}>
+            <Layout><CompanySettings /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/admin/audit" element={
           <ProtectedRoute requiredRoles={['admin']}>
-            <Layout><TvaSettings /></Layout>
+            <Layout><AuditLog /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/comptabilite" element={
+          <ProtectedRoute requiredRoles={['admin', 'manager']}>
+            <Layout><Comptabilite /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/tresorerie" element={
+          <ProtectedRoute requiredRoles={['admin', 'manager']}>
+            <Layout><Tresorerie /></Layout>
           </ProtectedRoute>
         } />
       </Routes>

@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Loader2, ArrowLeft } from 'lucide-react';
+import { Loader2, ArrowLeft, PackageCheck } from 'lucide-react';
 import { api } from '../services/authService';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EmptyState } from '@/components/ui/empty-state';
+import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { formatFCFA } from '../utils/format';
 
 interface Order {
@@ -44,7 +47,7 @@ interface StockLocation {
   actif: boolean;
 }
 
-const SELECT_CLS = 'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
+type OrderSortKey = 'numero_commande' | 'fournisseur_nom' | 'date_commande' | 'statut' | 'sous_total';
 
 const STATUT_BADGE: Record<string, string> = {
   validee: 'bg-warning-100 text-warning-800',
@@ -61,6 +64,8 @@ export default function Receptions() {
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [sort, setSort] = useState<SortState<OrderSortKey> | null>(null);
+  const handleSort = (key: OrderSortKey) => setSort((s) => toggleSort(s, key));
 
   useEffect(() => {
     fetchPendingOrders();
@@ -149,6 +154,25 @@ export default function Receptions() {
     }
   };
 
+  const sortedOrders = useMemo(() => {
+    if (!sort) return orders;
+    const arr = [...orders];
+    arr.sort((a, b) => {
+      let cmp: number;
+      if (sort.key === 'sous_total') {
+        cmp = (parseFloat(a.sous_total) || 0) - (parseFloat(b.sous_total) || 0);
+      } else if (sort.key === 'date_commande') {
+        cmp = new Date(a.date_commande).getTime() - new Date(b.date_commande).getTime();
+      } else {
+        const av = (a[sort.key] || '').toString().toLowerCase();
+        const bv = (b[sort.key] || '').toString().toLowerCase();
+        cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      }
+      return sort.dir === 'asc' ? cmp : -cmp;
+    });
+    return arr;
+  }, [orders, sort]);
+
   if (loading) {
     return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
@@ -169,18 +193,18 @@ export default function Receptions() {
           <p className="text-sm text-muted-foreground">Commande: {selectedOrder.numero_commande}</p>
           <div className="mt-4 max-w-sm space-y-1.5">
             <Label htmlFor="reception-location">Location de réception</Label>
-            <select
-              id="reception-location"
-              className={SELECT_CLS}
-              value={selectedLocationId}
-              onChange={(e) => setSelectedLocationId(e.target.value)}
-            >
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.nom} ({location.code})
-                </option>
-              ))}
-            </select>
+            <Select value={selectedLocationId} onValueChange={setSelectedLocationId}>
+              <SelectTrigger id="reception-location" className="h-9">
+                <SelectValue placeholder="Sélectionner une location" />
+              </SelectTrigger>
+              <SelectContent>
+                {locations.map((location) => (
+                  <SelectItem key={location.id} value={String(location.id)}>
+                    {location.nom} ({location.code})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -253,24 +277,22 @@ export default function Receptions() {
       <h1 className="text-2xl font-semibold tracking-tight mb-6">Réceptions de commandes</h1>
 
       {orders.length === 0 ? (
-        <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">
-          Aucune commande en attente de réception.
-        </div>
+        <EmptyState icon={PackageCheck} title="Aucune commande en attente de réception." />
       ) : (
         <div className="overflow-x-auto rounded-md border bg-card">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-left">
               <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="px-3 py-2 font-medium">N° commande</th>
-                <th className="px-3 py-2 font-medium">Fournisseur</th>
-                <th className="px-3 py-2 font-medium">Date</th>
-                <th className="px-3 py-2 font-medium">Statut</th>
-                <th className="px-3 py-2 font-medium text-right">Montant</th>
+                <SortableHeader columnKey="numero_commande" sort={sort} onSort={handleSort}>N° commande</SortableHeader>
+                <SortableHeader columnKey="fournisseur_nom" sort={sort} onSort={handleSort}>Fournisseur</SortableHeader>
+                <SortableHeader columnKey="date_commande" sort={sort} onSort={handleSort}>Date</SortableHeader>
+                <SortableHeader columnKey="statut" sort={sort} onSort={handleSort}>Statut</SortableHeader>
+                <SortableHeader columnKey="sous_total" sort={sort} onSort={handleSort} align="right">Montant</SortableHeader>
                 <th className="px-3 py-2 font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {orders.map((order) => (
+              {sortedOrders.map((order) => (
                 <tr key={order.id} className="hover:bg-muted/30">
                   <td className="px-3 py-2 font-medium num">{order.numero_commande}</td>
                   <td className="px-3 py-2">{order.fournisseur_nom}</td>

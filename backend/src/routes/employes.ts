@@ -7,13 +7,15 @@ const router = Router();
 // All routes require authentication
 router.use(authenticate);
 
-router.get('/', EmployeController.getAll);
-router.get('/stats', EmployeController.getStats);
-router.get('/:id', EmployeController.getById);
-router.post('/', authorize(['admin', 'manager']), EmployeController.create);
-router.post('/:id/commission', authorize(['admin', 'manager']), EmployeController.recordCommission);
-router.get('/:id/commissions', EmployeController.getCommissions);
-router.get('/:id/commission-summary', EmployeController.getCommissionSummary);
-router.post('/shifts', authorize(['admin', 'manager']), EmployeController.recordShift);
+// Employee data (incl. salary/commission) is sensitive — restrict all access to admin/manager
+const hrAccess = authorize(['admin', 'manager']);
+router.get('/', hrAccess, EmployeController.getAll);
+router.get('/stats', hrAccess, EmployeController.getStats);
+router.get('/:id', hrAccess, EmployeController.getById);
+router.post('/', hrAccess, EmployeController.create);
+router.post('/:id/commission', hrAccess, EmployeController.recordCommission);
+router.get('/:id/commissions', hrAccess, EmployeController.getCommissions);
+router.get('/:id/commission-summary', hrAccess, EmployeController.getCommissionSummary);
+router.post('/shifts', hrAccess, EmployeController.recordShift);
 
 export default router;
