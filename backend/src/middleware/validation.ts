@@ -64,35 +64,3 @@ export const validateQuery = (schema: ZodSchema) => {
     }
   };
 };
-
-/**
- * Middleware factory to validate request params against a Zod schema
- */
-export const validateParams = (schema: ZodSchema) => {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    try {
-      const parsed = schema.parse(req.params);
-      Object.assign(req.params, parsed);
-      next();
-    } catch (error) {
-      if (error instanceof ZodError) {
-        const zodError = error as ZodError;
-        const errors = (zodError.issues || []).map((err: any) => ({
-          field: err.path.join('.'),
-          message: err.message,
-        }));
-        res.status(400).json({
-          success: false,
-          error: 'Paramètres d\'URL invalides',
-          details: errors,
-        });
-        return;
-      }
-      res.status(500).json({
-        success: false,
-        error: 'Erreur de validation',
-      });
-      return;
-    }
-  };
-};

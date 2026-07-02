@@ -6,6 +6,7 @@ import { devisService } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import StatusBadge from '@/components/StatusBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Dialog,
@@ -156,7 +157,11 @@ export default function DevisDetail() {
       <DocumentLifecycle
         steps={[
           { label: 'Devis', numero: devis.numero_devis || `Devis #${devis.id}`, current: true },
-          { label: 'Bon de livraison', numero: null },
+          {
+            label: 'Bon de livraison',
+            numero: devis.bl_numero,
+            to: devis.bl_id ? `/bons-livraison/${devis.bl_id}` : null,
+          },
           {
             label: 'Facture',
             numero: devis.facture_numero,
@@ -173,8 +178,8 @@ export default function DevisDetail() {
         <CardContent className="grid sm:grid-cols-2 gap-4 text-sm">
           <p><strong>Date:</strong> {devis.date_devis ? new Date(devis.date_devis).toLocaleDateString('fr-FR') : '-'}</p>
           <p><strong>Validité:</strong> {devis.date_validite ? new Date(devis.date_validite).toLocaleDateString('fr-FR') : '-'}</p>
-          <p><strong>Statut:</strong> {devis.statut || '-'}</p>
-          <p><strong>Total:</strong> {new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF' }).format(Number(total || 0))}</p>
+          <p className="flex items-center gap-2"><strong>Statut:</strong> {devis.statut ? <StatusBadge type="devis" statut={devis.statut} /> : '-'}</p>
+          <p><strong>Total:</strong> <span className="tabular-nums font-semibold">{new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF' }).format(Number(total || 0))}</span></p>
         </CardContent>
       </Card>
 

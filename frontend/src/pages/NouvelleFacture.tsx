@@ -501,7 +501,7 @@ export default function NouvelleFacture() {
                           <div className="text-xs text-muted-foreground font-mono">
                             {p.reference} · stock: {stock}
                             {(p as any).similarity && (p as any).similarity < 0.5 && (
-                              <span className="text-amber-500 ml-1">(résultat approximatif)</span>
+                              <span className="text-warning-500 ml-1">(résultat approximatif)</span>
                             )}
                           </div>
                         </div>
@@ -511,7 +511,7 @@ export default function NouvelleFacture() {
                           </div>
                           <div
                             className={`text-[11px] ${
-                              stock <= stockMin ? 'text-destructive' : 'text-emerald-600'
+                              stock <= stockMin ? 'text-destructive' : 'text-success-600'
                             }`}
                           >
                             {stock <= stockMin ? 'Stock bas' : 'Disponible'}
@@ -656,7 +656,7 @@ export default function NouvelleFacture() {
                                 className={`inline-flex flex-col items-end px-2 py-1 rounded font-mono text-xs font-semibold leading-tight ${
                                   belowCost
                                     ? 'bg-destructive/10 text-destructive'
-                                    : 'bg-emerald-500/10 text-emerald-700'
+                                    : 'bg-success-500/10 text-success-700'
                                 }`}
                               >
                                 <span>
@@ -701,6 +701,8 @@ export default function NouvelleFacture() {
                                 type="button"
                                 className="text-muted-foreground hover:text-destructive p-1"
                                 onClick={() => removeLigne(i)}
+                                aria-label="Retirer cette ligne"
+                                title="Retirer cette ligne"
                               >
                                 <X className="h-4 w-4" />
                               </button>

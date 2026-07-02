@@ -7,6 +7,7 @@ import { bonLivraisonService } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import StatusBadge from '@/components/StatusBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Dialog,
@@ -174,9 +175,9 @@ export default function BonLivraisonDetail() {
         </CardHeader>
         <CardContent className="grid sm:grid-cols-2 gap-4 text-sm">
           <p><strong>Date:</strong> {bon.date_bl ? new Date(bon.date_bl).toLocaleDateString('fr-FR') : '-'}</p>
-          <p><strong>Statut:</strong> {bon.statut || '-'}</p>
+          <p className="flex items-center gap-2"><strong>Statut:</strong> {bon.statut ? <StatusBadge type="bl" statut={bon.statut} /> : '-'}</p>
           <p><strong>Devis:</strong> {bon.devis_numero || bon.devis_id || '-'}</p>
-          <p><strong>Total:</strong> {formatXOF(bon.total)}</p>
+          <p><strong>Total:</strong> <span className="tabular-nums font-semibold">{formatXOF(bon.total)}</span></p>
         </CardContent>
       </Card>
 

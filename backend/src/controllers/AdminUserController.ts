@@ -36,16 +36,6 @@ export class AdminUserController {
     }
   }
 
-  static async getPermissions(req: Request, res: Response): Promise<void> {
-    try {
-      const permissions = await AdminUserService.getPermissions();
-      res.json({ success: true, data: permissions });
-    } catch (error) {
-      logger.error({ err: error }, 'Error fetching permissions');
-      res.status(500).json({ success: false, error: 'Erreur interne' });
-    }
-  }
-
   static async createUser(req: Request, res: Response): Promise<void> {
     try {
       const { username, password, role_id } = req.body;
@@ -77,26 +67,4 @@ export class AdminUserController {
     }
   }
 
-  static async getUserPermissions(req: Request, res: Response): Promise<void> {
-    try {
-      const id = parseInt(req.params.id);
-      const data = await AdminUserService.getUserPermissions(id);
-      res.json({ success: true, data });
-    } catch (error: any) {
-      logger.error({ err: error }, 'Error fetching user permissions');
-      res.status(500).json({ success: false, error: error.message || 'Erreur interne' });
-    }
-  }
-
-  static async updateUserPermissions(req: Request, res: Response): Promise<void> {
-    try {
-      const id = parseInt(req.params.id);
-      const { customiser_permissions, permission_ids } = req.body;
-      await AdminUserService.updateUserPermissions(id, customiser_permissions, permission_ids);
-      res.json({ success: true, message: 'Permissions de l\'utilisateur mises à jour avec succès' });
-    } catch (error: any) {
-      logger.error({ err: error }, 'Error updating user permissions');
-      res.status(500).json({ success: false, error: error.message || 'Erreur interne' });
-    }
-  }
 }

@@ -253,7 +253,7 @@ export default function UserManagement() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                        user.actif ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                        user.actif ? 'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400' : 'bg-danger-100 text-danger-700 dark:bg-danger-900/30 dark:text-danger-400'
                       }`}>
                         {user.actif ? 'Actif' : 'Inactif'}
                       </span>
@@ -293,7 +293,7 @@ export default function UserManagement() {
               </div>
               
               <div className="space-y-2">
-                <Label htmlFor="username">Identifiant (Username) <span className="text-red-500">*</span></Label>
+                <Label htmlFor="username">Identifiant (Username) <span className="text-danger-500">*</span></Label>
                 <Input 
                   id="username" 
                   value={formData.username} 
@@ -316,7 +316,7 @@ export default function UserManagement() {
 
               <div className="space-y-2">
                 <Label htmlFor="password" className="flex justify-between">
-                  <span>Mot de passe {editingUser ? '(optionnel)' : <span className="text-red-500">*</span>}</span>
+                  <span>Mot de passe {editingUser ? '(optionnel)' : <span className="text-danger-500">*</span>}</span>
                 </Label>
                 <div className="relative">
                   <KeyRound className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -333,7 +333,7 @@ export default function UserManagement() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="role">Rôle assigné <span className="text-red-500">*</span></Label>
+                <Label htmlFor="role">Rôle assigné <span className="text-danger-500">*</span></Label>
                 <Select
                   required
                   name="role"

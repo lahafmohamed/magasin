@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { consoleError as loggerError } from '../utils/logError';
 import pool from '../db/connection';
 import { produitService } from '../services/ProduitService';
 import {
@@ -316,6 +317,16 @@ export class ProduitController {
     }
   }
 
+  static async getReorderSuggestions(_req: Request, res: Response): Promise<void> {
+    try {
+      const data = await produitService.getReorderSuggestions();
+      res.json(successResponse(data));
+    } catch (error) {
+      loggerError('GET /api/produits/reorder-suggestions', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
   static async getStockHistory(req: Request, res: Response): Promise<void> {
     try {
       const data = await produitService.getStockHistory(parseInt(req.params.id), parseInt(req.query.limit as string) || 50);
@@ -565,8 +576,4 @@ export class ProduitController {
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
-}
-
-function loggerError(context: string, error: any) {
-  console.error(`Erreur ${context}:`, error);
 }

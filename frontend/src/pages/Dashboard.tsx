@@ -9,6 +9,7 @@ import {
 } from '../services/api';
 import { StatsDashboard } from '../types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -27,7 +28,6 @@ import {
   CheckCircle2,
   Truck,
   PackageCheck,
-  Loader2,
   Target,
   Receipt,
   RefreshCw,
@@ -39,6 +39,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { DashboardDemandeWidgets } from '../components/DashboardDemandeWidgets';
+import { DashboardSkeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import {
   AreaChart,
@@ -57,9 +58,14 @@ import {
   LineChart,
 } from 'recharts';
 import { formatFCFA as formatXOF } from '../utils/format';
-
-const COLORS = ['#1E3A8A', '#1D4ED8', '#3B82F6', '#60A5FA', '#93C5FD'];
-const CHART_PRIMARY = '#1D4ED8';
+import {
+  CHART_COLORS as COLORS,
+  CHART_PRIMARY,
+  CHART_SECONDARY,
+  CHART_GRID,
+  CHART_AXIS,
+  CHART_TOOLTIP_STYLE,
+} from '@/lib/chartColors';
 const WEEKDAYS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
 
 type Period = 7 | 30 | 90;
@@ -109,7 +115,7 @@ function Delta({ value }: { value: number | null }) {
   return (
     <span
       className={`inline-flex items-center gap-1 text-xs font-medium ${
-        positive ? 'text-green-600' : 'text-destructive'
+        positive ? 'text-success-600' : 'text-destructive'
       }`}
     >
       <Icon className="h-3 w-3" />
@@ -123,27 +129,30 @@ function AlertBanner({ alerts }: { alerts: { low_stock: any[]; overdue_invoices:
   const totalAlerts = alerts.low_stock.length + alerts.overdue_invoices.length + alerts.pending_orders.length;
   if (totalAlerts === 0) return null;
 
+  const chipCls =
+    "inline-flex items-center gap-1 rounded-md bg-white dark:bg-warning-500/15 px-2.5 py-1.5 text-warning-700 dark:text-warning-200 hover:bg-warning-100 dark:hover:bg-warning-500/25 transition-colors";
+
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
-      <div className="flex items-center gap-2 text-amber-800 font-semibold text-sm">
+    <div className="rounded-lg border border-warning-200 bg-warning-50 dark:border-warning-500/30 dark:bg-warning-500/10 p-3 space-y-2 animate-in fade-in-0">
+      <div className="flex items-center gap-2 text-warning-800 dark:text-warning-200 font-semibold text-sm">
         <AlertTriangle className="h-4 w-4" />
         Alertes ({totalAlerts})
       </div>
       <div className="flex flex-wrap gap-3 text-xs">
         {alerts.low_stock.length > 0 && (
-          <Link to="/inventaire" className="inline-flex items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-amber-700 hover:bg-amber-100 transition-colors">
+          <Link to="/inventaire" className={chipCls}>
             <Package className="h-3.5 w-3.5" />
             Stock faible: {alerts.low_stock.length} produit(s)
           </Link>
         )}
         {alerts.overdue_invoices.length > 0 && (
-          <Link to="/factures" className="inline-flex items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-amber-700 hover:bg-amber-100 transition-colors">
+          <Link to="/factures" className={chipCls}>
             <FileText className="h-3.5 w-3.5" />
             Factures impayées (+30j): {alerts.overdue_invoices.length}
           </Link>
         )}
         {alerts.pending_orders.length > 0 && (
-          <Link to="/commandes" className="inline-flex items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-amber-700 hover:bg-amber-100 transition-colors">
+          <Link to="/commandes" className={chipCls}>
             <ShoppingCart className="h-3.5 w-3.5" />
             Commandes en retard: {alerts.pending_orders.length}
           </Link>
@@ -342,11 +351,8 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center min-h-[50vh]">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          <p className="text-muted-foreground text-sm">Chargement…</p>
-        </div>
+      <div className="p-3 sm:p-6 w-full max-w-full">
+        <DashboardSkeleton />
       </div>
     );
   }
@@ -369,7 +375,7 @@ export default function Dashboard() {
                 <button
                   key={p}
                   onClick={() => setPeriod(p)}
-                  className={`px-2.5 py-1 rounded-sm font-medium transition-colors ${
+                  className={`px-2.5 py-1 rounded-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 ${
                     period === p
                       ? 'bg-primary text-primary-foreground'
                       : 'text-muted-foreground hover:text-foreground'
@@ -466,7 +472,7 @@ export default function Dashboard() {
                       <Line
                         type="monotone"
                         dataKey="v"
-                        stroke="#1E3A8A"
+                        stroke={CHART_PRIMARY}
                         strokeWidth={1.5}
                         dot={false}
                       />
@@ -493,7 +499,7 @@ export default function Dashboard() {
               </p>
               {bestDay && (
                 <p className="mt-2 text-[11px] text-muted-foreground inline-flex items-center gap-1">
-                  <BadgeCheck className="h-3 w-3 text-green-600" />
+                  <BadgeCheck className="h-3 w-3 text-success-600" />
                   Meilleur jour: <span className="font-semibold">{bestDay.date}</span> ·{' '}
                   {formatXOF(bestDay.total)}
                 </p>
@@ -509,14 +515,14 @@ export default function Dashboard() {
                 </p>
                 <AlertTriangle
                   className={`h-4 w-4 ${
-                    stats && stats.alertes_stock > 0 ? 'text-destructive' : 'text-green-500'
+                    stats && stats.alertes_stock > 0 ? 'text-destructive' : 'text-success-500'
                   }`}
                 />
               </div>
               <div className="mt-2">
                 <span
                   className={`text-2xl font-bold tracking-tight ${
-                    stats && stats.alertes_stock > 0 ? 'text-destructive' : 'text-green-600'
+                    stats && stats.alertes_stock > 0 ? 'text-destructive' : 'text-success-600'
                   }`}
                 >
                   {stats?.alertes_stock || 0}
@@ -562,11 +568,11 @@ export default function Dashboard() {
                 </div>
                 <div className="rounded-lg border p-3 bg-muted/30">
                   <p className="text-xs text-muted-foreground">Min estimé</p>
-                  <p className="text-lg font-bold mt-1 text-amber-600">{formatXOF(forecastData.forecast?.min)}</p>
+                  <p className="text-lg font-bold mt-1 text-warning-600">{formatXOF(forecastData.forecast?.min)}</p>
                 </div>
                 <div className="rounded-lg border p-3 bg-muted/30">
                   <p className="text-xs text-muted-foreground">Max estimé</p>
-                  <p className="text-lg font-bold mt-1 text-green-600">{formatXOF(forecastData.forecast?.max)}</p>
+                  <p className="text-lg font-bold mt-1 text-success-600">{formatXOF(forecastData.forecast?.max)}</p>
                 </div>
               </div>
               {forecastData.historique?.length > 1 && (
@@ -577,8 +583,8 @@ export default function Dashboard() {
                       { mois: 'Prévi', value: forecastData.forecast?.prevision || 0 },
                     ]}>
                       <Area type="monotone" dataKey="value" stroke={CHART_PRIMARY} fill={CHART_PRIMARY} fillOpacity={0.2} strokeWidth={2} />
-                      <Tooltip formatter={(v: any) => formatXOF(v)} />
-                      <XAxis dataKey="mois" tick={{ fontSize: 10 }} />
+                      <Tooltip formatter={(v: any) => formatXOF(v)} contentStyle={CHART_TOOLTIP_STYLE} />
+                      <XAxis dataKey="mois" tick={{ fontSize: 10, fill: CHART_AXIS }} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -645,29 +651,29 @@ export default function Dashboard() {
                       label: 'En attente',
                       count: commandeStats.en_attente || 0,
                       Icon: Clock,
-                      color: 'text-warning-600',
-                      bg: 'bg-warning-50',
+                      color: 'text-warning-600 dark:text-warning-200',
+                      bg: 'bg-warning-50 dark:bg-warning-500/10',
                     },
                     {
                       label: 'Validées',
                       count: commandeStats.validee || 0,
                       Icon: CheckCircle2,
-                      color: 'text-blue-600',
-                      bg: 'bg-blue-50',
+                      color: 'text-blue-600 dark:text-blue-300',
+                      bg: 'bg-blue-50 dark:bg-blue-500/10',
                     },
                     {
                       label: 'Expédiées',
                       count: commandeStats.expediee || 0,
                       Icon: Truck,
-                      color: 'text-indigo-600',
-                      bg: 'bg-indigo-50',
+                      color: 'text-indigo-600 dark:text-indigo-300',
+                      bg: 'bg-indigo-50 dark:bg-indigo-500/10',
                     },
                     {
                       label: 'Livrées',
                       count: commandeStats.livree || 0,
                       Icon: PackageCheck,
-                      color: 'text-green-600',
-                      bg: 'bg-green-50',
+                      color: 'text-success-600 dark:text-success-300',
+                      bg: 'bg-success-50 dark:bg-success-500/10',
                     },
                   ].map((s) => (
                     <div
@@ -693,6 +699,13 @@ export default function Dashboard() {
         <DashboardDemandeWidgets />
 
         {/* Revenue chart */}
+        {revenueData.length === 0 && (
+          <Card>
+            <CardContent>
+              <EmptyState icon={TrendingUp} title="Aucune vente" description="Aucun chiffre d'affaires sur la période sélectionnée." />
+            </CardContent>
+          </Card>
+        )}
         {revenueData.length > 0 && (
           <Card>
             <CardHeader className="pb-3">
@@ -718,13 +731,13 @@ export default function Dashboard() {
                       <stop offset="100%" stopColor={CHART_PRIMARY} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART_GRID} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: CHART_AXIS }} />
                   <YAxis
-                    tick={{ fontSize: 11 }}
+                    tick={{ fontSize: 11, fill: CHART_AXIS }}
                     tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`}
                   />
-                  <Tooltip formatter={(value: any) => formatXOF(value)} />
+                  <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
                   <Area
                     type="monotone"
                     dataKey="total"
@@ -757,12 +770,12 @@ export default function Dashboard() {
                   current: parseFloat(c.chiffre_affaires) || 0,
                   previous: parseFloat(yoyData.previous_year?.[i]?.chiffre_affaires || 0),
                 }))}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mois" tick={{ fontSize: 11 }} />
-                  <YAxis tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(value: any) => formatXOF(value)} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART_GRID} />
+                  <XAxis dataKey="mois" tick={{ fontSize: 11, fill: CHART_AXIS }} />
+                  <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
                   <Bar dataKey="current" fill={CHART_PRIMARY} name="Cette année" radius={[4,4,0,0]} />
-                  <Bar dataKey="previous" fill="#94a3b8" name="Année préc." radius={[4,4,0,0]} />
+                  <Bar dataKey="previous" fill={CHART_SECONDARY} name="Année préc." radius={[4,4,0,0]} />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -892,7 +905,7 @@ export default function Dashboard() {
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value: any) => formatXOF(value)} />
+                    <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="space-y-1.5 mt-2">
@@ -934,13 +947,13 @@ export default function Dashboard() {
             <CardContent>
               <ResponsiveContainer width="100%" height={chartHeight * 0.75}>
                 <BarChart data={weekdayBreakdown}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="day" tick={{ fontSize: 12 }} />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART_GRID} />
+                  <XAxis dataKey="day" tick={{ fontSize: 12, fill: CHART_AXIS }} />
                   <YAxis
-                    tick={{ fontSize: 11 }}
+                    tick={{ fontSize: 11, fill: CHART_AXIS }}
                     tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`}
                   />
-                  <Tooltip formatter={(value: any) => formatXOF(value)} />
+                  <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
                   <Bar dataKey="moyenne" fill={CHART_PRIMARY} radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -1005,7 +1018,7 @@ export default function Dashboard() {
                 </ScrollArea>
               ) : (
                 <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                  <CheckCircle2 className="h-10 w-10 mb-2 text-green-500" />
+                  <CheckCircle2 className="h-10 w-10 mb-2 text-success-500" />
                   <p className="text-sm">Aucun produit en alerte</p>
                 </div>
               )}

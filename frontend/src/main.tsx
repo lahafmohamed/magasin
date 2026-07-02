@@ -11,3 +11,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </ThemeProvider>
   </React.StrictMode>,
 )
+
+// Register the PWA service worker. Skipped on localhost so dev HMR stays clean.
+const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+if ('serviceWorker' in navigator && !isLocalhost) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      /* registration failure is non-fatal */
+    })
+  })
+}

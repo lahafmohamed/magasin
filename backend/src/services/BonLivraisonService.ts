@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { ClientAllocationService } from './ClientAllocationService';
+import { creditService } from './CreditService';
 
 export interface BonLivraisonLigneInput {
   produit_id?: number;
@@ -149,6 +150,8 @@ export class BonLivraisonService {
   ): Promise<any> {
     const validSortColumns = ['numero_bl', 'date_bl', 'total', 'statut', 'client_nom'];
     const sortColumn = validSortColumns.includes(sort) ? sort : 'date_bl';
+    // client_nom is a joined alias (tiers), not a bons_livraison column — qualify accordingly.
+    const sortExpr = sortColumn === 'client_nom' ? 't.raison_sociale' : `bl.${sortColumn}`;
     const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
     const offset = (page - 1) * limit;
 
@@ -178,7 +181,7 @@ export class BonLivraisonService {
       params.push(client_id);
     }
 
-    query += ` ORDER BY bl.${sortColumn} ${sortOrder} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    query += ` ORDER BY ${sortExpr} ${sortOrder} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
     const { rows } = await pool.query(query, params);
@@ -318,6 +321,10 @@ export class BonLivraisonService {
         prix_unitaire: l.prix_unitaire,
       }));
       const { sousTotal, total } = calculateTotals(pricingLignes);
+
+      // Enforce client credit limit before extending credit (goods ship on the BL,
+      // invoice follows). Locks the tiers row against concurrent credit documents.
+      await creditService.assertWithinCreditLimit(client, tiers_id, total);
 
       // Insert delivery note
       const { rows: blResult } = await client.query(

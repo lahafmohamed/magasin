@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { consoleError } from '../utils/logError';
 import { reportingService } from '../services/ReportingService';
 
 export class ReportingController {
@@ -160,8 +161,4 @@ export class ReportingController {
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
-}
-
-function consoleError(context: string, error: any) {
-  console.error(`Erreur ${context}:`, error);
 }

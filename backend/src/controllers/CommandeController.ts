@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import pool from '../db/connection';
 import { AuthRequest } from '../middleware/auth';
 import { logAudit } from '../middleware/audit';
+import { factureFournisseurService } from '../services/FactureFournisseurService';
 
 export class CommandeController {
 
@@ -377,6 +378,45 @@ export class CommandeController {
       res.status(500).json({ error: 'Erreur serveur' });
     } finally {
       client.release();
+    }
+  }
+
+  /**
+   * 3-way match: reconcile ordered (commande) vs received (receptions) vs
+   * invoiced (facture fournisseur) quantities per product for an order.
+   */
+  static async getMatch(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      const { rows: cmdRows } = await pool.query(
+        `SELECT c.id, c.numero_commande, c.statut, t.raison_sociale as fournisseur_nom
+         FROM commandes_fournisseur c
+         LEFT JOIN tiers t ON c.tiers_id = t.id
+         WHERE c.id = $1`,
+        [id]
+      );
+      if (cmdRows.length === 0) {
+        res.status(404).json({ error: 'Commande non trouvée' });
+        return;
+      }
+
+      const match = await factureFournisseurService.computeMatch(parseInt(id));
+
+      res.json({
+        commande_id: cmdRows[0].id,
+        numero_commande: cmdRows[0].numero_commande,
+        statut: cmdRows[0].statut,
+        fournisseur_nom: cmdRows[0].fournisseur_nom,
+        coherent: match.coherent,
+        within_tolerance: match.within_tolerance,
+        config: match.config,
+        violations: match.violations,
+        lignes: match.lignes,
+      });
+    } catch (error) {
+      console.error('Erreur GET /api/commandes/:id/match:', error);
+      res.status(500).json({ error: 'Erreur serveur' });
     }
   }
 

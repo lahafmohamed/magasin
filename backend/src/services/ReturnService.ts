@@ -102,7 +102,9 @@ export class ReturnService {
 
       const returnId = returnResult[0].id;
 
-      // Insert return lines and restock
+      // Insert return lines only. Stock is NOT restocked here: a return starts in
+      // 'en_attente' and is only restocked once approved (updateStatut -> 'traite').
+      // This prevents pending/rejected returns from inflating inventory.
       for (const ligne of lignes) {
         const { rows: priceRows } = await client.query(
           "SELECT prix_unitaire FROM document_lignes WHERE document_type = 'facture' AND document_id = $1 AND produit_id = $2 LIMIT 1",
@@ -116,53 +118,6 @@ export class ReturnService {
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [returnId, ligne.facture_id, ligne.produit_id, ligne.quantite, ligne.raison, prixUnitaire, ligne.quantite * prixUnitaire, ligne.notes || null]
         );
-
-        // Restock to the location where the original facture originated
-        const { rows: factureLocRows } = await client.query(
-          `SELECT COALESCE(location_id,
-             (SELECT id FROM stock_locations WHERE est_principal = true AND actif = true LIMIT 1)
-           ) as location_id FROM factures WHERE id = $1`,
-          [ligne.facture_id]
-        );
-        const restockLocationId = factureLocRows[0]?.location_id || null;
-
-        if (restockLocationId) {
-          const { rows: stockBefore } = await client.query(
-            `SELECT COALESCE(quantite, 0) as quantite FROM stock_par_location
-             WHERE produit_id = $1 AND location_id = $2`,
-            [ligne.produit_id, restockLocationId]
-          );
-          const stockAvant = stockBefore.length > 0 ? parseInt(stockBefore[0].quantite) : 0;
-
-          await client.query(
-            `INSERT INTO stock_par_location (produit_id, location_id, quantite)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (produit_id, location_id)
-             DO UPDATE SET quantite = stock_par_location.quantite + $3`,
-            [ligne.produit_id, restockLocationId, ligne.quantite]
-          );
-
-          await client.query(
-            `INSERT INTO mouvements_stock
-               (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)
-             VALUES ($1, 'retour', $2, $3, $4, $5, $6, $7)`,
-            [
-              ligne.produit_id,
-              ligne.quantite,
-              stockAvant,
-              stockAvant + ligne.quantite,
-              `Retour client — ${numeroRetour}`,
-              numeroRetour,
-              restockLocationId,
-            ]
-          );
-        } else {
-          // Fallback to legacy produits.stock if no location resolved
-          await client.query(
-            'UPDATE produits SET stock = stock + $1 WHERE id = $2',
-            [ligne.quantite, ligne.produit_id]
-          );
-        }
       }
 
       await client.query('COMMIT');
@@ -251,7 +206,79 @@ export class ReturnService {
   }
 
   /**
-   * Update return status
+   * Resolve the stock location to (re)stock for a return line: the original
+   * facture's location, falling back to the principal active location.
+   */
+  private async resolveReturnLocation(client: any, factureId: number): Promise<number | null> {
+    const { rows } = await client.query(
+      `SELECT COALESCE(location_id,
+         (SELECT id FROM stock_locations WHERE est_principal = true AND actif = true LIMIT 1)
+       ) as location_id FROM factures WHERE id = $1`,
+      [factureId]
+    );
+    return rows[0]?.location_id || null;
+  }
+
+  /**
+   * Apply a stock delta (+restock on approval, -reverse on cancel-after-approval)
+   * for every line of a return, with mouvements_stock audit rows. valeur_stock is
+   * kept correct automatically by trigger trg_stock_valeur_invariant (076).
+   */
+  private async applyReturnStock(
+    client: any,
+    retourId: number,
+    numeroRetour: string,
+    direction: 1 | -1
+  ): Promise<void> {
+    const { rows: lignes } = await client.query(
+      'SELECT facture_id, produit_id, quantite FROM retour_lignes WHERE retour_id = $1',
+      [retourId]
+    );
+    for (const ligne of lignes) {
+      const locationId = await this.resolveReturnLocation(client, ligne.facture_id);
+      const qty = direction * ligne.quantite;
+      if (locationId) {
+        const { rows: stockBefore } = await client.query(
+          `SELECT COALESCE(quantite, 0) as quantite FROM stock_par_location
+           WHERE produit_id = $1 AND location_id = $2 FOR UPDATE`,
+          [ligne.produit_id, locationId]
+        );
+        const stockAvant = stockBefore.length > 0 ? parseInt(stockBefore[0].quantite) : 0;
+        await client.query(
+          `INSERT INTO stock_par_location (produit_id, location_id, quantite)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (produit_id, location_id)
+           DO UPDATE SET quantite = stock_par_location.quantite + $3`,
+          [ligne.produit_id, locationId, qty]
+        );
+        await client.query(
+          `INSERT INTO mouvements_stock
+             (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            ligne.produit_id,
+            direction === 1 ? 'retour' : 'ajustement',
+            qty,
+            stockAvant,
+            stockAvant + qty,
+            direction === 1 ? `Retour client — ${numeroRetour}` : `Annulation retour #${retourId}`,
+            direction === 1 ? numeroRetour : `RET-ANNUL-${retourId}`,
+            locationId,
+          ]
+        );
+      } else {
+        await client.query(
+          'UPDATE produits SET stock = stock + $1 WHERE id = $2',
+          [qty, ligne.produit_id]
+        );
+      }
+    }
+  }
+
+  /**
+   * Update return status. Stock is restocked on approval ('traite') and the
+   * restock is reversed only if a previously-approved return is cancelled.
+   * Allowed transitions: en_attente -> traite | annule ; traite -> annule.
    */
   async updateStatut(id: number, statut: string, userId?: number, req?: any): Promise<boolean> {
     const ALLOWED = ['en_attente', 'traite', 'annule'];
@@ -264,7 +291,7 @@ export class ReturnService {
       await client.query('BEGIN');
 
       const { rows: retRows } = await client.query(
-        'SELECT statut FROM retours WHERE id = $1 FOR UPDATE',
+        'SELECT statut, numero_retour FROM retours WHERE id = $1 FOR UPDATE',
         [id]
       );
       if (retRows.length === 0) {
@@ -272,55 +299,33 @@ export class ReturnService {
         return false;
       }
       const previousStatut = retRows[0].statut;
+      const numeroRetour = retRows[0].numero_retour;
 
-      // Cancelling a return that already restocked must REVERSE the restock,
-      // otherwise inventory drifts. Stock was added at creation (see create()).
-      if (statut === 'annule' && previousStatut !== 'annule') {
-        const { rows: lignes } = await client.query(
-          'SELECT facture_id, produit_id, quantite FROM retour_lignes WHERE retour_id = $1',
-          [id]
-        );
-        for (const ligne of lignes) {
-          const { rows: locRows } = await client.query(
-            `SELECT COALESCE(location_id,
-               (SELECT id FROM stock_locations WHERE est_principal = true AND actif = true LIMIT 1)
-             ) as location_id FROM factures WHERE id = $1`,
-            [ligne.facture_id]
-          );
-          const locationId = locRows[0]?.location_id || null;
-          if (locationId) {
-            const { rows: stockBefore } = await client.query(
-              `SELECT COALESCE(quantite, 0) as quantite FROM stock_par_location
-               WHERE produit_id = $1 AND location_id = $2 FOR UPDATE`,
-              [ligne.produit_id, locationId]
-            );
-            const stockAvant = stockBefore.length > 0 ? parseInt(stockBefore[0].quantite) : 0;
-            await client.query(
-              `UPDATE stock_par_location SET quantite = quantite - $3
-               WHERE produit_id = $1 AND location_id = $2`,
-              [ligne.produit_id, locationId, ligne.quantite]
-            );
-            await client.query(
-              `INSERT INTO mouvements_stock
-                 (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)
-               VALUES ($1, 'ajustement', $2, $3, $4, $5, $6, $7)`,
-              [
-                ligne.produit_id,
-                -ligne.quantite,
-                stockAvant,
-                stockAvant - ligne.quantite,
-                `Annulation retour #${id}`,
-                `RET-ANNUL-${id}`,
-                locationId,
-              ]
-            );
-          } else {
-            await client.query(
-              'UPDATE produits SET stock = stock - $1 WHERE id = $2',
-              [ligne.quantite, ligne.produit_id]
-            );
-          }
-        }
+      if (statut === previousStatut) {
+        await client.query('ROLLBACK');
+        return true; // no-op
+      }
+
+      // Guard the state machine: terminal states and illegal transitions.
+      const legal: Record<string, string[]> = {
+        en_attente: ['traite', 'annule'],
+        traite: ['annule'],
+        annule: [],
+      };
+      if (!legal[previousStatut]?.includes(statut)) {
+        throw new Error(`Transition de retour interdite: '${previousStatut}' -> '${statut}'`);
+      }
+
+      // Approval restocks; the return becomes an accounting/inventory event.
+      if (statut === 'traite') {
+        await checkPeriodIsOpen(new Date(), client);
+        await this.applyReturnStock(client, id, numeroRetour, 1);
+      }
+
+      // Cancelling an already-approved return reverses the restock.
+      // Cancelling a pending (en_attente) return touches no stock.
+      if (statut === 'annule' && previousStatut === 'traite') {
+        await this.applyReturnStock(client, id, numeroRetour, -1);
       }
 
       const { rowCount } = await client.query(

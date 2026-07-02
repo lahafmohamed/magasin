@@ -7,9 +7,6 @@ vi.mock('../services/api', () => ({
   produitService: {
     getAll: vi.fn(),
   },
-  clientService: {
-    getAll: vi.fn(),
-  },
   factureService: {
     create: vi.fn(),
   },
@@ -37,7 +34,7 @@ vi.mock('sonner', () => ({
   },
 }));
 
-import { produitService, clientService, factureService, ventesService } from '../services/api';
+import { produitService, factureService, ventesService } from '../services/api';
 
 const mockProduits = [
   {
@@ -60,23 +57,6 @@ const mockProduits = [
   },
 ];
 
-const mockClients = [
-  {
-    id: 1,
-    nom: 'Dupont',
-    prenom: 'Jean',
-    email: 'jean@example.com',
-    telephone: '0612345678',
-  },
-  {
-    id: 2,
-    nom: 'Martin',
-    prenom: 'Sophie',
-    email: 'sophie@example.com',
-    telephone: '0698765432',
-  },
-];
-
 function renderNouvelleFacture() {
   return render(<NouvelleFacture />);
 }
@@ -85,7 +65,6 @@ describe('NouvelleFacture', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (produitService.getAll as any).mockResolvedValue(mockProduits);
-    (clientService.getAll as any).mockResolvedValue(mockClients);
   });
 
   it('renders the invoice creation page', () => {
@@ -176,7 +155,6 @@ describe('NouvelleFacture - Form Submission', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (produitService.getAll as any).mockResolvedValue(mockProduits);
-    (clientService.getAll as any).mockResolvedValue(mockClients);
   });
 
   it('calls factureService.create with correct data on valid submission', async () => {

@@ -449,9 +449,9 @@ export default function CaisseV2() {
 
   const getTypeBadge = (type: string) => {
     if (type === 'encaissement') {
-      return <Badge className="bg-green-100 text-green-800">Entrée</Badge>;
+      return <Badge className="bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200">Entrée</Badge>;
     }
-    return <Badge className="bg-red-100 text-red-800">Sortie</Badge>;
+    return <Badge className="bg-danger-100 dark:bg-danger-500/20 text-danger-800 dark:text-danger-200">Sortie</Badge>;
   };
 
   const getCategorieLabel = (categorie: string) => {
@@ -518,7 +518,7 @@ export default function CaisseV2() {
       {selectedMagasin && !session && !loading && (
         <Card className="p-8">
           <div className="flex flex-col items-center text-center">
-            <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-4">
+            <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-muted flex items-center justify-center mb-4">
               <Lock className="h-8 w-8 text-gray-500" />
             </div>
             <h3 className="text-xl font-semibold mb-2">Caisse fermée</h3>
@@ -537,18 +537,18 @@ export default function CaisseV2() {
       {selectedMagasin && session && (
         <>
           {/* Status bar */}
-          <Card className="p-4 mb-6 bg-green-50 border-green-200">
+          <Card className="p-4 mb-6 bg-success-50 dark:bg-success-500/10 border-success-200 dark:border-success-500/30">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+                <div className="w-3 h-3 rounded-full bg-success-500 animate-pulse" />
                 <div>
-                  <span className="font-semibold text-green-900">Caisse ouverte</span>
-                  <span className="text-green-700 text-sm ml-2">
+                  <span className="font-semibold text-success-900 dark:text-success-200">Caisse ouverte</span>
+                  <span className="text-success-700 dark:text-success-300 text-sm ml-2">
                     depuis {formatDateTime(session.date_ouverture)}
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-4 text-sm text-green-800">
+              <div className="flex items-center gap-4 text-sm text-success-800 dark:text-success-200">
                 <span>Fond initial : {formatXOF(session.fond_initial)}</span>
                 <span>|</span>
                 <span>Ouverte par : {session.ouvert_par_username}</span>
@@ -560,12 +560,12 @@ export default function CaisseV2() {
           <div className="grid gap-4 md:grid-cols-4 mb-6">
             <Card className="p-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
-                  <TrendingUp className="h-5 w-5 text-green-600" />
+                <div className="w-10 h-10 rounded-full bg-success-100 dark:bg-success-500/20 flex items-center justify-center">
+                  <TrendingUp className="h-5 w-5 text-success-600 dark:text-success-300" />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Encaissements</p>
-                  <p className="text-xl font-bold text-green-600">
+                  <p className="text-xl font-bold text-success-600 dark:text-success-300">
                     {formatXOF(session.total_encaissements)}
                   </p>
                 </div>
@@ -574,12 +574,12 @@ export default function CaisseV2() {
 
             <Card className="p-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
-                  <TrendingDown className="h-5 w-5 text-red-600" />
+                <div className="w-10 h-10 rounded-full bg-danger-100 dark:bg-danger-500/20 flex items-center justify-center">
+                  <TrendingDown className="h-5 w-5 text-danger-600 dark:text-danger-300" />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Décaissements</p>
-                  <p className="text-xl font-bold text-red-600">
+                  <p className="text-xl font-bold text-danger-600 dark:text-danger-300">
                     {formatXOF(session.total_decaissements)}
                   </p>
                 </div>
@@ -588,12 +588,12 @@ export default function CaisseV2() {
 
             <Card className="p-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                  <Scale className="h-5 w-5 text-blue-600" />
+                <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-500/20 flex items-center justify-center">
+                  <Scale className="h-5 w-5 text-blue-600 dark:text-blue-300" />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Solde théorique</p>
-                  <p className="text-xl font-bold text-blue-600">
+                  <p className="text-xl font-bold text-blue-600 dark:text-blue-300">
                     {formatXOF(session.solde_theorique)}
                   </p>
                 </div>
@@ -602,8 +602,8 @@ export default function CaisseV2() {
 
             <Card className="p-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
-                  <ArrowLeftRight className="h-5 w-5 text-purple-600" />
+                <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-500/20 flex items-center justify-center">
+                  <ArrowLeftRight className="h-5 w-5 text-purple-600 dark:text-purple-300" />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Mouvements</p>
@@ -641,7 +641,7 @@ export default function CaisseV2() {
               <Button
                 variant="default"
                 onClick={openCloseDialog}
-                className="bg-amber-600 hover:bg-amber-700"
+                className="bg-warning-600 hover:bg-warning-700"
               >
                 <Lock className="h-4 w-4 mr-2" />
                 Clôturer la caisse
@@ -688,7 +688,7 @@ export default function CaisseV2() {
                           {m.libelle}
                         </TableCell>
                         <TableCell className="text-right font-medium">
-                          <span className={m.type === 'encaissement' ? 'text-green-600' : 'text-red-600'}>
+                          <span className={m.type === 'encaissement' ? 'text-success-600 dark:text-success-300' : 'text-danger-600 dark:text-danger-300'}>
                             {m.type === 'encaissement' ? '+' : '-'}{formatXOF(m.montant)}
                           </span>
                         </TableCell>
@@ -767,7 +767,7 @@ export default function CaisseV2() {
           <div className="space-y-4 py-4">
             {/* Orphans block */}
             {closurePreview && closurePreview.orphan_mouvements.length > 0 && (
-              <div className="p-3 rounded-lg bg-red-100 text-red-800 border border-red-300">
+              <div className="p-3 rounded-lg bg-danger-100 dark:bg-danger-500/20 text-danger-800 dark:text-danger-200 border border-danger-300 dark:border-danger-500/30">
                 <div className="flex items-center gap-2 font-semibold mb-2">
                   <AlertCircle className="h-4 w-4" />
                   {closurePreview.orphan_mouvements.length} mouvement(s) sans source — clôture bloquée
@@ -791,9 +791,9 @@ export default function CaisseV2() {
                   <div key={p.methode_paiement} className="flex justify-between">
                     <span>{p.methode_paiement} <span className="text-xs text-muted-foreground">({p.nb})</span></span>
                     <span>
-                      <span className="text-green-600">+{formatXOF(p.total_encaissements)}</span>
+                      <span className="text-success-600 dark:text-success-300">+{formatXOF(p.total_encaissements)}</span>
                       {' / '}
-                      <span className="text-red-600">-{formatXOF(p.total_decaissements)}</span>
+                      <span className="text-danger-600 dark:text-danger-300">-{formatXOF(p.total_decaissements)}</span>
                     </span>
                   </div>
                 ))}
@@ -846,7 +846,7 @@ export default function CaisseV2() {
             {/* Comment */}
             <div>
               <Label>
-                Commentaire {closurePreview?.ecart !== 0 && closurePreview?.ecart !== null && <span className="text-red-500">*</span>}
+                Commentaire {closurePreview?.ecart !== 0 && closurePreview?.ecart !== null && <span className="text-danger-500">*</span>}
               </Label>
               <Input
                 value={commentaireCloture}
@@ -1010,7 +1010,7 @@ export default function CaisseV2() {
                       </TableCell>
                       <TableCell>{m.libelle}</TableCell>
                       <TableCell className="text-right font-medium">
-                        <span className={m.type === 'encaissement' ? 'text-green-600' : 'text-red-600'}>
+                        <span className={m.type === 'encaissement' ? 'text-success-600 dark:text-success-300' : 'text-danger-600 dark:text-danger-300'}>
                           {m.type === 'encaissement' ? '+' : '-'}{formatXOF(m.montant)}
                         </span>
                       </TableCell>

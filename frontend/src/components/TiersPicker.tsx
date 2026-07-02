@@ -56,7 +56,7 @@ export function TiersPicker({ role, value, onChange, placeholder, disabled = fal
             <span className="font-mono">{value.code}</span>
             {value.telephone && <span>· {value.telephone}</span>}
             {value.est_client && value.est_fournisseur && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 text-[10px] font-medium">
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 text-[10px] font-medium">
                 <UserCheck className="h-2.5 w-2.5" /> Mixte
               </span>
             )}
@@ -116,10 +116,10 @@ export function TiersPicker({ role, value, onChange, placeholder, disabled = fal
               </div>
               <div className="flex gap-1 shrink-0">
                 {t.est_client && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700">Client</span>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300">Client</span>
                 )}
                 {t.est_fournisseur && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-orange-100 text-orange-700">Fourn.</span>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300">Fourn.</span>
                 )}
               </div>
             </button>

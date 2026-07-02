@@ -4,6 +4,7 @@ import { factureService, paiementService, acompteService, tiersService } from '.
 import { FactureComplete, Paiement } from '../types';
 import { PaymentStatusBar } from '../components/PaymentStatusBar';
 import { PaymentHistory } from '../components/PaymentHistory';
+import { AttachmentPanel } from '../components/AttachmentPanel';
 import { PaymentModal } from '../components/PaymentModal';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -22,6 +23,7 @@ import { formatXOF } from '@/utils/format';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DocumentPrint } from '@/components/ui/print-layout';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
 import { ArrowLeft, FileText, User, Calendar, Printer, Download, CreditCard, ArrowLeftRight } from 'lucide-react';
 import { toast } from 'sonner';
@@ -29,6 +31,7 @@ import { toast } from 'sonner';
 export default function FactureDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const [facture, setFacture] = useState<FactureComplete | null>(null);
   const [paiements, setPaiements] = useState<Paiement[]>([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -142,6 +145,11 @@ export default function FactureDetail() {
       toast.error(`Montant invalide (max ${maxApply.toFixed(2)})`);
       return;
     }
+    if (!(await confirm({
+      title: "Appliquer l'acompte ?",
+      description: `${montant.toFixed(2)} XOF de l'acompte #${acompteToApply.id} seront appliqués sur la facture ${facture.numero_facture}.`,
+      confirmLabel: 'Appliquer',
+    }))) return;
     setApplyLoading(true);
     try {
       await acompteService.apply(acompteToApply.id, {
@@ -305,8 +313,8 @@ export default function FactureDetail() {
 
       {/* Compensation fournisseur banner */}
       {soldeFourn > 0 && remainingDue > 0 && facture.statut !== 'annulee' && facture.statut !== 'payee' && (
-        <div className="flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
-          <div className="flex items-center gap-2 text-amber-800">
+        <div className="flex items-center justify-between rounded-lg border border-warning-300 dark:border-warning-500/30 bg-warning-50 dark:bg-warning-500/10 px-4 py-3">
+          <div className="flex items-center gap-2 text-warning-800 dark:text-warning-200">
             <ArrowLeftRight className="h-5 w-5 flex-shrink-0" />
             <span className="text-sm font-medium">
               Ce client est aussi fournisseur — vous lui devez <strong>{soldeFourn.toLocaleString('fr-FR')} XOF</strong>. Vous pouvez compenser jusqu'à <strong>{Math.min(remainingDue, soldeFourn).toLocaleString('fr-FR')} XOF</strong> sur cette facture.
@@ -315,7 +323,7 @@ export default function FactureDetail() {
           <Button
             size="sm"
             variant="outline"
-            className="border-amber-400 text-amber-800 hover:bg-amber-100 ml-4 flex-shrink-0"
+            className="border-warning-400 text-warning-800 dark:text-warning-200 hover:bg-warning-100 ml-4 flex-shrink-0"
             onClick={() => {
               setCompensationMontant(Math.min(remainingDue, soldeFourn).toFixed(2));
               setShowCompensationModal(true);
@@ -514,12 +522,14 @@ export default function FactureDetail() {
         </Card>
       )}
 
+      {facture?.id && <AttachmentPanel entityType="facture" entityId={facture.id} />}
+
       {/* Acomptes disponibles pour ce client */}
       {acomptesDispo.length > 0 && remainingDue > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5 text-blue-600" />
+              <CreditCard className="h-5 w-5 text-blue-600 dark:text-blue-300" />
               Acomptes disponibles ({acomptesDispo.length})
             </CardTitle>
             <CardDescription>
@@ -547,7 +557,7 @@ export default function FactureDetail() {
                         {a.date_acompte ? new Date(a.date_acompte).toLocaleDateString('fr-FR') : '-'}
                       </TableCell>
                       <TableCell className="text-sm">{a.methode_paiement}</TableCell>
-                      <TableCell className="text-right font-semibold text-blue-600">
+                      <TableCell className="text-right font-semibold text-blue-600 dark:text-blue-300">
                         {formatXOF(restant)}
                       </TableCell>
                       <TableCell className="text-right">
@@ -574,7 +584,7 @@ export default function FactureDetail() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ArrowLeftRight className="h-5 w-5 text-amber-600" />
+              <ArrowLeftRight className="h-5 w-5 text-warning-600 dark:text-warning-300" />
               Compenser avec dette fournisseur
             </DialogTitle>
             <DialogDescription>
@@ -584,11 +594,11 @@ export default function FactureDetail() {
           <div className="space-y-3">
             <div>
               <span className="text-sm font-medium block mb-1">Reste dû sur la facture</span>
-              <p className="text-lg font-bold text-red-600">{remainingDue.toLocaleString('fr-FR')} XOF</p>
+              <p className="text-lg font-bold text-danger-600 dark:text-danger-300">{remainingDue.toLocaleString('fr-FR')} XOF</p>
             </div>
             <div>
               <span className="text-sm font-medium block mb-1">Votre dette fournisseur envers ce tiers</span>
-              <p className="text-lg font-bold text-blue-600">{soldeFourn.toLocaleString('fr-FR')} XOF</p>
+              <p className="text-lg font-bold text-blue-600 dark:text-blue-300">{soldeFourn.toLocaleString('fr-FR')} XOF</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="compensation-montant">
@@ -609,7 +619,7 @@ export default function FactureDetail() {
             <Button variant="outline" onClick={() => setShowCompensationModal(false)} disabled={compensationLoading}>
               Annuler
             </Button>
-            <Button onClick={handleCompensation} disabled={compensationLoading} className="bg-amber-600 hover:bg-amber-700 text-white">
+            <Button onClick={handleCompensation} disabled={compensationLoading} className="bg-warning-600 hover:bg-warning-700 text-white">
               {compensationLoading ? 'En cours...' : 'Confirmer la compensation'}
             </Button>
           </DialogFooter>
@@ -626,7 +636,7 @@ export default function FactureDetail() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5 text-blue-600" />
+              <CreditCard className="h-5 w-5 text-blue-600 dark:text-blue-300" />
               Appliquer l'acompte
             </DialogTitle>
             <DialogDescription>

@@ -114,7 +114,8 @@ export class DevisController {
       await devisService.updateStatut(parseInt(req.params.id), statut, req);
       res.json({ success: true, message: 'Statut mis à jour' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      const status = typeof error?.statusCode === 'number' ? error.statusCode : 500;
+      res.status(status).json({ success: false, error: error.message, code: error?.code });
     }
   }
 

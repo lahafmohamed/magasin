@@ -14,26 +14,28 @@ import {
   ArrowLeft, Users, Truck, Wallet,
   Plus, RefreshCw, GitMerge, Phone, Mail, MapPin, FileText,
   Calendar, CheckCircle2, Clock, MessageSquare,
-  Trash2, AlertCircle
+  Trash2, AlertCircle, FileDown
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatFCFA } from '@/lib/utils';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { formatFCFA } from '@/utils/format';
 
 const METHODES = ['espece', 'carte', 'cheque', 'virement', 'mobile_money', 'orange_money', 'mtn_money', 'wave'];
 
 const TYPE_LABELS: Record<string, { label: string; color: string }> = {
-  facture_client:    { label: 'Facture',         color: 'text-red-600' },
-  paiement_client:  { label: 'Paiement',         color: 'text-green-600' },
-  avoir_client:     { label: 'Avoir',            color: 'text-blue-600' },
-  acompte_client:   { label: 'Acompte reçu',     color: 'text-green-600' },
-  facture_fourn:    { label: 'Facture fourn.',   color: 'text-orange-600' },
-  paiement_fourn:   { label: 'Paiement fourn.',  color: 'text-green-600' },
-  acompte_fourn:    { label: 'Acompte versé',    color: 'text-orange-600' },
+  facture_client:    { label: 'Facture',         color: 'text-danger-600' },
+  paiement_client:  { label: 'Paiement',         color: 'text-success-600' },
+  avoir_client:     { label: 'Avoir',            color: 'text-info-600' },
+  acompte_client:   { label: 'Acompte reçu',     color: 'text-success-600' },
+  facture_fourn:    { label: 'Facture fourn.',   color: 'text-warning-600' },
+  paiement_fourn:   { label: 'Paiement fourn.',  color: 'text-success-600' },
+  acompte_fourn:    { label: 'Acompte versé',    color: 'text-warning-600' },
 };
 
 export default function TiersDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const tiersId = parseInt(id!);
 
   const [data, setData] = useState<any>(null);
@@ -128,6 +130,7 @@ export default function TiersDetail() {
   };
 
   const handleDeleteInteraction = async (id: number) => {
+    if (!(await confirm({ title: 'Supprimer cette interaction ?', confirmLabel: 'Supprimer', destructive: true }))) return;
     try {
       await crmService.deleteInteraction(id);
       setInteractions(prev => prev.filter(i => i.id !== id));
@@ -164,6 +167,7 @@ export default function TiersDetail() {
   };
 
   const handleDeleteTache = async (id: number) => {
+    if (!(await confirm({ title: 'Supprimer cette tâche ?', confirmLabel: 'Supprimer', destructive: true }))) return;
     try {
       await crmService.deleteTache(id);
       setTaches(prev => prev.filter(t => t.id !== id));
@@ -183,7 +187,7 @@ export default function TiersDetail() {
   const PRIORITE_LABELS: Record<string, { label: string; color: string }> = {
     basse: { label: 'Basse', color: 'text-gray-500' },
     normale: { label: 'Normale', color: 'text-blue-600' },
-    haute: { label: 'Haute', color: 'text-orange-600' },
+    haute: { label: 'Haute', color: 'text-warning-600' },
     urgente: { label: 'Urgente', color: 'text-destructive' },
   };
 
@@ -303,7 +307,7 @@ export default function TiersDetail() {
   // Convention: solde_net = solde_client - solde_fournisseur
   //   > 0 → ils nous doivent (créance nette, favorable)
   //   < 0 → nous leur devons (dette nette, défavorable)
-  const soldeNetColor = soldeNet > 0 ? 'text-green-600' : soldeNet < 0 ? 'text-red-600' : 'text-muted-foreground';
+  const soldeNetColor = soldeNet > 0 ? 'text-success-600' : soldeNet < 0 ? 'text-danger-600' : 'text-muted-foreground';
   const canCompensate = tiers.est_client && tiers.est_fournisseur && totaux.client.solde_client > 0 && totaux.fournisseur.solde_fournisseur > 0;
   const maxComp = canCompensate ? Math.min(totaux.client.solde_client, totaux.fournisseur.solde_fournisseur) : 0;
 
@@ -316,8 +320,8 @@ export default function TiersDetail() {
           <h1 className="text-xl font-bold">{tiers.raison_sociale}{tiers.prenom ? ` ${tiers.prenom}` : ''}</h1>
           <div className="flex items-center gap-2 mt-0.5">
             <span className="text-xs font-mono text-muted-foreground">{tiers.code}</span>
-            {tiers.est_client && <Badge variant="outline" className="text-blue-700 border-blue-200 bg-blue-50 text-xs py-0"><Users className="h-3 w-3 mr-1" />Client</Badge>}
-            {tiers.est_fournisseur && <Badge variant="outline" className="text-orange-700 border-orange-200 bg-orange-50 text-xs py-0"><Truck className="h-3 w-3 mr-1" />Fournisseur</Badge>}
+            {tiers.est_client && <Badge variant="outline" className="text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 text-xs py-0"><Users className="h-3 w-3 mr-1" />Client</Badge>}
+            {tiers.est_fournisseur && <Badge variant="outline" className="text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30 bg-orange-50 dark:bg-orange-500/10 text-xs py-0"><Truck className="h-3 w-3 mr-1" />Fournisseur</Badge>}
           </div>
         </div>
         <div className="flex gap-2">
@@ -361,7 +365,7 @@ export default function TiersDetail() {
           <Card>
             <CardContent className="pt-4">
               <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1"><Users className="h-3 w-3" /> Solde client</div>
-              <div className={`text-xl font-bold ${totaux.client.solde_client > 0 ? 'text-red-600' : totaux.client.solde_client < 0 ? 'text-green-600' : ''}`}>
+              <div className={`text-xl font-bold ${totaux.client.solde_client > 0 ? 'text-danger-600' : totaux.client.solde_client < 0 ? 'text-success-600' : ''}`}>
                 {formatFCFA(totaux.client.solde_client)}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
@@ -374,7 +378,7 @@ export default function TiersDetail() {
           <Card>
             <CardContent className="pt-4">
               <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1"><Truck className="h-3 w-3" /> Solde fournisseur</div>
-              <div className={`text-xl font-bold ${totaux.fournisseur.solde_fournisseur > 0 ? 'text-orange-600' : ''}`}>
+              <div className={`text-xl font-bold ${totaux.fournisseur.solde_fournisseur > 0 ? 'text-warning-600' : ''}`}>
                 {formatFCFA(totaux.fournisseur.solde_fournisseur)}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
@@ -407,6 +411,18 @@ export default function TiersDetail() {
         {(dateFrom || dateTo) && (
           <Button variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-xs">Réinitialiser</Button>
         )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1 ml-auto"
+          onClick={() =>
+            tiersService
+              .downloadRelevePdf(tiersId, tiers.raison_sociale || `client-${tiersId}`, dateFrom || undefined, dateTo || undefined)
+              .catch(() => toast.error('Erreur lors de la génération du relevé'))
+          }
+        >
+          <FileDown className="h-4 w-4" /> Relevé détaillé (PDF)
+        </Button>
       </div>
 
       {/* Unified ledger */}
@@ -448,14 +464,14 @@ export default function TiersDetail() {
                   >
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{m.date ? m.date.substring(0,10) : '—'}</TableCell>
                     <TableCell>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${m.role === 'Client' ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'}`}>
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${m.role === 'Client' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300' : 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300'}`}>
                         {m.role}
                       </span>
                     </TableCell>
                     <TableCell className={`text-xs font-medium ${meta.color}`}>{meta.label}</TableCell>
                     <TableCell className={`text-xs font-mono ${link ? 'text-primary underline' : ''}`}>{m.reference || m.libelle}</TableCell>
-                    <TableCell className="text-right text-xs text-red-600">{m.debit > 0 ? formatFCFA(m.debit) : ''}</TableCell>
-                    <TableCell className="text-right text-xs text-green-600">{m.credit > 0 ? formatFCFA(m.credit) : ''}</TableCell>
+                    <TableCell className="text-right text-xs text-danger-600">{m.debit > 0 ? formatFCFA(m.debit) : ''}</TableCell>
+                    <TableCell className="text-right text-xs text-success-600">{m.credit > 0 ? formatFCFA(m.credit) : ''}</TableCell>
                   </TableRow>
                 );
               })}
@@ -489,7 +505,7 @@ export default function TiersDetail() {
               <TableBody>
                 {acomptesClient.map((a: any) => (
                   <TableRow key={`c-${a.id}`} className="text-sm">
-                    <TableCell><span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">Client</span></TableCell>
+                    <TableCell><span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300">Client</span></TableCell>
                     <TableCell className="text-xs font-mono">{a.id}</TableCell>
                     <TableCell className="text-xs">{(a.date_acompte || '').substring(0,10)}</TableCell>
                     <TableCell className="text-xs">{a.methode_paiement}</TableCell>
@@ -503,7 +519,7 @@ export default function TiersDetail() {
                 ))}
                 {acomptesFourn.map((a: any) => (
                   <TableRow key={`f-${a.id}`} className="text-sm">
-                    <TableCell><span className="text-xs px-1.5 py-0.5 rounded bg-orange-50 text-orange-700">Fourn.</span></TableCell>
+                    <TableCell><span className="text-xs px-1.5 py-0.5 rounded bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300">Fourn.</span></TableCell>
                     <TableCell className="text-xs font-mono">{a.id}</TableCell>
                     <TableCell className="text-xs">{(a.date_acompte || '').substring(0,10)}</TableCell>
                     <TableCell className="text-xs">{a.methode_paiement}</TableCell>
@@ -540,7 +556,7 @@ export default function TiersDetail() {
                 {compensations.map((c: any) => (
                   <TableRow key={c.id} className="text-sm">
                     <TableCell className="text-xs">{c.date_compensation}</TableCell>
-                    <TableCell className="text-right text-xs font-semibold text-purple-700">{formatFCFA(c.montant)}</TableCell>
+                    <TableCell className="text-right text-xs font-semibold text-purple-700 dark:text-purple-300">{formatFCFA(c.montant)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{c.notes || '—'}</TableCell>
                   </TableRow>
                 ))}
@@ -590,7 +606,7 @@ export default function TiersDetail() {
                           {new Date(item.date_interaction).toLocaleDateString('fr-FR')}
                         </span>
                         {item.date_rappel && (
-                          <span className="text-[10px] text-amber-600 flex items-center gap-0.5">
+                          <span className="text-[10px] text-warning-600 flex items-center gap-0.5">
                             <Clock className="h-3 w-3" /> Rappel: {new Date(item.date_rappel).toLocaleDateString('fr-FR')}
                           </span>
                         )}
@@ -629,9 +645,9 @@ export default function TiersDetail() {
                 <div key={t.id} className="px-4 py-3 flex items-start gap-3 hover:bg-muted/30">
                   <div className="mt-0.5">
                     {t.statut === 'terminee' ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      <CheckCircle2 className="h-4 w-4 text-success-500" />
                     ) : (
-                      <Clock className="h-4 w-4 text-amber-500" />
+                      <Clock className="h-4 w-4 text-warning-500" />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -640,7 +656,7 @@ export default function TiersDetail() {
                       <div className="flex items-center gap-1 shrink-0">
                         {t.statut !== 'terminee' && (
                           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleCompleteTache(t.id)} title="Marquer terminée">
-                            <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                            <CheckCircle2 className="h-3.5 w-3.5 text-success-600" />
                           </Button>
                         )}
                         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleDeleteTache(t.id)}>
@@ -786,7 +802,7 @@ export default function TiersDetail() {
               </Select>
             </div>
             <div>
-              <Label>Magasin {acompteForm.methode === 'espece' && <span className="text-red-500">*</span>}</Label>
+              <Label>Magasin {acompteForm.methode === 'espece' && <span className="text-danger-500">*</span>}</Label>
               <Select
                 value={acompteForm.magasin_id || undefined}
                 onValueChange={v => setAcompteForm(p => ({ ...p, magasin_id: v }))}
@@ -801,7 +817,7 @@ export default function TiersDetail() {
                 </SelectContent>
               </Select>
               {acompteForm.methode === 'espece' && (
-                <p className="text-xs text-amber-600 mt-1">Caisse du magasin doit être ouverte.</p>
+                <p className="text-xs text-warning-600 mt-1">Caisse du magasin doit être ouverte.</p>
               )}
             </div>
             {acompteForm.methode !== 'espece' && (
@@ -837,7 +853,7 @@ export default function TiersDetail() {
               </Select>
             </div>
             <div>
-              <Label>Magasin {acompteForm.methode === 'espece' && <span className="text-red-500">*</span>}</Label>
+              <Label>Magasin {acompteForm.methode === 'espece' && <span className="text-danger-500">*</span>}</Label>
               <select
                 value={acompteForm.magasin_id}
                 onChange={e => setAcompteForm(p => ({ ...p, magasin_id: e.target.value }))}
@@ -870,10 +886,10 @@ export default function TiersDetail() {
       <Dialog open={showCompensation} onOpenChange={setShowCompensation}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle className="flex items-center gap-2"><GitMerge className="h-4 w-4 text-purple-600" /> Compensation (netting)</DialogTitle></DialogHeader>
-          <div className="text-xs text-muted-foreground mb-3 p-3 bg-purple-50 rounded-md">
+          <div className="text-xs text-muted-foreground mb-3 p-3 bg-purple-50 dark:bg-purple-500/10 rounded-md">
             Créance client : <strong>{formatFCFA(totaux.client.solde_client)}</strong><br />
             Dette fournisseur : <strong>{formatFCFA(totaux.fournisseur.solde_fournisseur)}</strong><br />
-            Maximum compensable : <strong className="text-purple-700">{formatFCFA(maxComp)}</strong>
+            Maximum compensable : <strong className="text-purple-700 dark:text-purple-300">{formatFCFA(maxComp)}</strong>
           </div>
           <form onSubmit={handleCompensation} className="space-y-3">
             <div><Label>Date *</Label><Input type="date" value={compForm.date} onChange={e => setCompForm(p => ({ ...p, date: e.target.value }))} required /></div>
@@ -904,7 +920,7 @@ export default function TiersDetail() {
               <div className="text-xs p-2 bg-muted rounded">
                 Restant : <strong>{formatFCFA(refundTarget.acompte.montant_restant)}</strong>
                 {refundTarget.kind === 'fournisseur' && (
-                  <div className="mt-1 text-orange-600">Fournisseur restitue le cash → encaissement caisse.</div>
+                  <div className="mt-1 text-warning-600">Fournisseur restitue le cash → encaissement caisse.</div>
                 )}
                 {refundTarget.kind === 'client' && (
                   <div className="mt-1 text-blue-600">Cash sort de la caisse vers le client.</div>

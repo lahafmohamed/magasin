@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { JWT_SECRET, authenticate, extractToken } from '../middleware/auth';
+import { JWT_SECRET, authenticate, authorize, extractToken } from '../middleware/auth';
 import pool from '../db/connection';
 import { NotificationService } from '../services/NotificationService';
 
@@ -43,7 +43,7 @@ router.get('/stream', async (req: Request, res: Response) => {
 });
 
 // Endpoint pour récupérer l'état du service (admin/manager-only)
-router.get('/status', authenticate, (_req: Request, res: Response) => {
+router.get('/status', authenticate, authorize(['admin', 'manager']), (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: {

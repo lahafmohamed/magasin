@@ -12,8 +12,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Pagination } from '@/components/ui/pagination';
 import { Plus, Search, Pencil, Trash2, Users, Truck, UserCheck, Eye, ArrowUpDown, Download } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatFCFA } from '@/lib/utils';
+import { formatFCFA } from '@/utils/format';
 import { useExportExcel } from '../hooks/useExportExcel';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
+import { ListSkeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
 
 type RoleFilter = 'all' | 'client' | 'fournisseur' | 'mixte';
 
@@ -26,6 +30,7 @@ const ROLE_TABS: { value: RoleFilter; label: string; icon: any }[] = [
 
 export default function TiersPage() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const [tiers, setTiers] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -106,7 +111,7 @@ export default function TiersPage() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Supprimer ce contact ?')) return;
+    if (!(await confirm({ title: 'Supprimer ce contact ?', confirmLabel: 'Supprimer', destructive: true }))) return;
     try {
       await tiersService.delete(id);
       toast.success('Contact supprimé');
@@ -115,7 +120,7 @@ export default function TiersPage() {
   };
 
   const soldeNetColor = (net: number) =>
-    net > 0 ? 'text-red-600' : net < 0 ? 'text-green-600' : 'text-muted-foreground';
+    net > 0 ? 'text-danger-600' : net < 0 ? 'text-success-600' : 'text-muted-foreground';
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-7xl">
@@ -173,6 +178,47 @@ export default function TiersPage() {
           </div>
 
           {/* Table */}
+          <ResponsiveTable
+            cards={
+              loading ? (
+                <ListSkeleton items={6} />
+              ) : tiers.length === 0 ? (
+                <EmptyState icon={Users} title="Aucun contact trouvé" />
+              ) : (
+                tiers.map((t) => {
+                  const soldeNet = (t.solde_net ?? (parseFloat(t.solde_client_live ?? 0) - parseFloat(t.solde_fournisseur_live ?? 0)));
+                  return (
+                    <DataCard
+                      key={t.id}
+                      onClick={() => navigate(`/tiers/${t.id}`)}
+                      title={<span>{t.raison_sociale}</span>}
+                      badge={
+                        <div className="flex gap-1">
+                          {t.est_client && <Badge variant="outline" className="text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 text-xs py-0">Client</Badge>}
+                          {t.est_fournisseur && <Badge variant="outline" className="text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30 bg-orange-50 dark:bg-orange-500/10 text-xs py-0">Fourn.</Badge>}
+                        </div>
+                      }
+                    >
+                      <DataCardRow label="Code" value={<span className="font-mono text-xs">{t.code}</span>} />
+                      <DataCardRow label="Contact" value={t.telephone || t.email || '—'} />
+                      <DataCardRow label="Solde net" value={<span className={`num font-semibold ${soldeNetColor(soldeNet)}`}>{(t.est_client || t.est_fournisseur) ? formatFCFA(soldeNet) : '—'}</span>} />
+                      <div className="mt-2 flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(`/tiers/${t.id}`)} aria-label="Voir ce contact">
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(t)} aria-label="Modifier ce contact">
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button variant="destructive" size="icon" className="h-8 w-8" onClick={() => handleDelete(t.id)} aria-label="Supprimer ce contact">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </DataCard>
+                  );
+                })
+              )
+            }
+            table={
           <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -213,8 +259,8 @@ export default function TiersPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        {t.est_client && <Badge variant="outline" className="text-blue-700 border-blue-200 bg-blue-50 text-xs py-0">Client</Badge>}
-                        {t.est_fournisseur && <Badge variant="outline" className="text-orange-700 border-orange-200 bg-orange-50 text-xs py-0">Fourn.</Badge>}
+                        {t.est_client && <Badge variant="outline" className="text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 text-xs py-0">Client</Badge>}
+                        {t.est_fournisseur && <Badge variant="outline" className="text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30 bg-orange-50 dark:bg-orange-500/10 text-xs py-0">Fourn.</Badge>}
                       </div>
                     </TableCell>
                     <TableCell className="text-right text-sm">
@@ -245,6 +291,8 @@ export default function TiersPage() {
             </TableBody>
           </Table>
           </div>
+            }
+          />
 
           {totalPages > 1 && (
             <div className="p-4 border-t">

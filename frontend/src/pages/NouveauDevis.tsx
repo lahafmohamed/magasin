@@ -469,7 +469,7 @@ export default function NouveauDevis() {
                           <div className="text-sm font-semibold font-mono">{formatXOF(prixVente)}</div>
                           <div
                             className={`text-[11px] ${
-                              stock <= stockMin ? 'text-destructive' : 'text-emerald-600'
+                              stock <= stockMin ? 'text-destructive' : 'text-success-600'
                             }`}
                           >
                             {stock <= stockMin ? 'Stock bas' : 'Disponible'}
@@ -570,7 +570,7 @@ export default function NouveauDevis() {
                                 className={`inline-flex flex-col items-end px-2 py-1 rounded font-mono text-xs font-semibold leading-tight ${
                                   belowCost
                                     ? 'bg-destructive/10 text-destructive'
-                                    : 'bg-emerald-500/10 text-emerald-700'
+                                    : 'bg-success-500/10 text-success-700'
                                 }`}
                               >
                                 <span>
@@ -591,6 +591,8 @@ export default function NouveauDevis() {
                                 type="button"
                                 className="text-muted-foreground hover:text-destructive p-1"
                                 onClick={() => removeLigne(index)}
+                                aria-label="Retirer cette ligne"
+                                title="Retirer cette ligne"
                               >
                                 <X className="h-4 w-4" />
                               </button>

@@ -151,6 +151,126 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
   }
 
   /**
+   * Compte de résultat (income statement) over a period.
+   * SYSCOHADA: class 6 = charges, class 7 = produits. Résultat = produits - charges.
+   */
+  async getIncomeStatement(dateDebut: string, dateFin: string): Promise<{
+    charges: Array<{ compte_numero: string; compte_intitule: string; montant: number }>;
+    produits: Array<{ compte_numero: string; compte_intitule: string; montant: number }>;
+    total_charges: number;
+    total_produits: number;
+    resultat: number;
+  }> {
+    const { rows } = await pool.query(
+      `SELECT pc.numero AS compte_numero, pc.intitule AS compte_intitule,
+              COALESCE(SUM(ec.debit), 0)  AS total_debit,
+              COALESCE(SUM(ec.credit), 0) AS total_credit
+       FROM plan_comptable pc
+       LEFT JOIN ecritures_comptables ec ON pc.numero = ec.compte_numero
+         AND ec.date_ecriture BETWEEN $1::timestamp AND $2::timestamp
+       WHERE pc.actif = true AND LEFT(pc.numero, 1) IN ('6', '7')
+       GROUP BY pc.numero, pc.intitule
+       HAVING COALESCE(SUM(ec.debit), 0) <> 0 OR COALESCE(SUM(ec.credit), 0) <> 0
+       ORDER BY pc.numero ASC`,
+      [dateDebut, dateFin]
+    );
+
+    const charges: Array<{ compte_numero: string; compte_intitule: string; montant: number }> = [];
+    const produits: Array<{ compte_numero: string; compte_intitule: string; montant: number }> = [];
+    let total_charges = 0;
+    let total_produits = 0;
+
+    for (const r of rows) {
+      const debit = Number(r.total_debit);
+      const credit = Number(r.total_credit);
+      if (String(r.compte_numero)[0] === '6') {
+        const montant = Math.round((debit - credit) * 100) / 100; // charges: debit-positive
+        charges.push({ compte_numero: r.compte_numero, compte_intitule: r.compte_intitule, montant });
+        total_charges += montant;
+      } else {
+        const montant = Math.round((credit - debit) * 100) / 100; // produits: credit-positive
+        produits.push({ compte_numero: r.compte_numero, compte_intitule: r.compte_intitule, montant });
+        total_produits += montant;
+      }
+    }
+
+    total_charges = Math.round(total_charges * 100) / 100;
+    total_produits = Math.round(total_produits * 100) / 100;
+    const resultat = Math.round((total_produits - total_charges) * 100) / 100;
+    return { charges, produits, total_charges, total_produits, resultat };
+  }
+
+  /**
+   * Bilan (balance sheet): cumulative balances from inception up to dateFin.
+   * SYSCOHADA classes 1-5. Class 2/3 = actif, class 1 = passif (capitaux),
+   * class 4/5 = actif if débiteur else passif. Résultat (produits-charges,
+   * cumulative) is reported in passif so total actif = total passif.
+   */
+  async getBalanceSheet(dateFin: string): Promise<{
+    actif: Array<{ compte_numero: string; compte_intitule: string; montant: number }>;
+    passif: Array<{ compte_numero: string; compte_intitule: string; montant: number }>;
+    resultat: number;
+    total_actif: number;
+    total_passif: number;
+  }> {
+    const { rows } = await pool.query(
+      `SELECT pc.numero AS compte_numero, pc.intitule AS compte_intitule,
+              COALESCE(SUM(ec.debit), 0) - COALESCE(SUM(ec.credit), 0) AS solde
+       FROM plan_comptable pc
+       LEFT JOIN ecritures_comptables ec ON pc.numero = ec.compte_numero
+         AND ec.date_ecriture <= $1::timestamp
+       WHERE pc.actif = true AND LEFT(pc.numero, 1) IN ('1', '2', '3', '4', '5')
+       GROUP BY pc.numero, pc.intitule
+       HAVING COALESCE(SUM(ec.debit), 0) - COALESCE(SUM(ec.credit), 0) <> 0
+       ORDER BY pc.numero ASC`,
+      [dateFin]
+    );
+
+    const actif: Array<{ compte_numero: string; compte_intitule: string; montant: number }> = [];
+    const passif: Array<{ compte_numero: string; compte_intitule: string; montant: number }> = [];
+    let total_actif = 0;
+    let total_passif = 0;
+
+    for (const r of rows) {
+      const solde = Math.round(Number(r.solde) * 100) / 100;
+      const cls = String(r.compte_numero)[0];
+      const entry = { compte_numero: r.compte_numero, compte_intitule: r.compte_intitule, montant: 0 };
+      if (cls === '2' || cls === '3') {
+        entry.montant = solde; // actif (débiteur)
+        actif.push(entry);
+        total_actif += solde;
+      } else if (cls === '1') {
+        entry.montant = -solde; // passif (créditeur)
+        passif.push(entry);
+        total_passif += -solde;
+      } else {
+        // class 4/5: sign decides side
+        if (solde >= 0) { entry.montant = solde; actif.push(entry); total_actif += solde; }
+        else { entry.montant = -solde; passif.push(entry); total_passif += -solde; }
+      }
+    }
+
+    // Résultat net (cumulative produits - charges up to dateFin) belongs to passif.
+    const { rows: resRows } = await pool.query(
+      `SELECT COALESCE(SUM(CASE WHEN LEFT(compte_numero,1)='7' THEN credit - debit ELSE 0 END), 0)
+              - COALESCE(SUM(CASE WHEN LEFT(compte_numero,1)='6' THEN debit - credit ELSE 0 END), 0) AS resultat
+       FROM ecritures_comptables
+       WHERE date_ecriture <= $1::timestamp AND LEFT(compte_numero,1) IN ('6','7')`,
+      [dateFin]
+    );
+    const resultat = Math.round(Number(resRows[0].resultat) * 100) / 100;
+    total_passif += resultat;
+
+    return {
+      actif,
+      passif,
+      resultat,
+      total_actif: Math.round(total_actif * 100) / 100,
+      total_passif: Math.round(total_passif * 100) / 100,
+    };
+  }
+
+  /**
    * Get account ledger (Grand livre d'un compte)
    */
   async getAccountLedger(compteId: number, dateDebut: string, dateFin: string): Promise<any[]> {

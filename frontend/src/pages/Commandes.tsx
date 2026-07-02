@@ -15,7 +15,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SortableHeader, type SortState } from '@/components/ui/sortable-header';
 import { LoadingState } from '@/components/ui/loading';
+import { TableSkeleton, ListSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import {
   Plus, Search, Trash2, ShoppingCart, CheckCircle, Clock,
   Truck, XCircle, Package, Loader2, ArrowLeft, Calendar,
@@ -24,10 +26,12 @@ import {
 } from 'lucide-react';
 import { normalizeSearch } from '@/utils/format';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 export default function Commandes() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const confirm = useConfirm();
   const canCreate = ['admin', 'manager', 'depot_staff'].includes(user?.role || '');
   
   const [commandes, setCommandes] = useState<any[]>([]);
@@ -229,6 +233,13 @@ export default function Commandes() {
 
   const updateStatut = async (e: React.MouseEvent, id: number, statut: string) => {
     e.stopPropagation(); // Avoid triggering row navigation
+    const confirmOpts =
+      statut === 'annulee'
+        ? { title: 'Annuler cette commande ?', description: 'La commande fournisseur sera annulée.', confirmLabel: 'Annuler la commande', cancelLabel: 'Retour', destructive: true }
+        : statut === 'validee'
+          ? { title: 'Valider cette commande ?', description: 'La commande sera validée et prête à être expédiée par le fournisseur.', confirmLabel: 'Valider' }
+          : { title: 'Marquer la commande comme expédiée ?', confirmLabel: 'Confirmer' };
+    if (!(await confirm(confirmOpts))) return;
     try {
       await commandeService.updateStatut(id, statut);
       loadCommandes();
@@ -465,7 +476,7 @@ export default function Commandes() {
                             </div>
                             <div className="text-right">
                               <p className="text-sm font-bold text-primary">{parseFloat(p.prix_achat).toFixed(2)} XOF</p>
-                              <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${isLowStock ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
+                              <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
                                 Stock: {p.stock} (Min: {p.stock_min})
                               </p>
                             </div>
@@ -476,7 +487,7 @@ export default function Commandes() {
                   )}
                   {produitSearch.length >= 2 && produits.length === 0 && (
                     <div className="absolute z-10 w-full mt-1 bg-background border rounded-lg shadow-lg p-4 text-center text-sm text-muted-foreground">
-                      <AlertTriangle className="h-5 w-5 text-amber-500 mx-auto mb-1" />
+                      <AlertTriangle className="h-5 w-5 text-warning-500 mx-auto mb-1" />
                       <p>Aucun produit trouvé pour "<strong>{produitSearch}</strong>".</p>
                       <Button type="button" variant="outline" size="sm" className="mt-2 gap-1" onClick={openQuickCreate}>
                         <Plus className="h-3.5 w-3.5" />
@@ -516,7 +527,7 @@ export default function Commandes() {
                                 <div>
                                   <p className="font-semibold text-sm">{ligne.produit_nom}</p>
                                   <div className="flex gap-2 items-center mt-1">
-                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${isLowStock ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
+                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
                                       Stock: {ligne.stock} / Min: {ligne.stock_min}
                                     </span>
                                   </div>
@@ -694,7 +705,7 @@ export default function Commandes() {
                       <p className="text-xs font-mono text-muted-foreground">{p.reference}</p>
                       <div className="flex gap-2 items-center mt-1">
                         <span className="text-xs font-bold text-primary">{parseFloat(p.prix_achat).toFixed(2)} XOF</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isLowStock ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
                           Stock: {p.stock} (Min: {p.stock_min})
                         </span>
                       </div>
@@ -746,7 +757,7 @@ export default function Commandes() {
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Commande ce mois</span>
               <h2 className="text-xl sm:text-2xl font-black text-foreground">{stats.totalMonth.toFixed(2)} XOF</h2>
             </div>
-            <div className="w-12 h-12 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600">
+            <div className="w-12 h-12 rounded-full bg-success-500/10 flex items-center justify-center text-success-600 dark:text-success-300">
               <TrendingUp className="h-6 w-6" />
             </div>
           </CardContent>
@@ -759,7 +770,7 @@ export default function Commandes() {
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">En attente</span>
               <h2 className="text-xl sm:text-2xl font-black text-foreground">{stats.pendingCount} commande(s)</h2>
             </div>
-            <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-600">
+            <div className="w-12 h-12 rounded-full bg-warning-500/10 flex items-center justify-center text-warning-600 dark:text-warning-300">
               <Clock className="h-6 w-6" />
             </div>
           </CardContent>
@@ -772,7 +783,7 @@ export default function Commandes() {
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">En Retard</span>
               <h2 className="text-xl sm:text-2xl font-black text-destructive">{stats.lateCount} livraison(s)</h2>
             </div>
-            <div className="w-12 h-12 rounded-full bg-red-500/10 flex items-center justify-center text-red-600">
+            <div className="w-12 h-12 rounded-full bg-danger-500/10 flex items-center justify-center text-danger-600 dark:text-danger-300">
               <AlertTriangle className="h-6 w-6" />
             </div>
           </CardContent>
@@ -812,6 +823,64 @@ export default function Commandes() {
       {/* Orders Table */}
       <Card className="border border-border/60 shadow-md overflow-hidden">
           <CardContent className="p-0">
+            <ResponsiveTable
+              className="px-3 pb-3 md:p-0"
+              cards={
+                loading ? (
+                  <ListSkeleton items={6} />
+                ) : sortedCommandes.length === 0 ? (
+                  <EmptyState
+                    icon={ShoppingCart}
+                    title="Aucune commande trouvee"
+                    description="Essayez de modifier vos termes de recherche ou filtrez par un autre statut."
+                  />
+                ) : (
+                  sortedCommandes.map((c) => {
+                    const isLate = c.statut !== 'livree' && c.statut !== 'annulee' && c.date_livraison_prevue && c.date_livraison_prevue.split('T')[0] < todayStr;
+                    return (
+                      <DataCard
+                        key={c.id}
+                        onClick={() => navigate(`/commandes/${c.id}`)}
+                        title={<span className="font-mono text-primary">{c.numero_commande}</span>}
+                        badge={getStatutBadge(c.statut)}
+                      >
+                        <DataCardRow label="Fournisseur" value={c.fournisseur_nom || '—'} />
+                        <DataCardRow label="Date" value={new Date(c.date_commande).toLocaleDateString('fr-FR')} />
+                        <DataCardRow label="Montant" value={<span className="num font-semibold">{parseFloat(c.sous_total).toFixed(2)} XOF</span>} />
+                        <DataCardRow
+                          label="Livraison"
+                          value={c.date_livraison_prevue
+                            ? <span className={isLate ? 'text-destructive font-semibold' : ''}>{new Date(c.date_livraison_prevue).toLocaleDateString('fr-FR')}</span>
+                            : '—'}
+                        />
+                        <div className="mt-2 flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                          {c.statut === 'en_attente' && (
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-success-600 dark:text-success-300" onClick={(e) => updateStatut(e, c.id, 'validee')} aria-label="Valider la commande">
+                              <CheckCircle className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {c.statut === 'validee' && (
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-blue-600 dark:text-blue-300" onClick={(e) => updateStatut(e, c.id, 'expediee')} aria-label="Marquer comme expédiée">
+                              <Truck className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {(c.statut === 'en_attente' || c.statut === 'validee' || c.statut === 'expediee') && (
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-success-600 dark:text-success-300" onClick={(e) => { e.stopPropagation(); navigate(`/receptions?commande_id=${c.id}`); }} aria-label="Réceptionner la commande">
+                              <Package className="h-4 w-4" />
+                            </Button>
+                          )}
+                          {c.statut !== 'annulee' && (
+                            <Button variant="destructive" size="sm" className="h-8 w-8 p-0" onClick={(e) => updateStatut(e, c.id, 'annulee')} aria-label="Annuler la commande">
+                              <XCircle className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </DataCard>
+                    );
+                  })
+                )
+              }
+              table={
             <Table>
               <TableHeader className="bg-muted/50">
                 <TableRow>
@@ -828,7 +897,7 @@ export default function Commandes() {
                 {loading ? (
                   <TableRow>
                     <TableCell colSpan={7} className="p-0">
-                      <LoadingState inCell />
+                      <TableSkeleton rows={10} columns={7} />
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -860,7 +929,7 @@ export default function Commandes() {
                             <Button 
                               variant="ghost" 
                               size="sm" 
-                              className="h-8 w-8 p-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10"
+                              className="h-8 w-8 p-0 text-success-600 dark:text-success-300 hover:text-success-700 hover:bg-success-500/10"
                               onClick={(e) => updateStatut(e, c.id, 'validee')}
                               title="Valider la commande"
                               aria-label="Valider la commande"
@@ -872,7 +941,7 @@ export default function Commandes() {
                             <Button 
                               variant="ghost" 
                               size="sm" 
-                              className="h-8 w-8 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-500/10"
+                              className="h-8 w-8 p-0 text-blue-600 dark:text-blue-300 hover:text-blue-700 hover:bg-blue-500/10"
                               onClick={(e) => updateStatut(e, c.id, 'expediee')}
                               title="Marquer comme expédiee"
                               aria-label="Marquer comme expédiée"
@@ -884,7 +953,7 @@ export default function Commandes() {
                             <Button 
                               variant="ghost" 
                               size="sm" 
-                              className="h-8 w-8 p-0 text-green-600 hover:text-green-700 hover:bg-green-500/10"
+                              className="h-8 w-8 p-0 text-success-600 dark:text-success-300 hover:text-success-700 hover:bg-success-500/10"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 navigate(`/receptions?commande_id=${c.id}`);
@@ -927,6 +996,8 @@ export default function Commandes() {
                 )}
               </TableBody>
             </Table>
+              }
+            />
           </CardContent>
         </Card>
     </div>

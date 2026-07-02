@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
+import { TableSkeleton } from '@/components/ui/skeleton';
 import { formatFCFA } from '../utils/format';
 
 interface Order {
@@ -174,7 +175,14 @@ export default function Receptions() {
   }, [orders, sort]);
 
   if (loading) {
-    return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+    return (
+      <div className="container mx-auto p-6">
+        <h1 className="text-2xl font-semibold tracking-tight mb-6">Réceptions de commandes</h1>
+        <div className="rounded-md border bg-card">
+          <TableSkeleton rows={10} columns={6} />
+        </div>
+      </div>
+    );
   }
 
   if (selectedOrder) {

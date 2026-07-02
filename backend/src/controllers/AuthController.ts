@@ -74,7 +74,9 @@ export class AuthController {
       } catch (e) { logger.warn({ err: e }, 'audit log insert failed (non-fatal)'); }
 
       // Primary auth transport: httpOnly cookie (not readable by JS → XSS-safe).
-      // The token is still returned in the body for transitional/native clients.
+      // The SPA relies on the cookie + cached non-sensitive auth_user (no token in
+      // localStorage). The token is still returned in the body for non-browser API
+      // clients / integration tests that authenticate via the Authorization header.
       res.cookie('auth_token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',

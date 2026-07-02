@@ -16,6 +16,7 @@ export interface CreateFactureFournisseurInput {
   tiers_id: number;
   fournisseur_id?: number;
   reception_id?: number;
+  commande_id?: number;
   numero_facture_fournisseur: string;
   date_facture: string;
   date_echeance?: string;
@@ -136,6 +137,144 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
   }
 
   /**
+   * Three-way match for a purchase order: reconcile ordered (commande) vs
+   * received (receptions) vs invoiced (existing supplier invoices + an optional
+   * candidate invoice being created) per product.
+   *
+   * `candidate` lines (the not-yet-persisted invoice) are folded into the
+   * invoiced totals so creation-time enforcement sees the full picture.
+   */
+  async computeMatch(
+    commandeId: number,
+    candidate?: FactureFournisseurLigneInput[],
+    client?: any
+  ): Promise<{
+    commande_id: number;
+    coherent: boolean;
+    within_tolerance: boolean;
+    config: { qte_tolerance_pct: number; prix_tolerance_pct: number; bloquer: boolean };
+    lignes: any[];
+    violations: any[];
+  }> {
+    const q = client || pool;
+
+    const { rows: cfgRows } = await q.query(
+      `SELECT qte_tolerance_pct, prix_tolerance_pct, bloquer FROM three_way_match_config WHERE id = 1`
+    );
+    const config = cfgRows[0]
+      ? { qte_tolerance_pct: Number(cfgRows[0].qte_tolerance_pct), prix_tolerance_pct: Number(cfgRows[0].prix_tolerance_pct), bloquer: cfgRows[0].bloquer }
+      : { qte_tolerance_pct: 0, prix_tolerance_pct: 0.05, bloquer: false };
+
+    const { rows: ordered } = await q.query(
+      `SELECT cl.produit_id, p.nom AS produit_nom, p.reference,
+              SUM(cl.quantite) AS qte_commandee, MAX(cl.prix_unitaire) AS prix_commande
+       FROM commande_lignes cl LEFT JOIN produits p ON p.id = cl.produit_id
+       WHERE cl.commande_id = $1 GROUP BY cl.produit_id, p.nom, p.reference`,
+      [commandeId]
+    );
+    const { rows: received } = await q.query(
+      `SELECT rl.produit_id, SUM(rl.quantite_recue) AS qte_recue
+       FROM reception_lignes rl JOIN receptions r ON rl.reception_id = r.id
+       WHERE r.commande_id = $1 GROUP BY rl.produit_id`,
+      [commandeId]
+    );
+    const { rows: invoiced } = await q.query(
+      `SELECT ffl.produit_id, SUM(ffl.quantite) AS qte_facturee, MAX(ffl.prix_unitaire) AS prix_facture
+       FROM facture_fournisseur_lignes ffl JOIN factures_fournisseur ff ON ffl.facture_id = ff.id
+       WHERE ff.commande_id = $1 AND ff.statut <> 'annulee' GROUP BY ffl.produit_id`,
+      [commandeId]
+    );
+
+    const recMap = new Map<number, number>(received.map((r: any) => [r.produit_id, Number(r.qte_recue)]));
+    const invMap = new Map<number, { qte: number; prix: number | null }>(
+      invoiced.map((r: any) => [r.produit_id, { qte: Number(r.qte_facturee), prix: r.prix_facture != null ? Number(r.prix_facture) : null }])
+    );
+    // Fold the candidate (in-flight) invoice into invoiced totals.
+    for (const l of candidate || []) {
+      if (!l.produit_id) continue;
+      const prev = invMap.get(l.produit_id) || { qte: 0, prix: null };
+      invMap.set(l.produit_id, { qte: prev.qte + Number(l.quantite), prix: Number(l.prix_unitaire) });
+    }
+
+    const lignes: any[] = [];
+    const violations: any[] = [];
+    for (const o of ordered) {
+      const qteCommandee = Number(o.qte_commandee);
+      const qteRecue = recMap.get(o.produit_id) || 0;
+      const inv = invMap.get(o.produit_id);
+      const qteFacturee = inv ? inv.qte : 0;
+      const prixCommande = o.prix_commande != null ? Number(o.prix_commande) : null;
+      const prixFacture = inv && inv.prix != null ? inv.prix : null;
+
+      const ecartReception = qteRecue - qteCommandee;
+      const ecartFacturation = qteFacturee - qteRecue;
+      const ecartPrix = prixCommande != null && prixFacture != null ? prixFacture - prixCommande : null;
+      const ecartPrixPct = prixCommande && prixCommande !== 0 && ecartPrix != null ? ecartPrix / prixCommande : null;
+
+      // Tolerance: invoiced qty must not exceed received qty (+tol); price must stay within tol of PO.
+      const qteOk = qteFacturee <= qteRecue * (1 + config.qte_tolerance_pct) + 0.0001;
+      const prixOk = ecartPrixPct == null || Math.abs(ecartPrixPct) <= config.prix_tolerance_pct + 0.0001;
+      const coherent = ecartFacturation <= 0.0001 && (ecartPrix == null || Math.abs(ecartPrix) < 0.01);
+
+      const ligne = {
+        produit_id: o.produit_id, produit_nom: o.produit_nom, reference: o.reference,
+        qte_commandee: qteCommandee, qte_recue: qteRecue, qte_facturee: qteFacturee,
+        prix_commande: prixCommande, prix_facture: prixFacture,
+        ecart_reception: ecartReception, ecart_facturation: ecartFacturation,
+        ecart_prix: ecartPrix, ecart_prix_pct: ecartPrixPct,
+        coherent, within_tolerance: qteOk && prixOk,
+      };
+      lignes.push(ligne);
+      if (!qteOk || !prixOk) {
+        const reasons: string[] = [];
+        if (!qteOk) reasons.push(`quantité facturée (${qteFacturee}) > quantité reçue (${qteRecue})`);
+        if (!prixOk) reasons.push(`prix facturé ${prixFacture} s'écarte du prix commandé ${prixCommande}`);
+        violations.push({ produit_id: o.produit_id, produit_nom: o.produit_nom, reasons });
+      }
+    }
+
+    // Invoiced products absent from the PO are violations too.
+    for (const [produit_id, inv] of invMap) {
+      if (!ordered.some((o: any) => o.produit_id === produit_id)) {
+        violations.push({ produit_id, produit_nom: null, reasons: [`produit facturé (qté ${inv.qte}) absent de la commande`] });
+      }
+    }
+
+    return {
+      commande_id: commandeId,
+      coherent: lignes.every((l) => l.coherent) && violations.length === 0,
+      within_tolerance: violations.length === 0,
+      config,
+      lignes,
+      violations,
+    };
+  }
+
+  /** Read the three-way match tolerance config. */
+  async getMatchConfig(): Promise<{ qte_tolerance_pct: number; prix_tolerance_pct: number; bloquer: boolean }> {
+    const { rows } = await pool.query(
+      `SELECT qte_tolerance_pct, prix_tolerance_pct, bloquer FROM three_way_match_config WHERE id = 1`
+    );
+    return rows[0]
+      ? { qte_tolerance_pct: Number(rows[0].qte_tolerance_pct), prix_tolerance_pct: Number(rows[0].prix_tolerance_pct), bloquer: rows[0].bloquer }
+      : { qte_tolerance_pct: 0, prix_tolerance_pct: 0.05, bloquer: false };
+  }
+
+  /** Update the three-way match tolerance config (singleton row). */
+  async updateMatchConfig(input: { qte_tolerance_pct?: number; prix_tolerance_pct?: number; bloquer?: boolean }): Promise<any> {
+    await pool.query(
+      `UPDATE three_way_match_config SET
+         qte_tolerance_pct  = COALESCE($1, qte_tolerance_pct),
+         prix_tolerance_pct = COALESCE($2, prix_tolerance_pct),
+         bloquer            = COALESCE($3, bloquer),
+         updated_at         = CURRENT_TIMESTAMP
+       WHERE id = 1`,
+      [input.qte_tolerance_pct ?? null, input.prix_tolerance_pct ?? null, input.bloquer ?? null]
+    );
+    return this.getMatchConfig();
+  }
+
+  /**
    * Create supplier invoice
    */
   async create(input: CreateFactureFournisseurInput): Promise<{ id: number; numero_facture_interne: string }> {
@@ -151,6 +290,27 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
 
       if (!lignes || lignes.length === 0) {
         throw new Error('La facture doit contenir au moins une ligne');
+      }
+
+      // Resolve the PO link: explicit commande_id wins, else derive from reception.
+      let commande_id = input.commande_id ?? null;
+      if (!commande_id && reception_id) {
+        const { rows: recRows } = await client.query('SELECT commande_id FROM receptions WHERE id = $1', [reception_id]);
+        if (recRows[0]) commande_id = recRows[0].commande_id;
+      }
+
+      // Three-way match: reconcile this invoice against PO + receptions.
+      if (commande_id) {
+        const match = await this.computeMatch(commande_id, lignes, client);
+        if (match.config.bloquer && !match.within_tolerance) {
+          const err: any = new Error(
+            'Rapprochement 3 voies échoué: ' + match.violations.map((v) => `${v.produit_nom || 'produit ' + v.produit_id}: ${v.reasons.join('; ')}`).join(' | ')
+          );
+          err.statusCode = 422;
+          err.code = 'THREE_WAY_MATCH_FAILED';
+          err.violations = match.violations;
+          throw err;
+        }
       }
 
       // Generate internal invoice number
@@ -170,10 +330,10 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
       // Insert invoice
       const { rows: invoiceResult } = await client.query(
         `INSERT INTO factures_fournisseur
-         (tiers_id, reception_id, numero_facture_fournisseur, numero_facture_interne, date_facture, date_echeance, condition_paiement, sous_total, tva, total, notes, cree_par)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10, $11)
+         (tiers_id, commande_id, reception_id, numero_facture_fournisseur, numero_facture_interne, date_facture, date_echeance, condition_paiement, sous_total, tva, total, notes, cree_par)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12)
          RETURNING id`,
-        [tiers_id_fourn, reception_id || null, numero_facture_fournisseur, numeroFactureInterne, date_facture, date_echeance || null, condition_paiement || null, sousTotal, total, notes || null, cree_par || null]
+        [tiers_id_fourn, commande_id, reception_id || null, numero_facture_fournisseur, numeroFactureInterne, date_facture, date_echeance || null, condition_paiement || null, sousTotal, total, notes || null, cree_par || null]
       );
 
       const invoiceId = invoiceResult[0].id;

@@ -25,6 +25,27 @@ export class FactureFournisseurController {
     }
   }
 
+  static async getMatchConfig(_req: Request, res: Response): Promise<void> {
+    try {
+      successResponse(res, await factureFournisseurService.getMatchConfig(), 'Configuration rapprochement');
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  static async updateMatchConfig(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await factureFournisseurService.updateMatchConfig({
+        qte_tolerance_pct: req.body.qte_tolerance_pct,
+        prix_tolerance_pct: req.body.prix_tolerance_pct,
+        bloquer: req.body.bloquer,
+      });
+      successResponse(res, data, 'Configuration rapprochement mise à jour');
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
   /**
    * Get supplier invoice by ID
    */
@@ -49,7 +70,7 @@ export class FactureFournisseurController {
    */
   static async create(req: Request, res: Response): Promise<void> {
     try {
-      const { tiers_id, fournisseur_id, reception_id, numero_facture_fournisseur, date_facture, date_echeance, condition_paiement, lignes, notes } = req.body;
+      const { tiers_id, fournisseur_id, reception_id, commande_id, numero_facture_fournisseur, date_facture, date_echeance, condition_paiement, lignes, notes } = req.body;
       const resolvedTiersId = tiers_id ?? fournisseur_id;
 
       if (!resolvedTiersId || !numero_facture_fournisseur || !date_facture || !lignes || lignes.length === 0) {
@@ -60,6 +81,7 @@ export class FactureFournisseurController {
       const invoice = await factureFournisseurService.create({
         tiers_id: resolvedTiersId,
         reception_id,
+        commande_id,
         numero_facture_fournisseur,
         date_facture,
         date_echeance,
@@ -72,7 +94,7 @@ export class FactureFournisseurController {
 
       res.status(201).json({ success: true, data: invoice, message: 'Facture fournisseur créée avec succès' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      res.status(error.statusCode || 500).json({ success: false, error: error.message, code: error.code, violations: error.violations });
     }
   }
 

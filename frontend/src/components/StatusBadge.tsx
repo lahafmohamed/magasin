@@ -1,7 +1,7 @@
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle, Clock, XCircle } from 'lucide-react';
+import { CheckCircle, Clock, XCircle, Truck, Package } from 'lucide-react';
 
-type DocumentType = 'facture' | 'devis' | 'bl' | 'avoir';
+type DocumentType = 'facture' | 'devis' | 'bl' | 'avoir' | 'commande';
 
 const STATUS_CONFIG: Record<DocumentType, Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'warning'; icon?: React.ReactNode }>> = {
   facture: {
@@ -31,6 +31,13 @@ const STATUS_CONFIG: Record<DocumentType, Record<string, { label: string; varian
     valide: { label: 'Validé', variant: 'success' },
     utilise: { label: 'Utilisé', variant: 'default' },
     annule: { label: 'Annulé', variant: 'destructive' },
+  },
+  commande: {
+    en_attente: { label: 'En attente', variant: 'warning', icon: <Clock className="h-3 w-3" /> },
+    validee: { label: 'Validée', variant: 'default', icon: <CheckCircle className="h-3 w-3" /> },
+    expediee: { label: 'Expédiée', variant: 'default', icon: <Truck className="h-3 w-3" /> },
+    livree: { label: 'Livrée', variant: 'success', icon: <Package className="h-3 w-3" /> },
+    annulee: { label: 'Annulée', variant: 'destructive', icon: <XCircle className="h-3 w-3" /> },
   },
 };
 

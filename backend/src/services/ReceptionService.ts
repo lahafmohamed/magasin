@@ -143,6 +143,39 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
         throw new Error('La réception doit contenir au moins un produit');
       }
 
+      // --- 3-way match control: block over-receipt beyond what was ordered. ---
+      // Build ordered-per-product and already-received-per-product maps for this order.
+      const { rows: orderedRows } = await client.query(
+        'SELECT produit_id, SUM(quantite) AS qte FROM commande_lignes WHERE commande_id = $1 GROUP BY produit_id',
+        [commande_id]
+      );
+      const orderedMap = new Map<number, number>(orderedRows.map((r: any) => [r.produit_id, Number(r.qte)]));
+      const { rows: receivedRows } = await client.query(
+        `SELECT rl.produit_id, SUM(rl.quantite_recue) AS qte
+         FROM reception_lignes rl JOIN receptions r ON rl.reception_id = r.id
+         WHERE r.commande_id = $1 GROUP BY rl.produit_id`,
+        [commande_id]
+      );
+      const receivedMap = new Map<number, number>(receivedRows.map((r: any) => [r.produit_id, Number(r.qte)]));
+      // Aggregate this reception's quantities per product (a product may repeat across lines).
+      const incomingMap = new Map<number, number>();
+      for (const ligne of lignes) {
+        incomingMap.set(ligne.produit_id, (incomingMap.get(ligne.produit_id) || 0) + ligne.quantite_recue);
+      }
+      for (const [produitId, incoming] of incomingMap) {
+        const ordered = orderedMap.get(produitId) || 0;
+        const already = receivedMap.get(produitId) || 0;
+        if (already + incoming > ordered) {
+          const err: any = new Error(
+            `Réception excessive pour le produit ${produitId}: commandé ${ordered}, déjà reçu ${already}, ` +
+            `réception en cours ${incoming} (max autorisé ${Math.max(0, ordered - already)}).`
+          );
+          err.statusCode = 422;
+          err.code = 'OVER_RECEIPT';
+          throw err;
+        }
+      }
+
       // Generate reception number via sequence
       const { rows: seqRows } = await client.query("SELECT nextval('reception_numero_seq') as num");
       const numeroReception = `REC-${new Date().getFullYear()}-${String(seqRows[0].num).padStart(5, '0')}`;

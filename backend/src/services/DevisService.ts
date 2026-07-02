@@ -4,6 +4,7 @@ import { logger } from '../utils/logger';
 import { calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { resolveSalesLocationId } from './StockMagasinService';
+import { creditService } from './CreditService';
 
 export interface DevisLigneInput {
   produit_id?: number;
@@ -93,6 +94,9 @@ export class DevisService {
     if (lignesRows.length === 0) {
       throw new Error('Le devis ne contient aucune ligne à livrer');
     }
+
+    // Enforce client credit limit before the confirm auto-creates the BL (credit extension).
+    await creditService.assertWithinCreditLimit(client, devis.tiers_id, Number(devis.total));
 
     const { rows: seqRows } = await client.query("SELECT nextval('bl_seq') as num");
     const numeroBL = `BL-${new Date().getFullYear()}-${String(seqRows[0].num).padStart(5, '0')}`;
@@ -286,6 +290,8 @@ export class DevisService {
   ): Promise<any> {
     const validSortColumns = ['numero_devis', 'date_devis', 'total', 'statut', 'client_nom', 'date_validite'];
     const sortColumn = validSortColumns.includes(sort) ? sort : 'date_devis';
+    // client_nom is a joined alias (tiers), not a devis column — qualify accordingly.
+    const sortExpr = sortColumn === 'client_nom' ? 't.raison_sociale' : `d.${sortColumn}`;
     const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
     const offset = (page - 1) * limit;
 
@@ -313,7 +319,7 @@ export class DevisService {
       params.push(client_id);
     }
 
-    query += ` ORDER BY d.${sortColumn} ${sortOrder} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    query += ` ORDER BY ${sortExpr} ${sortOrder} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
     const { rows } = await pool.query(query, params);
@@ -376,11 +382,19 @@ export class DevisService {
     const { rows: devisRows } = await pool.query(
       `SELECT d.*, t.raison_sociale as client_nom, t.prenom as client_prenom, t.email, t.telephone, t.adresse, t.nif,
               sl.nom as location_nom, sl.code as location_code,
-              f.numero_facture as facture_numero
+              f.numero_facture as facture_numero,
+              bl.id as bl_id, bl.numero_bl as bl_numero
        FROM devis d
        LEFT JOIN tiers t ON d.tiers_id = t.id
        LEFT JOIN stock_locations sl ON d.location_id = sl.id
        LEFT JOIN factures f ON d.facture_id = f.id
+       LEFT JOIN LATERAL (
+         SELECT id, numero_bl
+         FROM bons_livraison
+         WHERE devis_id = d.id AND statut <> 'annule'
+         ORDER BY id DESC
+         LIMIT 1
+       ) bl ON true
        WHERE d.id = $1 AND d.deleted_at IS NULL`,
       [id]
     );

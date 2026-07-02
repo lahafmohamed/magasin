@@ -4,7 +4,6 @@ import express from 'express';
 const originalRouter = express.Router;
 
 // Monkey-patch express.Router to inject global parameter validation
-// @ts-ignore
 express.Router = function(options?: any) {
   const router = originalRouter(options);
 

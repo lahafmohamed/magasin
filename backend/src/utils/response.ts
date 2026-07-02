@@ -62,20 +62,6 @@ export function successResponse<T>(
 }
 
 /**
- * Error response helper
- */
-export const errorResponse = (
-  error: string,
-  statusCode: number = 400
-): { statusCode: number; body: ApiResponse } => ({
-  statusCode,
-  body: {
-    success: false,
-    error,
-  },
-});
-
-/**
  * Paginated response helper
  * Sends a standardized paginated response with metadata
  */

@@ -1,5 +1,6 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
+import { checkPeriodIsOpen } from './PeriodService';
 
 interface EcritureInput {
   journal?: string;
@@ -57,7 +58,9 @@ export class ComptabiliteService {
    * Vérifie que total débit = total crédit avant insertion
    */
   async enregistrerPiece(input: PieceInput): Promise<{ id: number; numero_piece: string }> {
-    const { journal = 'VT', date_ecriture, libelle, lignes, reference_type, reference_id, cree_par } = input;
+    // 'OD' (opérations diverses) — the only valid default under the ecritures_comptables
+    // journal CHECK (ACHATS/VENTES/TRESORERIE/OD). Callers may override.
+    const { journal = 'OD', date_ecriture, libelle, lignes, reference_type, reference_id, cree_par } = input;
 
     if (!lignes || lignes.length < 2) {
       throw new Error('Une pièce doit contenir au moins 2 lignes');
@@ -76,6 +79,9 @@ export class ComptabiliteService {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
+      // Refuse posting into a closed accounting period (nice 422 before the DB trigger fires).
+      await checkPeriodIsOpen(new Date(date_ecriture), client);
 
       for (const ligne of lignes) {
         await client.query(
@@ -382,9 +388,9 @@ export class ComptabiliteService {
         [dateDebut, dateFin]
       ),
       pool.query(
-        // Canonical inventory valuation: per-location quantity × purchase cost
-        // (avoids the deprecated produits.stock cache; matches Reporting/Produit services).
-        `SELECT COALESCE(SUM(spl.quantite * p.prix_achat), 0) as valeur_stock
+        // Canonical inventory valuation: maintained per-location value (= quantite × cmp),
+        // kept correct on receptions, sales and transfers by trigger trg_stock_valeur_invariant (076).
+        `SELECT COALESCE(SUM(spl.valeur_stock), 0) as valeur_stock
          FROM stock_par_location spl
          JOIN produits p ON p.id = spl.produit_id
          WHERE p.deleted_at IS NULL`

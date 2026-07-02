@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 interface StockLocation {
   id: number;
@@ -66,6 +67,7 @@ const ALL_STATUSES = ['en_attente', 'en_transit', 'completee', 'annulee'];
 
 export default function StockTransfers() {
   const { hasPermission, canAccessLocation: _canAccessLocation } = usePermission();
+  const confirm = useConfirm();
   
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [selectedTransfer, setSelectedTransfer] = useState<TransferDetail | null>(null);
@@ -159,6 +161,11 @@ export default function StockTransfers() {
 
   const handleComplete = async (transferId: number, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    if (!(await confirm({
+      title: 'Compléter ce transfert ?',
+      description: "Le stock sera déplacé vers l'emplacement de destination.",
+      confirmLabel: 'Compléter',
+    }))) return;
     setCompleting(transferId);
     try {
       await stockTransferService.complete(transferId);
@@ -372,7 +379,7 @@ export default function StockTransfers() {
                           <Button
                             size="sm"
                             variant="outline"
-                            className="gap-1 text-green-600 border-green-200 hover:bg-green-50 hover:text-green-700"
+                            className="gap-1 text-success-600 dark:text-success-300 border-success-200 dark:border-success-500/30 hover:bg-success-50 dark:hover:bg-success-500/10 hover:text-success-700"
                             disabled={completing === transfer.id}
                             onClick={(e) => handleComplete(transfer.id, e)}
                           >
@@ -445,7 +452,7 @@ export default function StockTransfers() {
                 <Button variant="outline" onClick={() => setDetailOpen(false)}>Fermer</Button>
                 {selectedTransfer.statut === 'en_attente' && (
                   <Button
-                    className="gap-2 bg-green-600 hover:bg-green-700"
+                    className="gap-2 bg-success-600 hover:bg-success-700"
                     disabled={completing === selectedTransfer.id}
                     onClick={() => handleComplete(selectedTransfer.id)}
                   >

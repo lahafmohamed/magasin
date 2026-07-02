@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { factureService } from '../services/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,9 +11,13 @@ import { toast } from 'sonner';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { formatFCFA as formatXOF } from '../utils/format';
 import { downloadCsv } from '../utils/csv';
-
-const COLORS = ['#1E3A8A', '#1D4ED8', '#3B82F6', '#60A5FA', '#93C5FD', '#BFDBFE', '#DBEAFE'];
-const CHART_PRIMARY = '#1D4ED8';
+import {
+  CHART_COLORS as COLORS,
+  CHART_PRIMARY,
+  CHART_GRID,
+  CHART_AXIS,
+  CHART_TOOLTIP_STYLE,
+} from '@/lib/chartColors';
 
 export default function ClientAnalytics() {
   const [topClients, setTopClients] = useState<any[]>([]);
@@ -133,6 +138,13 @@ export default function ClientAnalytics() {
       </div>
 
       {/* Top Clients Chart */}
+      {topClients.length === 0 && (
+        <Card>
+          <CardContent>
+            <EmptyState icon={BarChart3} title="Aucune donnée client" description="Aucune activité client sur la période pour générer les analyses." />
+          </CardContent>
+        </Card>
+      )}
       {topClients.length > 0 && (
         <>
           <Card>
@@ -146,10 +158,10 @@ export default function ClientAnalytics() {
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={topClients}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="nom" tick={{ fontSize: 11 }} tickFormatter={(value) => `${value.substring(0, 12)}...`} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(value: any) => formatXOF(value)} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+                  <XAxis dataKey="nom" tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(value) => `${value.substring(0, 12)}...`} />
+                  <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
                   <Bar dataKey="total_depenses" fill={CHART_PRIMARY} name="Montant dépensé" />
                 </BarChart>
               </ResponsiveContainer>
@@ -180,7 +192,7 @@ export default function ClientAnalytics() {
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value: any) => formatXOF(value)} />
+                    <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} />
                   </PieChart>
                 </ResponsiveContainer>
               </CardContent>

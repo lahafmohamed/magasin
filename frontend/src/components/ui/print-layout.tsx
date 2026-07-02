@@ -1,39 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Button } from './button';
-import { Printer } from 'lucide-react';
 import { companySettingsService, CompanySettings } from '../../services/api';
-
-interface PrintLayoutProps {
-  title: string;
-  children: React.ReactNode;
-  onPrint?: () => void;
-}
-
-export function PrintLayout({ title: _title, children, onPrint }: PrintLayoutProps) {
-  const handlePrint = () => {
-    if (onPrint) onPrint();
-    else window.print();
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="print:hidden">
-        <Button onClick={handlePrint} className="gap-2">
-          <Printer className="h-4 w-4" />
-          Imprimer
-        </Button>
-      </div>
-      <div className="print:shadow-none print:border-none">{children}</div>
-    </div>
-  );
-}
 
 // ============================================================
 // Generic document print template
 // Matches "Devis - S00002.pdf" model — works for Devis / Facture / BL
 // ============================================================
 
-export type DocType = 'devis' | 'facture' | 'bl' | 'avoir';
+type DocType = 'devis' | 'facture' | 'bl' | 'avoir';
 
 interface PrintLigne {
   produit_nom?: string;
@@ -406,30 +379,5 @@ export function DocumentPrint({
         }
       `}</style>
     </div>
-  );
-}
-
-// ============================================================
-// Backwards-compat shim — older FactureDetail still imports InvoicePrint
-// ============================================================
-interface InvoicePrintProps {
-  invoice: any;
-  client: any;
-  lignes: any[];
-  company?: any;
-}
-
-export function InvoicePrint({ invoice, client, lignes }: InvoicePrintProps) {
-  return (
-    <DocumentPrint
-      docType="facture"
-      numero={invoice?.numero_facture || invoice?.numero || String(invoice?.id ?? '')}
-      dateDoc={invoice?.date_facture}
-      dateEcheance={invoice?.date_echeance}
-      vendeur={invoice?.cree_par_nom || invoice?.vendeur_nom}
-      clientNom={client?.nom || client?.raison_sociale}
-      clientPrenom={client?.prenom}
-      lignes={lignes || []}
-    />
   );
 }

@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Loader2, Download, FileText } from 'lucide-react';
+import { Download, FileText } from 'lucide-react';
 import { generalLedgerService } from '../services/api';
 import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { QueryState } from '@/components/ui/query-state';
+import { TableSkeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { downloadCsv } from '../utils/csv';
 
 interface Compte {
@@ -72,25 +75,31 @@ export default function GeneralLedger() {
   const [trialBalance, setTrialBalance] = useState<BalanceComptable[]>([]);
   const [activeTab, setActiveTab] = useState<'ecritures' | 'chart' | 'trial-balance'>('ecritures');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [filterJournal, setFilterJournal] = useState<string>('');
   const [dateDebut, setDateDebut] = useState<string>(new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]);
   const [dateFin, setDateFin] = useState<string>(new Date().toISOString().split('T')[0]);
 
   useEffect(() => {
-    if (activeTab === 'ecritures') {
-      fetchEcritures();
-    } else if (activeTab === 'chart') {
-      fetchChartOfAccounts();
-    } else if (activeTab === 'trial-balance') {
-      fetchTrialBalance();
-    }
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, filterJournal, dateDebut, dateFin]);
 
+  /** Recharge l'onglet actif — sert aussi de callback « Réessayer ». */
+  const reload = () => {
+    if (activeTab === 'ecritures') return fetchEcritures();
+    if (activeTab === 'chart') return fetchChartOfAccounts();
+    return fetchTrialBalance();
+  };
+
   const fetchEcritures = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const data = await generalLedgerService.getAll(filterJournal, dateDebut, dateFin);
       setEcritures(data.data || data);
-    } catch {
+    } catch (e) {
+      setError(e);
       toast.error('Erreur chargement écritures');
     } finally {
       setLoading(false);
@@ -98,10 +107,13 @@ export default function GeneralLedger() {
   };
 
   const fetchChartOfAccounts = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const data = await generalLedgerService.getChartOfAccounts();
       setChartOfAccounts(data.data || data);
-    } catch {
+    } catch (e) {
+      setError(e);
       toast.error('Erreur chargement plan comptable');
     } finally {
       setLoading(false);
@@ -109,10 +121,13 @@ export default function GeneralLedger() {
   };
 
   const fetchTrialBalance = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const data = await generalLedgerService.getTrialBalance(dateDebut, dateFin);
       setTrialBalance(data.data || data);
-    } catch {
+    } catch (e) {
+      setError(e);
       toast.error('Erreur chargement balance comptable');
     } finally {
       setLoading(false);
@@ -176,10 +191,6 @@ export default function GeneralLedger() {
     toast.success('Export CSV réussi');
   };
 
-  if (loading) {
-    return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
-  }
-
   return (
     <div className="container mx-auto p-6">
       <div className="flex justify-between items-center mb-6">
@@ -196,23 +207,18 @@ export default function GeneralLedger() {
         </div>
       </div>
 
-      <div className="mb-6 inline-flex rounded-md border bg-card p-1">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'ecritures' | 'chart' | 'trial-balance')}>
+      <TabsList className="mb-6">
         {[
           { id: 'ecritures', label: 'Écritures' },
           { id: 'chart', label: 'Plan comptable' },
           { id: 'trial-balance', label: 'Balance' },
         ].map((tab) => (
-          <button
-            key={tab.id}
-            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-              activeTab === tab.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
-            }`}
-            onClick={() => setActiveTab(tab.id as any)}
-          >
+          <TabsTrigger key={tab.id} value={tab.id}>
             {tab.label}
-          </button>
+          </TabsTrigger>
         ))}
-      </div>
+      </TabsList>
 
       <div className="rounded-md border bg-card shadow-sm p-4 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -244,15 +250,20 @@ export default function GeneralLedger() {
         </div>
       </div>
 
-      {activeTab === 'ecritures' && (
+      <TabsContent value="ecritures">
         <div className="rounded-md border bg-card shadow-sm">
           <div className="p-5">
             <h2 className="text-lg font-semibold mb-3">Écritures comptables</h2>
-            {ecritures.length === 0 ? (
-              <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">
-                Aucune écriture pour la période sélectionnée
-              </div>
-            ) : (
+            <QueryState
+              loading={loading}
+              error={error}
+              isEmpty={ecritures.length === 0}
+              onRetry={reload}
+              skeleton={<TableSkeleton rows={8} columns={7} />}
+              emptyTitle="Aucune écriture"
+              emptyDescription="Aucune écriture pour la période sélectionnée."
+              emptyIcon={FileText}
+            >
               <div className="overflow-x-auto rounded-md border">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 text-left">
@@ -285,15 +296,25 @@ export default function GeneralLedger() {
                   </tbody>
                 </table>
               </div>
-            )}
+            </QueryState>
           </div>
         </div>
-      )}
+      </TabsContent>
 
-      {activeTab === 'chart' && (
+      <TabsContent value="chart">
         <div className="rounded-md border bg-card shadow-sm">
           <div className="p-5">
             <h2 className="text-lg font-semibold mb-3">Plan comptable</h2>
+            <QueryState
+              loading={loading}
+              error={error}
+              isEmpty={chartOfAccounts.length === 0}
+              onRetry={reload}
+              skeleton={<TableSkeleton rows={8} columns={5} />}
+              emptyTitle="Plan comptable vide"
+              emptyDescription="Aucun compte défini."
+              emptyIcon={FileText}
+            >
             <div className="overflow-x-auto rounded-md border">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50 text-left">
@@ -328,19 +349,25 @@ export default function GeneralLedger() {
                 </tbody>
               </table>
             </div>
+            </QueryState>
           </div>
         </div>
-      )}
+      </TabsContent>
 
-      {activeTab === 'trial-balance' && (
+      <TabsContent value="trial-balance">
         <div className="rounded-md border bg-card shadow-sm">
           <div className="p-5">
             <h2 className="text-lg font-semibold mb-3">Balance comptable</h2>
-            {trialBalance.length === 0 ? (
-              <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">
-                Aucune donnée pour la période sélectionnée
-              </div>
-            ) : (
+            <QueryState
+              loading={loading}
+              error={error}
+              isEmpty={trialBalance.length === 0}
+              onRetry={reload}
+              skeleton={<TableSkeleton rows={8} columns={5} />}
+              emptyTitle="Aucune donnée"
+              emptyDescription="Aucune donnée pour la période sélectionnée."
+              emptyIcon={FileText}
+            >
               <div className="overflow-x-auto rounded-md border">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 text-left">
@@ -369,10 +396,11 @@ export default function GeneralLedger() {
                   </tbody>
                 </table>
               </div>
-            )}
+            </QueryState>
           </div>
         </div>
-      )}
+      </TabsContent>
+      </Tabs>
     </div>
   );
 }

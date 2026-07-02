@@ -164,67 +164,6 @@ export const authorize = (...roles: (string | string[])[]) => {
 };
 
 /**
- * Middleware to check if user has required permission
- */
-export const requirePermission = (permissionCode: string) => {
-  return async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    if (!req.user) {
-      res.status(401).json({
-        success: false,
-        error: 'Non authentifié',
-      });
-      return;
-    }
-
-    // Admin role bypasses permission checks
-    if (req.user.role === 'admin') {
-      next();
-      return;
-    }
-
-    try {
-      // Per-user overrides REPLACE role permissions when customiser_permissions is set.
-      // Branch explicitly (the old single-query CASE/LEFT-JOIN form was fragile).
-      const { rows: userRows } = await pool.query(
-        'SELECT COALESCE(customiser_permissions, false) AS custom FROM utilisateurs WHERE id = $1',
-        [req.user.id]
-      );
-      const useOverrides = userRows[0]?.custom === true;
-
-      const rows = useOverrides
-        ? (await pool.query(
-            `SELECT 1 FROM user_permissions up
-             JOIN permissions p ON p.id = up.permission_id
-             WHERE up.utilisateur_id = $1 AND p.code = $2`,
-            [req.user.id, permissionCode]
-          )).rows
-        : (await pool.query(
-            `SELECT 1 FROM role_permissions rp
-             JOIN permissions p ON p.id = rp.permission_id
-             WHERE rp.role_id = (SELECT role_id FROM utilisateurs WHERE id = $1) AND p.code = $2`,
-            [req.user.id, permissionCode]
-          )).rows;
-
-      if (rows.length === 0) {
-        res.status(403).json({
-          success: false,
-          error: 'Permissions insuffisantes',
-        });
-        return;
-      }
-
-      next();
-    } catch (error) {
-      console.error('Permission check error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Erreur interne du serveur lors de la vérification des permissions',
-      });
-    }
-  };
-};
-
-/**
  * Generate JWT token for a user and create session
  */
 export const generateToken = async (user: { id: number; username: string; role: string; must_change_password?: boolean }, req?: any): Promise<string> => {

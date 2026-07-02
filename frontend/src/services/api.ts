@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Produit, Client, FactureComplete, Paiement, StatsDashboard } from '../types';
+import { Produit, FactureComplete, Paiement, StatsDashboard } from '../types';
 
 type CreateProduitPayload = Omit<Produit, 'id' | 'stock'> & {
   stock?: number;
@@ -76,6 +76,11 @@ export const produitService = {
     params.append('order', order);
     const { data } = await api.get(`/produits?${params}`);
     return data;
+  },
+
+  getReorderSuggestions: async (): Promise<any[]> => {
+    const { data } = await api.get('/produits/reorder-suggestions');
+    return data?.data ?? data ?? [];
   },
 
   getById: async (id: number): Promise<Produit> => {
@@ -235,6 +240,29 @@ export const tiersService = {
     return data;
   },
 
+  getReleveDetaille: async (id: number, from?: string, to?: string): Promise<any> => {
+    const params = new URLSearchParams();
+    if (from) params.append('from', from);
+    if (to) params.append('to', to);
+    const { data } = await api.get(`/tiers/${id}/releve-detaille?${params}`);
+    return data?.data ?? data;
+  },
+
+  downloadRelevePdf: async (id: number, raisonSociale: string, from?: string, to?: string): Promise<void> => {
+    const params = new URLSearchParams();
+    if (from) params.append('from', from);
+    if (to) params.append('to', to);
+    const response = await api.get(`/tiers/${id}/releve-detaille/pdf?${params}`, { responseType: 'blob' });
+    const url = window.URL.createObjectURL(response.data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `releve-${raisonSociale.replace(/\s+/g, '_')}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  },
+
   create: async (payload: {
     raison_sociale: string;
     prenom?: string;
@@ -375,105 +403,6 @@ export const acompteFournisseurService = {
   },
 };
 
-// ========== CLIENTS ==========
-export const clientService = {
-  getAll: async (search?: string, page = 1, limit = 20, sort = 'nom', order = 'asc'): Promise<any> => {
-    const params = new URLSearchParams();
-    if (search) params.append('search', search);
-    params.append('page', page.toString());
-    params.append('limit', limit.toString());
-    params.append('sort', sort);
-    params.append('order', order);
-    const { data } = await api.get(`/clients?${params}`);
-    return data;
-  },
-
-  getAllWithBalance: async (search?: string, page = 1, limit = 20, sort = 'nom', order = 'asc', statutSolde?: string): Promise<any> => {
-    const params = new URLSearchParams();
-    if (search) params.append('search', search);
-    if (statutSolde) params.append('statut_solde', statutSolde);
-    params.append('page', page.toString());
-    params.append('limit', limit.toString());
-    params.append('sort', sort);
-    params.append('order', order);
-    const { data } = await api.get(`/clients/with-balance?${params}`);
-    return data;
-  },
-
-  getCompte: async (clientId: number, from?: string, to?: string): Promise<any> => {
-    const params = new URLSearchParams();
-    if (from) params.append('from', from);
-    if (to) params.append('to', to);
-    const { data } = await api.get(`/clients/${clientId}/compte?${params}`);
-    return data;
-  },
-
-  getById: async (id: number): Promise<Client> => {
-    const { data } = await api.get(`/clients/${id}`);
-    return data;
-  },
-
-  getHistorique: async (id: number): Promise<any[]> => {
-    const { data } = await api.get(`/clients/${id}/historique`);
-    return data;
-  },
-
-  create: async (client: Omit<Client, 'id'>): Promise<{ id: number }> => {
-    const { data } = await api.post('/clients', client);
-    return data;
-  },
-
-  update: async (id: number, client: Omit<Client, 'id'>): Promise<void> => {
-    await api.put(`/clients/${id}`, client);
-  },
-
-  delete: async (id: number): Promise<void> => {
-    await api.delete(`/clients/${id}`);
-  },
-};
-
-// ========== COMPTES CLIENTS ==========
-export const compteClientService = {
-  getBalance: async (clientId: number): Promise<any> => {
-    const { data } = await api.get(`/comptes/${clientId}/solde`);
-    return data;
-  },
-
-  getReleve: async (clientId: number, dateDebut?: string, dateFin?: string): Promise<any> => {
-    const params = new URLSearchParams();
-    if (dateDebut) params.append('date_debut', dateDebut);
-    if (dateFin) params.append('date_fin', dateFin);
-    const { data } = await api.get(`/comptes/${clientId}/releve?${params}`);
-    return data;
-  },
-
-  getAging: async (clientId: number): Promise<any> => {
-    const { data } = await api.get(`/comptes/${clientId}/aging`);
-    return data;
-  },
-
-  recordAcompte: async (clientId: number, acompte: {
-    montant: number;
-    methode_paiement: string;
-    notes?: string;
-  }): Promise<any> => {
-    const { data } = await api.post(`/comptes/${clientId}/acomptes`, acompte);
-    return data;
-  },
-
-  getAcomptesDisponibles: async (clientId: number): Promise<any[]> => {
-    const { data } = await api.get(`/comptes/${clientId}/acomptes/disponibles`);
-    return data;
-  },
-
-  applyAcompte: async (clientId: number, factureId: number, acompteId: number): Promise<any> => {
-    const { data } = await api.post(`/comptes/${clientId}/apply-acompte`, {
-      facture_id: factureId,
-      acompte_id: acompteId,
-    });
-    return data;
-  },
-};
 
 // ========== FACTURES ==========
 export const factureService = {
@@ -593,35 +522,6 @@ export const paiementService = {
   },
 };
 
-// ========== FOURNISSEURS ==========
-export const fournisseurService = {
-  getAll: async (search?: string, page: number = 1, limit: number = 20): Promise<any> => {
-    const params = new URLSearchParams();
-    if (search) params.append('search', search);
-    params.append('page', String(page));
-    params.append('limit', String(limit));
-    const { data } = await api.get(`/fournisseurs?${params}`);
-    return data;
-  },
-
-  getById: async (id: number): Promise<any> => {
-    const { data } = await api.get(`/fournisseurs/${id}`);
-    return data;
-  },
-
-  create: async (fournisseur: any): Promise<{ id: number }> => {
-    const { data } = await api.post('/fournisseurs', fournisseur);
-    return data;
-  },
-
-  update: async (id: number, fournisseur: any): Promise<void> => {
-    await api.put(`/fournisseurs/${id}`, fournisseur);
-  },
-
-  delete: async (id: number): Promise<void> => {
-    await api.delete(`/fournisseurs/${id}`);
-  },
-};
 
 // ========== COMMANDES ==========
 export const commandeService = {
@@ -669,6 +569,11 @@ export const commandeService = {
 
   getStats: async (): Promise<any> => {
     const { data } = await api.get('/commandes/stats');
+    return data;
+  },
+
+  getMatch: async (id: number): Promise<any> => {
+    const { data } = await api.get(`/commandes/${id}/match`);
     return data;
   },
 };
@@ -813,53 +718,6 @@ export const stockTransferService = {
   },
 };
 
-// ========== INTERNAL STOCK REQUESTS ==========
-export const internalStockRequestService = {
-  getAll: async (filters?: {
-    statut?: string;
-    magasin_id?: number;
-    depot_id?: number;
-    page?: number;
-    limit?: number;
-  }): Promise<any> => {
-    const params = new URLSearchParams();
-    if (filters?.statut) params.append('statut', filters.statut);
-    if (filters?.magasin_id) params.append('magasin_id', String(filters.magasin_id));
-    if (filters?.depot_id) params.append('depot_id', String(filters.depot_id));
-    params.append('page', String(filters?.page || 1));
-    params.append('limit', String(filters?.limit || 20));
-    const { data } = await api.get(`/internal-stock-requests?${params}`);
-    return data;
-  },
-
-  getById: async (id: number): Promise<any> => {
-    const { data } = await api.get(`/internal-stock-requests/${id}`);
-    return data;
-  },
-
-  create: async (payload: {
-    magasin_id: number;
-    depot_id: number;
-    lignes: { produit_id: number; quantite_demandee: number }[];
-    notes?: string;
-  }): Promise<any> => {
-    const { data } = await api.post('/internal-stock-requests', payload);
-    return data;
-  },
-
-  validate: async (id: number, lignes?: { produit_id: number; quantite_validee: number }[]): Promise<void> => {
-    await api.post(`/internal-stock-requests/${id}/validate`, { lignes });
-  },
-
-  reject: async (id: number, motifRefus?: string): Promise<void> => {
-    await api.post(`/internal-stock-requests/${id}/reject`, { motif_refus: motifRefus });
-  },
-
-  execute: async (id: number): Promise<any> => {
-    const { data } = await api.post(`/internal-stock-requests/${id}/execute`);
-    return data;
-  },
-};
 
 // ========== FACTURES FOURNISSEUR ==========
 export const factureFournisseurService = {
@@ -879,10 +737,20 @@ export const factureFournisseurService = {
     return data;
   },
 
+  getMatchConfig: async (): Promise<any> => {
+    const { data } = await api.get('/factures-fournisseur/match-config');
+    return data?.data ?? data;
+  },
+  updateMatchConfig: async (payload: { qte_tolerance_pct?: number; prix_tolerance_pct?: number; bloquer?: boolean }): Promise<any> => {
+    const { data } = await api.put('/factures-fournisseur/match-config', payload);
+    return data?.data ?? data;
+  },
+
   create: async (facture: {
     tiers_id: number;
     fournisseur_id?: number;
     reception_id?: number;
+    commande_id?: number;
     numero_facture_fournisseur: string;
     date_facture: string;
     date_echeance?: string;
@@ -985,6 +853,22 @@ export const generalLedgerService = {
     const response = await api.get(`/general-ledger/export-pdf?${q.toString()}`, { responseType: 'blob' });
     return response.data;
   },
+
+  exportIncomeStatementPdf: async (dateDebut: string, dateFin: string): Promise<Blob> => {
+    const response = await api.get('/general-ledger/income-statement/export-pdf', {
+      params: { date_debut: dateDebut, date_fin: dateFin },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  exportBalanceSheetPdf: async (dateFin: string): Promise<Blob> => {
+    const response = await api.get('/general-ledger/balance-sheet/export-pdf', {
+      params: { date_fin: dateFin },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
 };
 
 // ========== EMPLOYES ==========
@@ -1056,14 +940,72 @@ export const employeService = {
 };
 
 
+// ========== PAYROLL (PAIE) ==========
+export const payrollService = {
+  getAll: async (page = 1, limit = 20): Promise<any> => {
+    const { data } = await api.get(`/payroll?page=${page}&limit=${limit}`);
+    return data;
+  },
+  getStats: async (): Promise<any> => {
+    const { data } = await api.get('/payroll/stats');
+    return data;
+  },
+  getById: async (id: number): Promise<any> => {
+    const { data } = await api.get(`/payroll/${id}`);
+    return data;
+  },
+  create: async (periode: string, notes?: string): Promise<any> => {
+    const { data } = await api.post('/payroll', { periode, notes });
+    return data;
+  },
+  updatePayslip: async (payslipId: number, payload: { primes?: number; deductions?: number; notes?: string }): Promise<any> => {
+    const { data } = await api.put(`/payroll/payslips/${payslipId}`, payload);
+    return data;
+  },
+  validate: async (id: number): Promise<any> => {
+    const { data } = await api.post(`/payroll/${id}/valider`);
+    return data;
+  },
+  markPaid: async (id: number, methode_paiement?: string): Promise<any> => {
+    const { data } = await api.post(`/payroll/${id}/payer`, { methode_paiement });
+    return data;
+  },
+  cancel: async (id: number): Promise<any> => {
+    const { data } = await api.post(`/payroll/${id}/annuler`);
+    return data;
+  },
+  remove: async (id: number): Promise<void> => {
+    await api.delete(`/payroll/${id}`);
+  },
+  getPayslipPdf: async (payslipId: number): Promise<Blob> => {
+    const response = await api.get(`/payroll/payslips/${payslipId}/pdf`, { responseType: 'blob' });
+    return response.data;
+  },
+  getConfig: async (): Promise<any> => {
+    const { data } = await api.get('/payroll/config');
+    return data?.data ?? data;
+  },
+  updateCotisation: async (id: number, payload: { taux_salarial?: number; taux_patronal?: number; plafond?: number | null; actif?: boolean }): Promise<any> => {
+    const { data } = await api.put(`/payroll/config/cotisations/${id}`, payload);
+    return data?.data ?? data;
+  },
+  replaceBaremes: async (baremes: { tranche_min: number; tranche_max: number | null; taux: number }[]): Promise<any> => {
+    const { data } = await api.put('/payroll/config/baremes', { baremes });
+    return data?.data ?? data;
+  },
+};
+
+
 // ========== DEVIS ==========
 export const devisService = {
-  getAll: async (search?: string, statut?: string, page = 1, limit = 20): Promise<any> => {
+  getAll: async (search?: string, statut?: string, page = 1, limit = 20, sort = 'date_devis', order = 'desc'): Promise<any> => {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
     if (statut) params.append('statut', statut);
     params.append('page', page.toString());
     params.append('limit', limit.toString());
+    params.append('sort', sort);
+    params.append('order', order);
     const { data } = await api.get(`/devis?${params}`);
     return data;
   },
@@ -1128,12 +1070,14 @@ export const devisService = {
 
 // ========== BONS DE LIVRAISON ==========
 export const bonLivraisonService = {
-  getAll: async (search?: string, statut?: string, page = 1, limit = 20): Promise<any> => {
+  getAll: async (search?: string, statut?: string, page = 1, limit = 20, sort = 'date_bl', order = 'desc'): Promise<any> => {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
     if (statut) params.append('statut', statut);
     params.append('page', page.toString());
     params.append('limit', limit.toString());
+    params.append('sort', sort);
+    params.append('order', order);
     const { data } = await api.get(`/bons-livraison?${params}`);
     return data;
   },
@@ -1227,36 +1171,6 @@ export const creditNoteService = {
 
 // ========== CAISSE ==========
 export const caisseService = {
-  getCurrentSession: async (): Promise<any> => {
-    const { data } = await api.get('/caisse/current');
-    return data;
-  },
-
-  getSessions: async (): Promise<any> => {
-    const { data } = await api.get('/caisse/sessions');
-    return data;
-  },
-
-  openSession: async (solde_initial: number): Promise<any> => {
-    const { data } = await api.post('/caisse/open', { solde_ouverture: solde_initial });
-    return data;
-  },
-
-  closeSession: async (sessionId: number, solde_final: number): Promise<any> => {
-    const { data } = await api.post(`/caisse/${sessionId}/close`, { solde_fermeture: solde_final });
-    return data;
-  },
-
-  getZReport: async (sessionId: number): Promise<any> => {
-    const { data } = await api.get(`/caisse/${sessionId}/report`);
-    return data;
-  },
-
-  getSessionPaiements: async (sessionId: number): Promise<any> => {
-    const { data } = await api.get(`/caisse/${sessionId}/paiements`);
-    return data;
-  },
-
   getMagasins: async (): Promise<any[]> => {
     const { data } = await api.get('/stock-locations');
     return data?.data || data || [];
@@ -1278,95 +1192,6 @@ export const caisseService = {
     if (params.date_to) q.set('date_to', params.date_to);
     if (params.limit) q.set('limit', String(params.limit));
     const { data } = await api.get(`/caisse/audit?${q.toString()}`);
-    return data;
-  },
-};
-
-// ========== DEPENSES ==========
-export const depenseService = {
-  getAll: async (search?: string, categorie?: string, page = 1, limit = 20): Promise<any> => {
-    const params = new URLSearchParams();
-    if (search) params.append('search', search);
-    if (categorie) params.append('categorie', categorie);
-    params.append('page', page.toString());
-    params.append('limit', limit.toString());
-    const { data } = await api.get(`/depenses?${params}`);
-    return data;
-  },
-
-  getById: async (id: number): Promise<any> => {
-    const { data } = await api.get(`/depenses/${id}`);
-    return data;
-  },
-
-  create: async (depense: {
-    montant: number;
-    categorie_id: number;
-    description: string;
-    methode_paiement?: string;
-    reference?: string;
-    notes?: string;
-  }): Promise<any> => {
-    const { data } = await api.post('/depenses', depense);
-    return data;
-  },
-
-  delete: async (id: number): Promise<void> => {
-    await api.delete(`/depenses/${id}`);
-  },
-
-  getCategories: async (): Promise<any[]> => {
-    const { data } = await api.get('/depenses/categories');
-    return data;
-  },
-
-  getStats: async (dateDebut?: string, dateFin?: string): Promise<any> => {
-    const params: any = {};
-    if (dateDebut) params.date_debut = dateDebut;
-    if (dateFin) params.date_fin = dateFin;
-    const { data } = await api.get('/depenses/stats', { params });
-    return data;
-  },
-};
-
-// ========== POS (POINT OF SALE) ==========
-export const posService = {
-  getCurrentSession: async (): Promise<any> => {
-    const { data } = await api.get('/pos/session');
-    return data;
-  },
-
-  openSession: async (solde_initial: number, location_id?: number): Promise<any> => {
-    const { data } = await api.post('/pos/open', { solde_ouverture: solde_initial, location_id });
-    return data;
-  },
-
-  closeSession: async (sessionId: number, solde_final?: number): Promise<any> => {
-    const { data } = await api.post(`/pos/${sessionId}/close`, { solde_cloture: solde_final });
-    return data;
-  },
-
-  getSessionSummary: async (sessionId: number): Promise<any> => {
-    const { data } = await api.get(`/pos/${sessionId}/summary`);
-    return data;
-  },
-
-  scanBarcode: async (codeBarre: string): Promise<any> => {
-    const { data } = await api.get(`/pos/scan?${new URLSearchParams({ code_barre: codeBarre })}`);
-    return data;
-  },
-
-  quickSale: async (sessionId: number, items: {
-    produit_id: number;
-    quantite: number;
-    prix_unitaire: number;
-  }[], client_id?: number, methode_paiement?: string): Promise<any> => {
-    const { data } = await api.post('/pos/sale', {
-      sessionId,
-      items,
-      client_id,
-      methode_paiement,
-    });
     return data;
   },
 };
@@ -1470,11 +1295,6 @@ export const adminUserService = {
     return data?.data || data;
   },
 
-  getPermissions: async (): Promise<any[]> => {
-    const { data } = await api.get('/admin/users/permissions');
-    return data?.data || data;
-  },
-
   create: async (user: any): Promise<any> => {
     const { data } = await api.post('/admin/users', user);
     return data;
@@ -1482,16 +1302,6 @@ export const adminUserService = {
 
   update: async (id: number, user: any): Promise<any> => {
     const { data } = await api.put(`/admin/users/${id}`, user);
-    return data;
-  },
-
-  getUserPermissions: async (id: number): Promise<any> => {
-    const { data } = await api.get(`/admin/users/${id}/permissions`);
-    return data?.data || data;
-  },
-
-  updateUserPermissions: async (id: number, payload: { customiser_permissions: boolean, permission_ids: number[] }): Promise<any> => {
-    const { data } = await api.post(`/admin/users/${id}/permissions`, payload);
     return data;
   },
 };
@@ -1718,5 +1528,42 @@ export const comptabiliteService = {
     if (date_fin) q.append('date_fin', date_fin);
     const { data } = await api.get(`/comptabilite/ratios?${q}`);
     return data?.data || data;
+  },
+};
+
+// ========== ATTACHMENTS ==========
+export const attachmentService = {
+  list: async (entity_type: string, entity_id: number): Promise<any[]> => {
+    const { data } = await api.get('/attachments', { params: { entity_type, entity_id } });
+    return data?.data ?? data ?? [];
+  },
+
+  upload: async (entity_type: string, entity_id: number, file: File): Promise<any> => {
+    const contenu_base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const { data } = await api.post('/attachments', {
+      entity_type, entity_id, filename: file.name, mime_type: file.type, contenu_base64,
+    });
+    return data?.data ?? data;
+  },
+
+  download: async (id: number, filename: string): Promise<void> => {
+    const response = await api.get(`/attachments/${id}/download`, { responseType: 'blob' });
+    const url = window.URL.createObjectURL(response.data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  },
+
+  remove: async (id: number): Promise<void> => {
+    await api.delete(`/attachments/${id}`);
   },
 };

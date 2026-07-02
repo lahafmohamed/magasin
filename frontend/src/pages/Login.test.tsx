@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import Login from '../pages/Login';
 import { useAuth } from '../lib/AuthContext';
 
@@ -44,8 +44,8 @@ describe('Login', () => {
 
   it('renders login form', () => {
     renderLogin();
-    expect(screen.getByPlaceholderText(/username/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/•••/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Identifiant')).toBeInTheDocument();
+    expect(screen.getByLabelText('Mot de passe')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /se connecter/i })).toBeInTheDocument();
   });
 
@@ -54,19 +54,19 @@ describe('Login', () => {
     const submitBtn = screen.getByRole('button', { name: /se connecter/i });
     fireEvent.click(submitBtn);
 
-    // Form validation should prevent submission when fields are empty
-    expect(mockLogin).not.toHaveBeenCalled();
+    // Zod validation should prevent submission when fields are empty
+    await waitFor(() => expect(mockLogin).not.toHaveBeenCalled());
   });
 
   it('calls login with valid credentials', async () => {
     mockLogin.mockResolvedValue(undefined);
     renderLogin();
 
-    fireEvent.change(screen.getByPlaceholderText(/username/i), { target: { value: 'admin' } });
-    fireEvent.change(screen.getByPlaceholderText(/•••/), { target: { value: 'admin123' } });
+    fireEvent.change(screen.getByLabelText('Identifiant'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('Mot de passe'), { target: { value: 'admin123' } });
 
     fireEvent.click(screen.getByRole('button', { name: /se connecter/i }));
 
-    expect(mockLogin).toHaveBeenCalledWith('admin', 'admin123');
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith('admin', 'admin123'));
   });
 });

@@ -5,6 +5,7 @@ import { calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { ClientAllocationService } from './ClientAllocationService';
 import { checkPeriodIsOpen } from './PeriodService';
+import { creditService } from './CreditService';
 import {
   resolveSalesLocationId,
 } from './StockMagasinService';
@@ -97,8 +98,10 @@ export class FactureService {
     sort: string = 'date_facture',
     order: string = 'DESC'
   ): Promise<any> {
-    const validSortColumns = ['numero_facture', 'date_facture', 'total', 'statut', 'client_nom'];
+    const validSortColumns = ['numero_facture', 'date_facture', 'total', 'statut', 'client_nom', 'montant_paye'];
     const sortColumn = validSortColumns.includes(sort) ? sort : 'date_facture';
+    // client_nom is a joined alias (tiers), not a factures column — qualify accordingly.
+    const sortExpr = sortColumn === 'client_nom' ? 't.raison_sociale' : `f.${sortColumn}`;
     const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
     const offset = (page - 1) * limit;
 
@@ -125,7 +128,7 @@ export class FactureService {
       params.push(statut);
     }
 
-    query += ` ORDER BY f.${sortColumn} ${sortOrder} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    query += ` ORDER BY ${sortExpr} ${sortOrder} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
     const { rows } = await pool.query(query, params);
@@ -304,17 +307,8 @@ export class FactureService {
         remise_globale_pct
       );
 
-      // Enforce client credit limit when configured (> 0)
-      const creditMax = parseFloat(clientRows[0].credit_max || 0);
-      const soldeActuel = parseFloat(clientRows[0].solde_actuel || 0);
-      const encoursApresFacture = soldeActuel + total;
-
-      if (creditMax > 0 && encoursApresFacture > creditMax) {
-        const clientNom = `${clientRows[0].nom || ''} ${clientRows[0].prenom || ''}`.trim();
-        throw new Error(
-          `Plafond de crédit dépassé pour ${clientNom}. Limite: ${creditMax.toFixed(2)}, Encours actuel: ${soldeActuel.toFixed(2)}, Après facture: ${encoursApresFacture.toFixed(2)}`
-        );
-      }
+      // Enforce client credit limit (live outstanding + row lock, shared with BL path)
+      await creditService.assertWithinCreditLimit(client, tiers_id, total);
 
       const delaiPaiement = clientRows[0].delai_paiement || 'immediat';
       const dateEcheance = this.formatDateForPg(this.calculateDueDate(delaiPaiement));

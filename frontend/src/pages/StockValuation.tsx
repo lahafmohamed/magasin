@@ -5,10 +5,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Package, DollarSign, TrendingUp, BarChart3, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { downloadCsv } from '../utils/csv';
+import {
+  CHART_PRIMARY,
+  CHART_SECONDARY,
+  CHART_GRID,
+  CHART_AXIS,
+  CHART_TOOLTIP_STYLE,
+} from '@/lib/chartColors';
 
 export default function StockValuation() {
   const [valuation, setValuation] = useState<any>(null);
@@ -147,17 +155,21 @@ export default function StockValuation() {
               <CardDescription>Comparaison valeur d'achat vs valeur de vente</CardDescription>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={byCategory}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="categorie" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(value: any) => formatXOF(value)} />
-                  <Legend />
-                  <Bar dataKey="valeur_achat" fill="#94a3b8" name="Valeur Achat" />
-                  <Bar dataKey="valeur_vente" fill="#3b82f6" name="Valeur Vente" />
-                </BarChart>
-              </ResponsiveContainer>
+              {byCategory.length === 0 ? (
+                <EmptyState icon={BarChart3} title="Aucune donnée" description="Aucune valeur de stock à afficher." />
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={byCategory}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+                    <XAxis dataKey="categorie" tick={{ fontSize: 11, fill: CHART_AXIS }} />
+                    <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
+                    <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
+                    <Legend />
+                    <Bar dataKey="valeur_achat" fill={CHART_SECONDARY} name="Valeur Achat" />
+                    <Bar dataKey="valeur_vente" fill={CHART_PRIMARY} name="Valeur Vente" />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
         </>

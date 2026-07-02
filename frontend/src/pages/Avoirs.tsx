@@ -32,7 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
-import { LoadingState } from '@/components/ui/loading';
+import { TableSkeleton } from '@/components/ui/skeleton';
 import { SortableHeader, SortState } from '@/components/ui/sortable-header';
 import StatusBadge from '@/components/StatusBadge';
 import { formatXOF, fuzzyScore } from '@/utils/format';
@@ -439,8 +439,8 @@ export default function Avoirs() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={9}>
-                  <LoadingState inCell />
+                <TableCell colSpan={9} className="p-0">
+                  <TableSkeleton rows={10} columns={9} />
                 </TableCell>
               </TableRow>
             ) : processed.length === 0 ? (

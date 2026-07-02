@@ -204,9 +204,9 @@ export class StockLocationService extends BaseService<StockLocationRecord> {
    */
   async getStockLevels(locationId: number): Promise<any[]> {
     const { rows } = await pool.query(
-      `SELECT spl.id, spl.produit_id, spl.quantite, spl.quantite_reservee,
+      `SELECT spl.id, spl.produit_id, spl.quantite,
               p.nom as produit_nom, p.reference, p.prix_vente,
-              (spl.quantite - spl.quantite_reservee) as quantite_disponible
+              spl.quantite as quantite_disponible
        FROM stock_par_location spl
        JOIN produits p ON spl.produit_id = p.id
        WHERE spl.location_id = $1 AND spl.quantite > 0
@@ -221,9 +221,9 @@ export class StockLocationService extends BaseService<StockLocationRecord> {
    */
   async getProductsWithStock(locationId: number, search?: string, limit?: number): Promise<any[]> {
     let query = `
-      SELECT spl.id, spl.produit_id, spl.quantite, spl.quantite_reservee,
+      SELECT spl.id, spl.produit_id, spl.quantite,
              p.nom as produit_nom, p.reference, p.prix_vente,
-             (spl.quantite - spl.quantite_reservee) as quantite_disponible
+             spl.quantite as quantite_disponible
       FROM stock_par_location spl
       JOIN produits p ON spl.produit_id = p.id
       WHERE spl.location_id = $1 AND spl.quantite > 0

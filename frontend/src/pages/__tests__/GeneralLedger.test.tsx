@@ -15,15 +15,13 @@ vi.mock('../../services/api', () => ({
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 describe('GeneralLedger', () => {
-  it('should render CSV export button', async () => {
+  it('should render CSV export button after loading', async () => {
     render(<GeneralLedger />);
-    const csvButton = screen.getByText('Exporter en CSV');
-    expect(csvButton).toBeDefined();
+    expect(await screen.findByText('Exporter en CSV')).toBeInTheDocument();
   });
 
-  it('should render PDF export button', async () => {
+  it('should render PDF export button after loading', async () => {
     render(<GeneralLedger />);
-    const pdfButton = screen.getByText('Exporter en PDF');
-    expect(pdfButton).toBeDefined();
+    expect(await screen.findByText('Exporter en PDF')).toBeInTheDocument();
   });
 });

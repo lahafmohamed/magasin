@@ -10,6 +10,7 @@ router.use(authenticate);
 
 router.get('/', CommandeController.getAll);
 router.get('/stats', CommandeController.getStats);
+router.get('/:id/match', CommandeController.getMatch);
 router.get('/:id', CommandeController.getById);
 router.post('/', authorize(['admin', 'manager', 'depot_staff']), validateBody(createCommandeSchema), CommandeController.create);
 router.put('/:id', authorize(['admin', 'manager', 'depot_staff']), validateBody(createCommandeSchema), CommandeController.update);

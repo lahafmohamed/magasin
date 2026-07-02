@@ -36,11 +36,6 @@ export class AdminUserService {
     return rows;
   }
 
-  static async getPermissions() {
-    const { rows } = await pool.query('SELECT * FROM permissions ORDER BY module ASC, nom ASC');
-    return rows;
-  }
-
   static async createUser(data: any) {
     const { username, email, nom_complet, password, role_id, location_ids } = data;
     
@@ -155,98 +150,4 @@ export class AdminUserService {
     }
   }
 
-  static async getUserPermissions(userId: number) {
-    const userRes = await pool.query(
-      `SELECT u.id, u.username, u.email, u.nom_complet, u.customiser_permissions, u.role_id, r.nom as role_nom 
-       FROM utilisateurs u
-       LEFT JOIN roles r ON u.role_id = r.id
-       WHERE u.id = $1`,
-      [userId]
-    );
-
-    if (userRes.rows.length === 0) {
-      throw new Error('Utilisateur non trouvé');
-    }
-
-    const user = userRes.rows[0];
-
-    // Get all permissions
-    const permissionsRes = await pool.query(
-      'SELECT id, code, nom, description, module FROM permissions ORDER BY module ASC, nom ASC'
-    );
-
-    // Get default role permissions
-    const rolePermissionsRes = await pool.query(
-      'SELECT permission_id FROM role_permissions WHERE role_id = $1',
-      [user.role_id]
-    );
-    const rolePermissionIds = new Set(rolePermissionsRes.rows.map(r => r.permission_id));
-
-    // Get customized permissions
-    const userPermissionsRes = await pool.query(
-      'SELECT permission_id FROM user_permissions WHERE utilisateur_id = $1',
-      [userId]
-    );
-    const userPermissionIds = new Set(userPermissionsRes.rows.map(r => r.permission_id));
-
-    const permissions = permissionsRes.rows.map(p => {
-      const isDefault = rolePermissionIds.has(p.id);
-      // If customized, use userPermissionIds. Otherwise, use rolePermissionIds.
-      const isEnabled = user.customiser_permissions ? userPermissionIds.has(p.id) : isDefault;
-
-      return {
-        ...p,
-        is_default: isDefault,
-        is_enabled: isEnabled,
-      };
-    });
-
-    return {
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        nom_complet: user.nom_complet,
-        role: user.role_nom,
-        customiser_permissions: user.customiser_permissions,
-      },
-      permissions,
-    };
-  }
-
-  static async updateUserPermissions(userId: number, customiser_permissions: boolean, permissionIds: number[]) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Update customiser_permissions flag
-      await client.query(
-        'UPDATE utilisateurs SET customiser_permissions = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-        [customiser_permissions, userId]
-      );
-
-      // Clean up previous user custom permissions
-      await client.query(
-        'DELETE FROM user_permissions WHERE utilisateur_id = $1',
-        [userId]
-      );
-
-      // If customizer is true and there are custom permissions, insert them
-      if (customiser_permissions && Array.isArray(permissionIds) && permissionIds.length > 0) {
-        for (const permId of permissionIds) {
-          await client.query(
-            'INSERT INTO user_permissions (utilisateur_id, permission_id) VALUES ($1, $2)',
-            [userId, permId]
-          );
-        }
-      }
-
-      await client.query('COMMIT');
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
 }

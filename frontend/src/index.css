@@ -24,6 +24,20 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 221 83% 35%;
     --radius: 0.5rem;
+
+    /* Chart categorical palette (HSL triplets) — theme-aware, consumed via hsl(var(--chart-N)).
+       Series/category colors; financial signals reuse --chart-positive / --chart-negative. */
+    --chart-1: 221 83% 45%;
+    --chart-2: 217 91% 60%;
+    --chart-3: 199 89% 48%;
+    --chart-4: 262 83% 58%;
+    --chart-5: 291 64% 52%;
+    --chart-6: 24 95% 53%;
+    --chart-7: 160 84% 39%;
+    --chart-positive: 160 84% 39%;
+    --chart-negative: 0 72% 51%;
+    --chart-grid: 214.3 31.8% 88%;
+    --chart-axis: 215.4 16.3% 46.9%;
   }
 
   .dark {
@@ -46,6 +60,19 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 224.3 76.3% 48%;
+
+    /* Chart palette — brighter/desaturated for dark surfaces (skill: color-dark-mode) */
+    --chart-1: 217 91% 65%;
+    --chart-2: 213 94% 74%;
+    --chart-3: 199 89% 60%;
+    --chart-4: 258 90% 72%;
+    --chart-5: 291 70% 70%;
+    --chart-6: 27 96% 61%;
+    --chart-7: 158 64% 52%;
+    --chart-positive: 158 64% 52%;
+    --chart-negative: 0 84% 65%;
+    --chart-grid: 217.2 32.6% 25%;
+    --chart-axis: 215 20.2% 65.1%;
   }
 }
 
@@ -65,5 +92,41 @@
 @layer utilities {
   .num {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Page / route enter transition — applied by Layout on each navigation */
+  .page-enter {
+    animation: fade-in-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* Shimmer skeleton sweep (used by skeleton primitive) */
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--foreground) / 0.06),
+      transparent
+    );
+    animation: shimmer 1.5s infinite;
+  }
+}
+
+/* Accessibility — honor the OS "reduce motion" setting globally (skill §1/§7) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

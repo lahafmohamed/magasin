@@ -3,6 +3,7 @@ import { tiersService } from '../services/TiersService';
 import { TiersAllocationService } from '../services/TiersAllocationService';
 import { CompensationService } from '../services/CompensationService';
 import { caisseMagasinService } from '../services/CaisseMagasinService';
+import { pdfService } from '../services/PDFService';
 import pool from '../db/connection';
 
 export class TiersController {
@@ -91,6 +92,32 @@ export class TiersController {
       res.json({ success: true, data: compte });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  static async getReleveDetaille(req: Request, res: Response): Promise<void> {
+    try {
+      const id = parseInt(req.params.id);
+      const { from, to } = req.query;
+      const releve = await tiersService.getReleveDetaille(id, { from: from as string, to: to as string });
+      if (!releve) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
+      res.json({ success: true, data: releve });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+
+  static async getRelevePDF(req: Request, res: Response): Promise<void> {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) { res.status(400).json({ success: false, error: 'Identifiant invalide' }); return; }
+      const { from, to } = req.query;
+      const buffer = await pdfService.generateRelevePDF(id, from as string, to as string);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="releve-client-${id}.pdf"`);
+      res.send(buffer);
+    } catch (err: any) {
+      res.status(err.statusCode || 500).json({ success: false, error: err.message });
     }
   }
 

@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { checkPeriodIsOpen } from './PeriodService';
 
 export interface CreateSessionInput {
   magasin_id: number;
@@ -502,6 +503,10 @@ export class CaisseMagasinService {
       return;
     }
 
+    // Cash movements post at CURRENT_DATE; refuse if the current period is closed
+    // (nice 422 before the ecritures_comptables period-lock trigger fires).
+    await checkPeriodIsOpen(new Date(), client);
+
     // Build the two balanced legs
     const cashLeg = { compte: cashAccount, debit: 0, credit: 0 };
     const counterLeg = { compte: counter, debit: 0, credit: 0, tiers: false as boolean };
@@ -522,7 +527,7 @@ export class CaisseMagasinService {
       await client.query(
         `INSERT INTO ecritures_comptables
            (journal, numero_piece, date_ecriture, compte_numero, tiers_id, libelle, debit, credit, reference_type, reference_id, cree_par)
-         VALUES ('BQ', $1, CURRENT_DATE, $2, NULL, $3, $4, $5, $6, $7, $8)`,
+         VALUES ('TRESORERIE', $1, CURRENT_DATE, $2, NULL, $3, $4, $5, $6, $7, $8)`,
         [
           numeroPiece,
           leg.compte,

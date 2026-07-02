@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
-import { LoadingState } from '@/components/ui/loading';
+import { TableSkeleton } from '@/components/ui/skeleton';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import {
   Plus,
@@ -270,7 +270,7 @@ export default function DemandesList() {
       <Card>
         <CardContent className="p-0">
           {loading ? (
-            <LoadingState />
+            <TableSkeleton rows={10} columns={7} />
           ) : filteredDemandes.length === 0 ? (
             <EmptyState
               icon={Package}

@@ -12,13 +12,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
-import { InlineEdit } from '@/components/ui/inline-edit';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
-import { LoadingState } from '@/components/ui/loading';
+import { TableSkeleton } from '@/components/ui/skeleton';
 import { SortableHeader, SortState } from '@/components/ui/sortable-header';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
-import { Plus, Search, Pencil, Trash2, AlertCircle, CheckCircle, XCircle, Package, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, Loader2 } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, AlertCircle, XCircle, Package, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { normalizeSearch } from '@/utils/format';
 import { downloadCsv } from '@/utils/csv';
@@ -32,6 +32,7 @@ interface StockLocation {
 }
 
 export default function Inventaire() {
+  const confirm = useConfirm();
   const [produits, setProduits] = useState<Produit[]>([]);
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -72,9 +73,11 @@ export default function Inventaire() {
   const [stockLocations, setStockLocations] = useState<StockLocation[]>([]);
   const [selectedAdjustLocationId, setSelectedAdjustLocationId] = useState<string>('');
   
-  // Pagination & Sorting
+  // Pagination & Sorting — default 50/page so the row virtualizer (windowed
+  // rendering below) actually earns its keep on large catalogs; the page-size
+  // selector still offers 10/20/50/100.
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(20);
+  const [limit, setLimit] = useState(50);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [sort, setSort] = useState('nom');
@@ -268,7 +271,7 @@ export default function Inventaire() {
 
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
-    if (!confirm(`Supprimer ${selectedIds.length} produit(s) ?`)) return;
+    if (!(await confirm({ title: `Supprimer ${selectedIds.length} produit(s) ?`, description: 'Cette action est irréversible.', confirmLabel: 'Supprimer', destructive: true }))) return;
     
     let successCount = 0;
     for (const id of selectedIds) {
@@ -349,32 +352,6 @@ export default function Inventaire() {
     }
   };
 
-  const handleInlineEdit = async (productId: number, field: string, value: string) => {
-    try {
-      const updateData: any = {};
-      
-      if (field === 'nom') {
-        updateData.nom = value;
-      } else if (field === 'categorie') {
-        updateData.categorie = value;
-      } else if (field === 'prix_vente') {
-        updateData.prix_vente = parseFloat(value) || 0;
-      } else if (field === 'prix_achat') {
-        updateData.prix_achat = parseFloat(value) || 0;
-      } else if (field === 'stock_min') {
-        updateData.stock_min = parseInt(value) || 5;
-      }
-      
-      await produitService.update(productId, updateData);
-      toast.success('Champ mis à jour avec succès');
-      loadProduits();
-    } catch (error) {
-      console.error('Failed to update field:', error);
-      toast.error('Erreur lors de la mise à jour');
-      throw error;
-    }
-  };
-
   const resetForm = () => {
     const defaultLocation = getDefaultLocationId(stockLocations);
     setShowForm(false);
@@ -398,10 +375,8 @@ export default function Inventaire() {
     if (stock <= 0) {
       return <Badge variant="destructive" className="gap-1"><XCircle className="h-3 w-3" /> Rupture</Badge>;
     }
-    if (stock <= stock_min) {
-      return <Badge variant="warning" className="gap-1"><AlertCircle className="h-3 w-3" /> Bas ({stock})</Badge>;
-    }
-    return <Badge variant="success" className="gap-1"><CheckCircle className="h-3 w-3" /> OK ({stock})</Badge>;
+    const color = stock <= stock_min ? 'text-warning' : 'text-foreground';
+    return <span className={`num font-semibold ${color}`}>{stock}</span>;
   };
 
   const handleSort = (column: string) => {
@@ -493,7 +468,7 @@ export default function Inventaire() {
   const rowVirtualizer = useVirtualizer({
     count: produits.length,
     getScrollElement: () => tableScrollRef.current,
-    estimateSize: () => 64, // estimated row height in px (refined via measureElement)
+    estimateSize: () => 48, // estimated row height in px (refined via measureElement)
     overscan: 10,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -506,7 +481,7 @@ export default function Inventaire() {
     const prixVente = parseFloat(p.prix_vente as any) || 0;
     const prixAchat = parseFloat(p.prix_achat as any) || 0;
     const marge = prixVente - prixAchat;
-    const margePercent = prixAchat > 0 ? ((marge / prixAchat) * 100).toFixed(1) : '0';
+    const margeNum = prixAchat > 0 ? (marge / prixAchat) * 100 : null;
     const stock = typeof p.stock === 'string' ? parseInt(p.stock) : p.stock;
     const stockMin = typeof p.stock_min === 'string' ? parseInt(p.stock_min) : p.stock_min;
 
@@ -515,13 +490,14 @@ export default function Inventaire() {
         key={p.id}
         data-index={index}
         ref={rowVirtualizer.measureElement}
-        className={`${selectedIds.includes(p.id) ? 'bg-primary/5' : ''} hover:bg-muted/50 transition-colors`}
+        className={`${selectedIds.includes(p.id) ? 'bg-primary/5' : index % 2 === 1 ? 'bg-muted/30' : ''} hover:bg-muted/50 transition-colors`}
       >
         <TableCell>
           <input
             type="checkbox"
             checked={selectedIds.includes(p.id)}
             onChange={() => toggleSelection(p.id)}
+            aria-label={`Sélectionner ${p.nom}`}
             className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
           />
         </TableCell>
@@ -529,64 +505,67 @@ export default function Inventaire() {
           <span
             onClick={() => openPurchaseInfo(p)}
             className="cursor-pointer hover:underline hover:text-primary transition-colors"
+            title="Voir infos d'achat"
           >
             {p.reference}
           </span>
         </TableCell>
         <TableCell className="font-semibold">
-          <InlineEdit
-            value={p.nom}
-            onSave={(value) => handleInlineEdit(p.id, 'nom', value)}
-            placeholder="Nom du produit"
-            displayClassName="font-semibold cursor-text border-b border-dashed border-muted-foreground/40"
-          />
+          <span className="font-semibold">{p.nom}</span>
         </TableCell>
         <TableCell>
-          <InlineEdit
-            value={p.categorie || ''}
-            onSave={(value) => handleInlineEdit(p.id, 'categorie', value)}
-            placeholder="Catégorie"
-          />
-        </TableCell>
-        <TableCell className="font-bold text-right">
-          <InlineEdit
-            value={prixVente.toFixed(2)}
-            onSave={(value) => handleInlineEdit(p.id, 'prix_vente', value)}
-            type="number"
-            placeholder="0.00"
-            displayClassName="font-bold text-right"
-          />
-          {' XOF'}
+          {p.categorie
+            ? <span className="text-sm">{p.categorie}</span>
+            : <span className="text-xs text-muted-foreground">—</span>}
         </TableCell>
         <TableCell className="text-right">
-          <span className="text-sm font-medium text-muted-foreground">
-            +{margePercent}%
-          </span>
+          <div className="flex items-center justify-end gap-1 whitespace-nowrap">
+            <span className="font-semibold text-right num">{prixVente.toFixed(0)}</span>
+            <span className="text-xs text-muted-foreground">XOF</span>
+          </div>
+        </TableCell>
+        <TableCell className="text-right whitespace-nowrap">
+          {margeNum === null ? (
+            <span className="text-xs text-muted-foreground">—</span>
+          ) : (
+            <span
+              className={`text-sm font-medium num ${margeNum >= 0 ? 'text-success' : 'text-destructive'}`}
+            >
+              {margeNum >= 0 ? '+' : ''}{margeNum.toFixed(1)}%
+            </span>
+          )}
         </TableCell>
         <TableCell>{getStockBadge(stock, stockMin)}</TableCell>
 
         <TableCell className="text-right">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => openHistory(p)}
-            className="gap-1"
-          >
-            <History className="h-4 w-4" />
-            <span className="text-xs">Voir</span>
-          </Button>
-        </TableCell>
-        <TableCell className="text-right">
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => handleEdit(p)} aria-label="Modifier le produit">
+          <div className="flex justify-end gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => openHistory(p)}
+              title="Historique des mouvements"
+              aria-label="Historique des mouvements"
+            >
+              <History className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => handleEdit(p)}
+              title="Modifier le produit"
+              aria-label="Modifier le produit"
+            >
               <Pencil className="h-4 w-4" />
             </Button>
             <Button
               variant="ghost"
-              size="sm"
-              className="text-destructive hover:text-destructive"
+              size="icon"
+              className="h-8 w-8 text-destructive hover:text-destructive"
               onClick={() => handleDeleteClick(p)}
               disabled={deleting === p.id}
+              title="Supprimer le produit"
               aria-label="Supprimer le produit"
             >
               {deleting === p.id ? (
@@ -683,82 +662,6 @@ export default function Inventaire() {
               </div>
             )}
 
-            {/* Bulk Actions */}
-            {selectedIds.length > 0 && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 rounded-md flex-wrap">
-                <span className="text-sm font-medium text-primary">{selectedIds.length} sélectionné(s)</span>
-                
-                {/* Bulk Stock Adjustment */}
-                <div className="flex items-center gap-1">
-                  <Input
-                    type="number"
-                    placeholder="Quantité"
-                    className="w-20 h-8 text-xs"
-                    value={bulkAdjustQuantity}
-                    onChange={(e) => setBulkAdjustQuantity(e.target.value)}
-                  />
-                  <Select
-                    value={bulkAdjustType}
-                    onValueChange={(v) => setBulkAdjustType(v as 'add' | 'subtract' | 'set')}
-                  >
-                    <SelectTrigger className="h-8 w-16" aria-label="Type d'ajustement de stock">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="add">+</SelectItem>
-                      <SelectItem value="subtract">-</SelectItem>
-                      <SelectItem value="set">=</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={handleBulkStockAdjust}
-                    className="gap-1 h-8"
-                    disabled={!bulkAdjustQuantity}
-                  >
-                    <Package className="h-3 w-3" />
-                    Stock
-                  </Button>
-                </div>
-
-                {/* Bulk Category Change */}
-                <Select
-                  value={bulkCategory === '' ? '__all' : bulkCategory}
-                  onValueChange={(v) => setBulkCategory(v === '__all' ? '' : v)}
-                >
-                  <SelectTrigger className="h-8 w-32" aria-label="Changer la catégorie">
-                    <SelectValue placeholder="Catégorie..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all">Catégorie...</SelectItem>
-                    {categories.map(cat => (
-                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={handleBulkCategoryChange}
-                  className="gap-1 h-8"
-                  disabled={!bulkCategory}
-                >
-                  <Filter className="h-3 w-3" />
-                  Catégorie
-                </Button>
-
-                <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="gap-2 h-8">
-                  <Trash2 className="h-3 w-3" />
-                  Supprimer
-                </Button>
-
-                <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])} className="gap-1 h-8">
-                  X
-                </Button>
-              </div>
-            )}
-
             <div className="flex-1"></div>
 
             {/* Export CSV */}
@@ -769,6 +672,84 @@ export default function Inventaire() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Bulk Actions Bar */}
+      {selectedIds.length > 0 && (
+        <div className="sticky top-2 z-20 flex items-center gap-2 px-3 py-2 bg-primary/10 border border-primary/20 rounded-md flex-wrap shadow-sm">
+          <span className="text-sm font-medium text-primary">{selectedIds.length} sélectionné(s)</span>
+
+          {/* Bulk Stock Adjustment */}
+          <div className="flex items-center gap-1">
+            <Input
+              type="number"
+              placeholder="Quantité"
+              className="w-20 h-8 text-xs"
+              value={bulkAdjustQuantity}
+              onChange={(e) => setBulkAdjustQuantity(e.target.value)}
+            />
+            <Select
+              value={bulkAdjustType}
+              onValueChange={(v) => setBulkAdjustType(v as 'add' | 'subtract' | 'set')}
+            >
+              <SelectTrigger className="h-8 w-16" aria-label="Type d'ajustement de stock">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="add">+</SelectItem>
+                <SelectItem value="subtract">-</SelectItem>
+                <SelectItem value="set">=</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleBulkStockAdjust}
+              className="gap-1 h-8"
+              disabled={!bulkAdjustQuantity}
+            >
+              <Package className="h-3 w-3" />
+              Stock
+            </Button>
+          </div>
+
+          {/* Bulk Category Change */}
+          <Select
+            value={bulkCategory === '' ? '__all' : bulkCategory}
+            onValueChange={(v) => setBulkCategory(v === '__all' ? '' : v)}
+          >
+            <SelectTrigger className="h-8 w-32" aria-label="Changer la catégorie">
+              <SelectValue placeholder="Catégorie..." />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all">Catégorie...</SelectItem>
+              {categories.map(cat => (
+                <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleBulkCategoryChange}
+            className="gap-1 h-8"
+            disabled={!bulkCategory}
+          >
+            <Filter className="h-3 w-3" />
+            Catégorie
+          </Button>
+
+          <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="gap-2 h-8">
+            <Trash2 className="h-3 w-3" />
+            Supprimer
+          </Button>
+
+          <div className="flex-1"></div>
+
+          <Button variant="ghost" size="icon" onClick={() => setSelectedIds([])} className="h-8 w-8" title="Effacer la sélection" aria-label="Effacer la sélection">
+            <XCircle className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       {/* Formulaire Modal */}
       <Dialog open={showForm} onOpenChange={(open) => !open && resetForm()}>
@@ -929,17 +910,16 @@ export default function Inventaire() {
               ref={tableScrollRef}
               className="relative w-full overflow-auto max-h-[calc(100vh-320px)]"
             >
-            <table className="w-full caption-bottom text-sm table-fixed">
+            <table className="w-full caption-bottom text-sm table-fixed [&_td]:py-2 [&_th]:py-2 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:bg-card [&_thead_th]:h-10">
               <colgroup>
                 <col style={{ width: '4%' }} />
-                <col style={{ width: '12%' }} />
-                <col style={{ width: '20%' }} />
                 <col style={{ width: '13%' }} />
-                <col style={{ width: '13%' }} />
-                <col style={{ width: '9%' }} />
+                <col style={{ width: '24%' }} />
+                <col style={{ width: '16%' }} />
+                <col style={{ width: '14%' }} />
+                <col style={{ width: '10%' }} />
                 <col style={{ width: '12%' }} />
-                <col style={{ width: '9%' }} />
-                <col style={{ width: '8%' }} />
+                <col style={{ width: '7%' }} />
               </colgroup>
               <TableHeader>
                 <TableRow>
@@ -948,6 +928,7 @@ export default function Inventaire() {
                       type="checkbox"
                       checked={selectedIds.length === produits.length && produits.length > 0}
                       onChange={selectAll}
+                      aria-label="Tout sélectionner"
                       className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
                     />
                   </TableHead>
@@ -957,21 +938,19 @@ export default function Inventaire() {
                   <SortableHeader columnKey="prix_vente" sort={sortState} onSort={handleSort} align="right">Prix Vente</SortableHeader>
                   <TableHead className="text-right">Marge</TableHead>
                   <SortableHeader columnKey="stock" sort={sortState} onSort={handleSort}>Stock</SortableHeader>
-
-                  <TableHead className="text-right">Historique</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="p-0">
-                      <LoadingState inCell />
+                    <TableCell colSpan={8} className="p-0">
+                      <TableSkeleton rows={10} columns={8} />
                     </TableCell>
                   </TableRow>
                 ) : produits?.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="p-0">
+                    <TableCell colSpan={8} className="p-0">
                       <EmptyState icon={Package} title="Aucun produit trouvé" />
                     </TableCell>
                   </TableRow>
@@ -979,7 +958,7 @@ export default function Inventaire() {
                   <>
                     {paddingTop > 0 && (
                       <tr aria-hidden="true">
-                        <td colSpan={9} style={{ height: paddingTop }} />
+                        <td colSpan={8} style={{ height: paddingTop }} />
                       </tr>
                     )}
                     {virtualRows.map((virtualRow) =>
@@ -987,7 +966,7 @@ export default function Inventaire() {
                     )}
                     {paddingBottom > 0 && (
                       <tr aria-hidden="true">
-                        <td colSpan={9} style={{ height: paddingBottom }} />
+                        <td colSpan={8} style={{ height: paddingBottom }} />
                       </tr>
                     )}
                   </>
@@ -1061,9 +1040,9 @@ export default function Inventaire() {
                   const getMovementIcon = () => {
                     switch (movement.type_mouvement) {
                       case 'vente':
-                        return <ArrowDownCircle className="h-4 w-4 text-red-500" />;
+                        return <ArrowDownCircle className="h-4 w-4 text-danger-500" />;
                       case 'retour':
-                        return <ArrowUpCircle className="h-4 w-4 text-green-500" />;
+                        return <ArrowUpCircle className="h-4 w-4 text-success-500" />;
                       case 'ajustement':
                         return <RefreshCw className="h-4 w-4 text-yellow-500" />;
                       default:
@@ -1094,7 +1073,7 @@ export default function Inventaire() {
                       <div className="flex-1">
                         <div className="flex items-center justify-between">
                           <span className="text-sm font-medium">{getMovementLabel()}</span>
-                          <span className={`text-sm font-bold ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+                          <span className={`text-sm font-bold ${isPositive ? 'text-success-600' : 'text-danger-600'}`}>
                             {isPositive ? '+' : ''}{quantite}
                           </span>
                         </div>

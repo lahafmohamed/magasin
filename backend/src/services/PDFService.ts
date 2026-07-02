@@ -193,6 +193,260 @@ export class PDFService {
     return this.buildDocumentPDF(doc, lignes, 'AVOIR', doc.numero_avoir || doc.numero);
   }
 
+  /** Bulletin de paie (payslip) PDF for a single payslip. */
+  async generatePayslipPDF(payslipId: number): Promise<Buffer> {
+    const settings = await getSettings();
+    const devise = settings.devise || 'FCFA';
+    const { rows } = await pool.query(
+      `SELECT s.*, e.nom_complet, e.matricule, e.poste,
+              r.numero AS run_numero, r.periode
+       FROM payslips s
+       JOIN employes e ON e.id = s.employe_id
+       JOIN payroll_runs r ON r.id = s.payroll_run_id
+       WHERE s.id = $1`,
+      [payslipId]
+    );
+    if (!rows[0]) throw new Error('Bulletin introuvable');
+    const ps = rows[0];
+    const fmt = (v: any) => Number(v || 0).toLocaleString('fr-FR');
+
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 40, size: 'A4' });
+      const chunks: Buffer[] = [];
+      doc.on('data', (c: Buffer) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      // Company header
+      doc.fontSize(16).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', { align: 'center' });
+      doc.fontSize(9).font('Helvetica');
+      if (settings.adresse) doc.text(settings.adresse, { align: 'center' });
+      if (settings.telephone) doc.text(`Tel: ${settings.telephone}`, { align: 'center' });
+      doc.moveDown(1);
+
+      doc.fontSize(14).font('Helvetica-Bold').text('BULLETIN DE PAIE', { align: 'center' });
+      doc.fontSize(10).font('Helvetica').text(`Période: ${ps.periode}  -  Cycle: ${ps.run_numero}`, { align: 'center' });
+      doc.moveDown(1);
+
+      // Employee block
+      doc.fontSize(9).font('Helvetica');
+      doc.text(`Employé: ${ps.nom_complet}`);
+      if (ps.matricule) doc.text(`Matricule: ${ps.matricule}`);
+      if (ps.poste) doc.text(`Poste: ${ps.poste}`);
+      doc.moveDown(1);
+
+      // Detail table
+      const startX = 40;
+      const labelW = 360;
+      const amountW = 115;
+      const rowH = 16;
+      const drawRow = (label: string, amount: string, opts?: { bold?: boolean; fill?: string }) => {
+        let y = doc.y;
+        if (y > 740) { doc.addPage(); y = doc.y; }
+        if (opts?.fill) { doc.rect(startX, y, labelW + amountW, rowH).fill(opts.fill); doc.fill('#111'); }
+        doc.font(opts?.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor('#111');
+        doc.text(label, startX + 4, y + 4, { width: labelW - 8, align: 'left' });
+        doc.text(amount, startX + labelW, y + 4, { width: amountW - 4, align: 'right' });
+        doc.y = y + rowH;
+      };
+
+      drawRow('Désignation', `Montant (${devise})`, { bold: true, fill: '#f0f0f0' });
+      drawRow('Salaire de base', fmt(ps.salaire_base));
+      drawRow('Commissions', fmt(ps.commissions), { fill: '#fafafa' });
+      drawRow('Primes', fmt(ps.primes));
+      drawRow('Salaire brut', fmt(ps.salaire_brut), { bold: true, fill: '#f0f0f0' });
+      drawRow('Retenue CNPS', `- ${fmt(ps.retenue_cnps)}`, { fill: '#fafafa' });
+      drawRow('Retenue ITS', `- ${fmt(ps.retenue_its)}`);
+      drawRow('Autres déductions', `- ${fmt(ps.deductions)}`, { fill: '#fafafa' });
+      drawRow('NET À PAYER', `${fmt(ps.salaire_net)} ${devise}`, { bold: true, fill: '#e8f0e8' });
+      if (Number(ps.cotisations_patronales) > 0) {
+        drawRow('Charges patronales (employeur)', fmt(ps.cotisations_patronales));
+      }
+
+      doc.moveDown(1.5);
+      doc.fontSize(9).font('Helvetica').fillColor('#111');
+      const statutLabel = ps.statut === 'paye' ? 'Payé' : 'En attente';
+      doc.text(`Statut: ${statutLabel}`);
+      if (ps.methode_paiement) doc.text(`Méthode de paiement: ${ps.methode_paiement}`);
+      if (ps.date_paiement) doc.text(`Date de paiement: ${new Date(ps.date_paiement).toLocaleDateString('fr-FR')}`);
+
+      doc.moveDown(2);
+      doc.fontSize(7).font('Helvetica').fillColor('#666');
+      doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, { align: 'center' });
+      doc.end();
+    });
+  }
+
+  /** Two-column financial-statement PDF (bilan / compte de résultat). */
+  private static buildStatementPDF(
+    settings: any,
+    title: string,
+    leftTitle: string,
+    leftRows: Array<{ compte_numero: string; compte_intitule: string; montant: number }>,
+    leftTotal: number,
+    rightTitle: string,
+    rightRows: Array<{ compte_numero: string; compte_intitule: string; montant: number }>,
+    rightTotal: number,
+    subtitle: string
+  ): Promise<Buffer> {
+    const devise = settings.devise || 'FCFA';
+    const fmt = (v: number) => Number(v || 0).toLocaleString('fr-FR');
+
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 40, size: 'A4' });
+      const chunks: Buffer[] = [];
+      doc.on('data', (c: Buffer) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc.fontSize(16).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', { align: 'center' });
+      doc.fontSize(14).font('Helvetica-Bold').text(title, { align: 'center' });
+      doc.fontSize(9).font('Helvetica').text(subtitle, { align: 'center' });
+      doc.moveDown(1);
+
+      const colW = 255;
+      const leftX = 40;
+      const rightX = 40 + colW + 10;
+      const numW = 45;
+      const amtW = 75;
+
+      const renderColumn = (x: number, header: string, rows: typeof leftRows, total: number) => {
+        let y = 120;
+        doc.fontSize(10).font('Helvetica-Bold');
+        doc.rect(x, y, colW, 18).fill('#f0f0f0'); doc.fill('#111');
+        doc.text(header, x + 4, y + 5, { width: colW - 8 });
+        y += 20;
+        doc.fontSize(8).font('Helvetica');
+        rows.forEach((r, i) => {
+          if (y > 760) { doc.addPage(); y = 40; }
+          if (i % 2 === 0) { doc.rect(x, y, colW, 13).fill('#fafafa'); doc.fill('#111'); }
+          doc.text(r.compte_numero, x + 2, y + 2, { width: numW });
+          doc.text(r.compte_intitule, x + numW + 2, y + 2, { width: colW - numW - amtW - 4, align: 'left' });
+          doc.text(fmt(r.montant), x + colW - amtW, y + 2, { width: amtW - 2, align: 'right' });
+          y = y + 13;
+        });
+        doc.fontSize(9).font('Helvetica-Bold');
+        doc.rect(x, y, colW, 16).fill('#e8e8e8'); doc.fill('#111');
+        doc.text('TOTAL', x + 4, y + 3, { width: colW - amtW - 6 });
+        doc.text(`${fmt(total)} ${devise}`, x + colW - amtW - 30, y + 3, { width: amtW + 26, align: 'right' });
+      };
+
+      renderColumn(leftX, leftTitle, leftRows, leftTotal);
+      renderColumn(rightX, rightTitle, rightRows, rightTotal);
+
+      doc.y = 40;
+      doc.fontSize(7).font('Helvetica').fillColor('#666');
+      doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, 40, 800, { align: 'center' });
+      doc.end();
+    });
+  }
+
+  static async generateIncomeStatementPDF(dateDebut: string, dateFin: string): Promise<Buffer> {
+    const settings = await getSettings();
+    const { generalLedgerService } = await import('./GeneralLedgerService');
+    const r = await generalLedgerService.getIncomeStatement(dateDebut, dateFin);
+    const charges = [...r.charges, { compte_numero: '', compte_intitule: 'Résultat (bénéfice)', montant: r.resultat > 0 ? r.resultat : 0 }];
+    const produits = [...r.produits, { compte_numero: '', compte_intitule: 'Résultat (perte)', montant: r.resultat < 0 ? -r.resultat : 0 }];
+    return this.buildStatementPDF(
+      settings, 'COMPTE DE RÉSULTAT',
+      'Charges', charges, r.total_charges + (r.resultat > 0 ? r.resultat : 0),
+      'Produits', produits, r.total_produits + (r.resultat < 0 ? -r.resultat : 0),
+      `Période: ${dateDebut} au ${dateFin}`
+    );
+  }
+
+  static async generateBalanceSheetPDF(dateFin: string): Promise<Buffer> {
+    const settings = await getSettings();
+    const { generalLedgerService } = await import('./GeneralLedgerService');
+    const r = await generalLedgerService.getBalanceSheet(dateFin);
+    const passif = [...r.passif, { compte_numero: '', compte_intitule: 'Résultat net de l\'exercice', montant: r.resultat }];
+    return this.buildStatementPDF(
+      settings, 'BILAN',
+      'Actif', r.actif, r.total_actif,
+      'Passif', passif, r.total_passif,
+      `Arrêté au ${dateFin}`
+    );
+  }
+
+  /** Relevé de compte client détaillé (lignes produits + versements + solde cumulé). */
+  async generateRelevePDF(tiersId: number, from?: string, to?: string): Promise<Buffer> {
+    const settings = await getSettings();
+    const devise = settings.devise || 'FCFA';
+    const { tiersService } = await import('./TiersService');
+    const releve = await tiersService.getReleveDetaille(tiersId, { from, to });
+    if (!releve) throw new Error('Tiers introuvable');
+    const fmt = (v: any) => (v == null || v === '' ? '' : Number(v).toLocaleString('fr-FR'));
+
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+      const chunks: Buffer[] = [];
+      doc.on('data', (c: Buffer) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc.fontSize(15).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', { align: 'center' });
+      doc.fontSize(13).font('Helvetica-Bold').text('RELEVÉ DE COMPTE', { align: 'center' });
+      doc.fontSize(10).font('Helvetica').text(`Client: ${releve.tiers.raison_sociale || ''}`, { align: 'center' });
+      const periode = from || to ? `Période: ${from || '...'} au ${to || '...'}` : 'Toutes opérations';
+      doc.fontSize(9).text(periode, { align: 'center' });
+      doc.moveDown(0.8);
+
+      const startX = 30;
+      const cols = [
+        { k: 'date', label: 'DATE', w: 70, align: 'left' },
+        { k: 'facture', label: 'FACTURE N°', w: 110, align: 'left' },
+        { k: 'designation', label: 'DÉSIGNATION', w: 250, align: 'left' },
+        { k: 'quantite', label: 'QTÉ', w: 50, align: 'right' },
+        { k: 'prix_unitaire', label: 'PRIX UNIT.', w: 90, align: 'right' },
+        { k: 'montant', label: 'MONTANT', w: 90, align: 'right' },
+        { k: 'versement', label: 'VERSEMENT', w: 90, align: 'right' },
+        { k: 'solde', label: 'SOLDE', w: 90, align: 'right' },
+      ];
+      const totalW = cols.reduce((a, c) => a + c.w, 0);
+
+      const header = (y: number) => {
+        doc.fontSize(8).font('Helvetica-Bold');
+        doc.rect(startX, y, totalW, 16).fill('#222'); doc.fillColor('#fff');
+        let x = startX;
+        for (const c of cols) { doc.text(c.label, x + 3, y + 4, { width: c.w - 6, align: c.align as any }); x += c.w; }
+        doc.fillColor('#111');
+        return y + 16;
+      };
+
+      let y = header(doc.y);
+      doc.font('Helvetica').fontSize(8);
+      releve.lignes.forEach((l: any, i: number) => {
+        if (y > 540) { doc.addPage(); y = header(40); doc.font('Helvetica').fontSize(8); }
+        const isPay = l.versement > 0;
+        if (isPay) { doc.rect(startX, y, totalW, 14).fill('#fde8e8'); doc.fillColor('#b91c1c'); }
+        else if (i % 2 === 0) { doc.rect(startX, y, totalW, 14).fill('#fafafa'); doc.fillColor('#111'); }
+        else doc.fillColor('#111');
+        let x = startX;
+        const vals: any = {
+          date: l.date, facture: l.facture, designation: l.designation,
+          quantite: fmt(l.quantite), prix_unitaire: fmt(l.prix_unitaire),
+          montant: l.montant ? fmt(l.montant) : '', versement: l.versement ? fmt(l.versement) : '',
+          solde: fmt(l.solde),
+        };
+        for (const c of cols) { doc.text(String(vals[c.k] ?? ''), x + 3, y + 3, { width: c.w - 6, align: c.align as any }); x += c.w; }
+        doc.fillColor('#111');
+        y += 14;
+      });
+
+      // Totaux
+      y += 6;
+      if (y > 540) { doc.addPage(); y = 40; }
+      doc.font('Helvetica-Bold').fontSize(9).fillColor('#111');
+      doc.text(`Total facturé: ${fmt(releve.total_facture)} ${devise}    Total versé: ${fmt(releve.total_versement)} ${devise}    Solde dû: ${fmt(releve.solde_final)} ${devise}`,
+        startX, y, { width: totalW, align: 'right' });
+
+      doc.moveDown(1.5);
+      doc.fontSize(7).font('Helvetica').fillColor('#666');
+      doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, { align: 'center' });
+      doc.end();
+    });
+  }
+
   private async buildDocumentPDF(
     header: any,
     lignes: any[],

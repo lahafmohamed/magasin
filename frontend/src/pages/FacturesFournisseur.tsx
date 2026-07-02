@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { X, Loader2, Plus, FileText } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
-import { LoadingState } from '@/components/ui/loading';
+import { TableSkeleton } from '@/components/ui/skeleton';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { factureFournisseurService, receptionService, produitService, acompteFournisseurService } from '../services/api';
 import { TiersPicker } from '../components/TiersPicker';
@@ -301,7 +301,11 @@ export default function FacturesFournisseur() {
   }, [factures, sort]);
 
   if (loading) {
-    return <LoadingState />;
+    return (
+      <div className="container mx-auto p-6">
+        <TableSkeleton rows={10} columns={6} />
+      </div>
+    );
   }
 
   return (
@@ -593,7 +597,7 @@ export default function FacturesFournisseur() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className={`grid grid-cols-1 gap-6 ${selectedFacture ? 'lg:grid-cols-2' : ''}`}>
         <div className="rounded-md border bg-card shadow-sm">
           <div className="p-5">
             <h2 className="text-lg font-semibold mb-3">Factures</h2>

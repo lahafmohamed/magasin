@@ -3,6 +3,7 @@ import { Check, Loader2, Plus, Package } from 'lucide-react';
 import { stockLocationService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -25,7 +26,6 @@ interface StockLevel {
   id: number;
   produit_id: number;
   quantite: number;
-  quantite_reservee: number;
   produit_nom: string;
   reference: string;
   prix_vente: string;
@@ -218,10 +218,7 @@ export default function StockLocations() {
                 />
               </div>
               {filteredStockLevels.length === 0 ? (
-                <div className="flex flex-col items-center gap-2 py-12">
-                  <Package className="h-10 w-10 text-muted-foreground/40" />
-                  <p className="text-muted-foreground">Aucun stock dans cette location</p>
-                </div>
+                <EmptyState icon={Package} title="Aucun stock dans cette location" />
               ) : (
                 <div className="overflow-x-auto rounded-md border">
                   <table className="w-full text-sm">
@@ -230,7 +227,6 @@ export default function StockLocations() {
                         <th className="px-3 py-2 font-medium">Référence</th>
                         <th className="px-3 py-2 font-medium">Produit</th>
                         <th className="px-3 py-2 font-medium text-right">Quantité</th>
-                        <th className="px-3 py-2 font-medium text-right">Réservé</th>
                         <th className="px-3 py-2 font-medium text-right">Disponible</th>
                       </tr>
                     </thead>
@@ -240,7 +236,6 @@ export default function StockLocations() {
                           <td className="px-3 py-2 num">{level.reference}</td>
                           <td className="px-3 py-2">{level.produit_nom}</td>
                           <td className="px-3 py-2 text-right num">{level.quantite}</td>
-                          <td className="px-3 py-2 text-right num">{level.quantite_reservee}</td>
                           <td className="px-3 py-2 text-right font-medium num">{level.quantite_disponible}</td>
                         </tr>
                       ))}

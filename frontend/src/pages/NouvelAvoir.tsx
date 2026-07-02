@@ -260,6 +260,8 @@ export default function NouvelAvoir() {
                         size="icon"
                         onClick={() => remove(index)}
                         disabled={fields.length === 1}
+                        aria-label="Retirer cette ligne"
+                        title="Retirer cette ligne"
                       >
                         <X className="h-4 w-4" />
                       </Button>

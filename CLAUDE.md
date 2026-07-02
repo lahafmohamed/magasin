@@ -1,20 +1,21 @@
 # CLAUDE.md
 
-Guidance for working in this repository. Reflects the **actual** current state of the code (audited 2026-06-20), not aspirations. For the full gap/quality analysis and roadmap see [AUDIT.md](AUDIT.md).
+Guidance for working in this repository. Reflects the **actual** current state of the code (re-audited 2026-06-21, after the 2026-06-20 hardening pass), not aspirations. For the full gap/quality analysis and roadmap see [AUDIT.md](AUDIT.md).
 
 ## Project Overview
 
-French-language **ERP** for a retail + wholesale electronics business ("magasin informatique", brand "Hitek", currency **XOF**). Covers sales (quotes → delivery notes → invoices → payments/credit notes), purchasing (orders → receptions → supplier invoices → payments), multi-location inventory with weighted-average costing, cash registers (caisse), basic accounting/general ledger, HR (employees/commissions), light CRM, reporting, and role-based admin.
+French-language **ERP** for a retail + wholesale electronics business ("magasin informatique", brand "Hitek", currency **XOF**). Covers sales (quotes → delivery notes → invoices → payments/credit notes), purchasing (orders → receptions → supplier invoices → payments), multi-location inventory with weighted-average costing (CMP), cash registers (caisse), accounting/general ledger, HR (employees/commissions), light CRM, fleet (camions/gasoil), batch-lot + serial tracking, reporting, and role-based admin.
 
 - UI, data, and error messages are in **French**. Match that when adding user-facing strings.
 - Single-tenant, multi-location (magasins + dépôts). Money is `NUMERIC(15,2)`.
+- **TVA is intentionally removed** system-wide (`027_enforce_no_tax.sql` forces `tva=0`; no TVA service/route exists). Don't reintroduce tax without an explicit policy decision.
 
 ## Tech Stack
 
 **Backend** (`backend/`)
 - Node.js + **Express ^4.18** + **TypeScript ^5.3** (`strict: true`)
 - **PostgreSQL** via `pg ^8.11` Pool — **raw parameterized SQL, no ORM**
-- **Zod ^4.3** validation · **jsonwebtoken ^9** (HS256, 7-day) + **bcrypt** (rounds 12)
+- **Zod ^4.3** validation · **jsonwebtoken ^9** (HS256, 7-day) + **bcrypt** (rounds 12) · **cookie-parser** (httpOnly auth cookie)
 - **pino** logging · **helmet**, **express-rate-limit**, **cors** · **pdfkit**, **xlsx**
 - Dev: `ts-node-dev`. Tests: **vitest ^4.1** + **supertest**
 
@@ -22,38 +23,42 @@ French-language **ERP** for a retail + wholesale electronics business ("magasin 
 - **React 18.3** + **Vite 5** + **TypeScript ^5.3** (`strict: true`)
 - **TailwindCSS ^3.4** + **shadcn/ui** style (Radix primitives + `class-variance-authority` + `cn()`)
 - **react-router-dom ^6.21** (lazy routes) · **react-hook-form ^7.72** + **zod** · **axios ^1.6** · **recharts ^3.8** · **sonner** toasts · **@tanstack/react-virtual**
-- Tests: **vitest** + Testing Library + jsdom. `playwright` is a dep but **unused** (no config/specs).
+- Tests: **vitest** + Testing Library + jsdom. `playwright` is a devDep but **unused** (no config/specs).
+- PWA assets exist (`public/sw.js`, `manifest.json`) but the service worker is **not registered** in `main.tsx` — dead PWA.
 
-**Ops:** PM2 (`ecosystem.config.js`) manages the **backend only**. Frontend is a static Vite build (no deploy step in repo).
+**Ops:** PM2 (`ecosystem.config.js`) manages the **backend only** (secrets read from env). Frontend is a static Vite build (no deploy step in repo). **CI:** GitHub Actions (`.github/workflows/ci.yml`).
 
 ## Architecture
 
 ```
 backend/src/
-  controllers/   HTTP handlers (38). Some hold business logic inline (e.g. CommandeController)
-  services/      Domain + data logic (47). Extend BaseService (parameterized helpers, sort allow-list)
-  routes/        Express routers (41), mounted in server.ts under /api/*
-  middleware/    auth (JWT+authorize), permissions, validation (Zod), audit, idempotency, patch-router
-  models/        Thin partial models (Client, Facture, Paiement, Produit, UserModel)
-  db/            72 .sql migrations (001..069) + schema.sql. Triggers/functions hold core logic
+  controllers/   27 HTTP handlers. Some hold business logic inline (e.g. CommandeController)
+  services/      ~39 domain + data services. Extend BaseService (parameterized helpers, sort allow-list)
+  routes/        33 Express routers, mounted in server.ts under /api/*
+  middleware/    auth (JWT + httpOnly cookie + DB session), permissions, validation (Zod), audit, patch-router (global ID-param validation)
+  models/        Thin partial models (Paiement, UserModel)
+  db/            83 numbered .sql migrations (001..083) + schema.sql. Triggers/functions hold core logic
   validation/    Zod schemas (schemas.ts, phase3-schemas.ts)
-  *.mjs          ~30 ad-hoc setup/seed/fix scripts (NOT a unified migration system)
+backend/migrate.mjs   ordered, tracked migration runner (schema_migrations table)
+backend/*.mjs         ~30 LEGACY ad-hoc setup/seed/fix scripts (superseded by migrate.mjs)
 frontend/src/
-  pages/         45 pages (+ 4 *.test.tsx), all React.lazy code-split
+  pages/         45 pages, all React.lazy code-split
   components/     domain components + components/ui (~29 shadcn-style primitives)
-  hooks/          usePermission, useSseNotifications, useKeyboardShortcuts, useDraft, ...
+  hooks/          usePermission, useSseNotifications, useDraft, useUrlState, useExportExcel, useKeyboardShortcuts, ...
   lib/            AuthContext, ThemeContext, utils
-  services/       api.ts (~1770 lines, ~30 service objects), authService.ts
+  services/       api.ts (~30 service objects), authService.ts
+  validation/     schemas.ts (zod)
+  public/         sw.js + manifest.json (PWA assets, SW unregistered)
 ```
 
 - **Request flow:** route → `authenticate` → `authorize`/`validateBody` → controller → service → SQL/transaction. Response envelope: `{ success, data, pagination }`.
-- **DB-centric logic:** many invariants live in Postgres triggers/functions (stock sync, accounting auto-posting on invoice insert, BL→facture conversion, status/payment recompute). When touching financial or stock flows, check both the service **and** the relevant migration.
-- **Unified `tiers` table** (clients + suppliers; `043_unified_tiers.sql`) is the source of truth. `clients`/`fournisseurs` routes are deprecated shims to `TiersController`.
-- **Auth:** JWT in `Authorization: Bearer`; DB-backed sessions (SHA-256 hash) for revocation; `must_change_password` gate. Frontend stores token in `localStorage`.
+- **DB-centric logic:** many invariants live in Postgres triggers/functions (stock sync, accounting auto-posting on invoice insert via `072`, BL→facture conversion, status/payment recompute, CMP sync via `065`). When touching financial or stock flows, check both the service **and** the relevant migration.
+- **Unified `tiers` table** (clients + suppliers; `043_unified_tiers.sql`) is the source of truth. `clients`/`fournisseurs` routes are deprecated shims to `TiersController`. Batch/serial FKs were repointed to `tiers` in `074`.
+- **Auth:** JWT issued on login; **primary transport is an httpOnly cookie** (`?token=` query remains only as an SSE fallback). DB-backed sessions (SHA-256 hash) for revocation; `must_change_password` gate; password strength enforced. The login response still returns the token in the body (intentional, for non-browser API clients); the frontend caches only the non-sensitive `auth_user` in localStorage, not the token.
 
 ## Run / Build / Test / Deploy
 
-Database: PostgreSQL. Backend reads `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME`, `JWT_SECRET` (must be ≥32 chars, not a placeholder — boot fails otherwise), `JWT_EXPIRATION`, `FRONTEND_URL`, `PORT` from a `.env` (dotenv).
+Database: PostgreSQL. Backend reads `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME`, `JWT_SECRET` (must be ≥32 chars, not a placeholder — boot fails otherwise), `JWT_EXPIRATION`, `FRONTEND_URL`, `PORT`, and optionally `CAISSE_GL_POSTING` (default off) from a `.env` (dotenv).
 
 **Backend** (`cd backend`)
 ```bash
@@ -65,12 +70,14 @@ npm run lint           # eslint src/ (backend only)
 npm run format         # prettier
 npm test               # vitest run
 npm run test:coverage  # vitest + coverage
-# DB setup is script-based (no unified migration runner):
-node setup-db.mjs            # / setup-db-phase1.mjs, setup-erp-modules.mjs, ...
-node run-migrations.mjs      # ⚠ runs only a HARDCODED subset (030–035)
-node seed-data.mjs           # / seed-hitek-demo.mjs, seed-clients-excel.mjs, ...
+# Migrations (tracked runner — preferred):
+node migrate.mjs                 # apply all pending NNN_*.sql, recorded in schema_migrations
+node migrate.mjs --status        # show applied vs pending
+node migrate.mjs --dry-run       # preview
+node migrate.mjs --baseline      # mark existing as applied without running
+node seed-data.mjs               # / seed-hitek-demo.mjs, seed-clients-excel.mjs, ...
 ```
-> ⚠ There is **no ordered, tracked migration framework**. Migrations are applied by ad-hoc `.mjs` scripts with hardcoded file lists. Order is implicit; some migrations redefine the same table with `CREATE TABLE IF NOT EXISTS`. Verify schema state manually after setup.
+> `migrate.mjs` is now a real ordered, transactional runner with a `schema_migrations` tracking table. The legacy ad-hoc setup/fix `.mjs` scripts (`setup-db.mjs`, `run-migrations.mjs`, `fix-*.mjs`, ...) are **superseded** — prefer `migrate.mjs`. Highest migration is `083`.
 
 **Frontend** (`cd frontend`)
 ```bash
@@ -80,15 +87,15 @@ npm run build          # tsc -b && vite build
 npm run preview
 npm test               # vitest run (60% coverage threshold configured; currently unmet)
 ```
-> Frontend has **no ESLint config** (eslint not installed). No `import.meta.env`/`VITE_` usage — API origin is the Vite proxy in dev; for prod the built SPA must be served behind something that proxies `/api` (not configured in repo).
+> Frontend now **has ESLint** (`eslint.config.js`, `npm run lint`). No `import.meta.env`/`VITE_` usage — API origin is the Vite proxy in dev; for prod the built SPA must be served behind something that proxies `/api` (not configured in repo).
 
 **Deploy**
 ```bash
 pm2 start ecosystem.config.js   # backend only (app "hitektest-api", dist/server.js)
 ```
-> `ecosystem.config.js` currently hardcodes `JWT_SECRET`/`DB_*` — move these to an untracked env before any real deployment. Frontend static-serving is undocumented.
+> `ecosystem.config.js` now reads `JWT_SECRET`/`DB_*` from env (no committed secrets). Frontend static-serving is undocumented.
 
-**CI:** none (no `.github/workflows`). Lint/test/build are manual.
+**CI:** `.github/workflows/ci.yml` runs on push/PR to `main`. **Backend:** `npm ci` → `tsc --noEmit` → `npm run lint` → `npm test` (no build step). **Frontend:** `npm ci` → `tsc -b` → `npm run lint` → `npm test` → `npm run build` (FE lint + tests now run in CI).
 
 ## Module Status
 
@@ -96,51 +103,55 @@ Legend: ✅ Complete · 🟡 Partial · 🟥 Stub/Dead · ➖ Missing. Full evid
 
 | Domain | Module | Status |
 |---|---|---|
-| Sales | Devis, Bons de livraison, Factures, Acomptes, Paiements*, POS*, Numbering | ✅ |
-| Sales | Avoirs/credit notes (double-credit risk), Retours (no un-restock), Pricing (no TVA) | 🟡 |
-| Purchasing | Receptions, Factures fournisseur, Acomptes fournisseur, Compensation, Demandes | ✅ |
-| Purchasing | Commandes (hard-delete, no audit), Fournisseurs (legacy shim) | 🟡 |
-| Inventory | Produits (addStockMovement bug), Stock locations, Stock transfers, Mouvements | ✅ |
-| Inventory | Valuation/CMP (inconsistent), reservations (half-built) | 🟡 |
-| Inventory | Camions/gasoil (routes unmounted), Batch/lot, Serial tracking | 🟥 |
-| Accounting | General Ledger, Compensation, Reporting, Dépenses (V2), Caisse magasin/hierarchy | ✅ |
-| Accounting | Comptabilité (SQLi + schema fork), Periods (partial), TVA engine (inert) | 🟡 |
-| Accounting | CashVariance (500s), TaxReport (unmounted), CompteClient/Caisse V1 (dead) | 🟥 |
-| Admin/Infra | Auth, Admin users/allocation, Tiers, Company settings, Notifications, Import/export | ✅ |
-| Admin/Infra | RBAC (3 fragmented systems), Audit log (schema fork), CRM (SQLi, no RBAC) | 🟡 |
+| Sales | Devis, Bons de livraison, Factures, Acomptes, Paiements, POS, Avoirs, Numbering | ✅ |
+| Sales | Retours (restock on approval only), Credit-limit enforcement, Pricing (no TVA by design) | ✅ |
+| Purchasing | Receptions, Factures fournisseur, Acomptes fournisseur, Compensation, Demandes, Commandes | ✅ |
+| Purchasing | 3-way match (`082`; commande↔reception↔facture + tolerance config) | ✅ |
+| Purchasing | Reorder automation (Réapprovisionnement → supplier-grouped commandes; `produits.fournisseur_id` writable) | ✅ |
+| Inventory | Produits, Stock locations, Stock transfers, Mouvements | ✅ |
+| Inventory | Batch/lot, Serial, Camions/gasoil — **fully removed**: routes/services (2026-06-30), dead `lots`/`numeros_serie` tables + orphan FK columns dropped in `085`, dead Zod schemas removed; `camions` already gone | ➖ |
+| Inventory | Valuation/CMP (`valeur_stock` unified + kept in sync by trigger `076`; CMP unit-cost still reception-driven), reservations (`quantite_reservee` dropped in `078`) | 🟡 |
+| Accounting | General Ledger, Comptabilité, Compensation, Caisse magasin/hierarchy, Dépenses (V2), Reporting | ✅ |
+| Accounting | Periods (DB-enforced via `075` trigger on all GL paths), Caisse→GL (enabled `086/087`), Multi-currency (dormant cols dropped in `077`; `XOF` only) | ✅ |
+| Admin/Infra | Auth, Admin users/allocation, Tiers, Clients, CRM, Company settings, Audit log, Notifications | ✅ |
+| Admin/Infra | RBAC (3 fragmented systems; per-user DB perms barely adopted) | 🟡 |
 | HR | Employés/commissions/shifts | ✅ |
-| HR | Payroll (runs/payslips) | ➖ |
-| Other | Manufacturing/BOM, financial budgeting, multi-currency wiring | ➖ |
+| HR | Payroll (runs/payslips, CNPS/ITS statutory config; `080`/`081`) | ✅ |
+| Other | Manufacturing/BOM, financial budgeting | ➖ |
 
-\* Has a security/correctness caveat — see Known Issues.
 
 ## Coding Conventions (as actually used)
 
 - **Language:** TypeScript strict on both sides. Backend services are classes extending `BaseService`; export a singleton instance.
-- **SQL:** always parameterized (`$1, $2`). Dynamic sort/order columns go through allow-lists (`BaseService.ts`). **Never string-concatenate user input into SQL** (two existing violations are bugs, not patterns — see AUDIT.md).
-- **Validation:** Zod schemas in `validation/`, applied via `validateBody`/`validateQuery`/`validateParams` middleware. Some routes still hand-roll checks — prefer adding a Zod schema.
-- **Auth:** every router does `router.use(authenticate)`; gate mutations with `authorize([...roles])` (or `requirePermission` for DB-driven). Don't ship a mutating route without an authz check.
-- **Transactions:** multi-step writes use `pool.connect()` + `BEGIN/COMMIT/ROLLBACK`; lock contended rows with `SELECT ... FOR UPDATE`. Follow the pattern in `FactureService`/`StockTransferService`.
-- **Numbering:** use `NumberingService` (atomic `nextval()`); don't call `nextval()` inline (POS does this — it's a bug).
+- **SQL:** always parameterized (`$1, $2`). Dynamic sort/order columns go through allow-lists (`BaseService.ts`). **Never string-concatenate user input into SQL** (the two prior SQLi sites in `CrmService`/`ComptabiliteService` are now fixed — keep it that way).
+- **Validation:** Zod schemas in `validation/`, applied via `validateBody`/`validateQuery`/`validateParams` middleware. Prefer adding a Zod schema over hand-rolled checks.
+- **Auth:** every router does `router.use(authenticate)`; gate mutations with `authorize([...roles])` (or `requirePermission` for DB-driven). Don't ship a mutating route without an authz check — all current mutating routes are gated; match that.
+- **Transactions:** multi-step writes use `pool.connect()` + `BEGIN/COMMIT/ROLLBACK`; lock contended rows with `SELECT ... FOR UPDATE`. Follow `FactureService`/`StockTransferService`/`ReturnService.updateStatut`.
+- **Numbering:** use `NumberingService` (atomic `nextval()`); don't call `nextval()` inline.
 - **Money:** stored `NUMERIC(15,2)`; round to 2 decimals; prefer SQL-side aggregation over JS float accumulation.
-- **IDs in routes:** `patch-router` auto-validates common `:id`-style params as positive ints — but only a hardcoded name list, so don't rely on it for novel param names.
-- **Frontend:** functional components + hooks; data fetched per-page via `useState`/`useEffect` through `services/api.ts`; no global store (Context for auth only). UI from `components/ui` (shadcn-style). Toasts via `sonner` (`toast.error('Erreur ...')`). Permission-gate UI with `usePermission`/`<RequirePermission>` — but treat client gating as advisory; **enforce on the server**.
-- **Audit:** mutations should log via `AuditService`/`audit` middleware (writes are fire-and-forget).
+- **Migrations:** add a new `NNN_*.sql` (next number after `083`) and apply with `migrate.mjs`. Don't add new ad-hoc `.mjs` fix scripts.
+- **Periods:** financial writes should call `PeriodService.checkPeriodIsOpen` for a friendly app-layer error, but the hard guarantee is the DB trigger from `075` on `ecritures_comptables` — closed periods are rejected on **every** posting path (see Known Issues).
+- **Frontend:** functional components + hooks; data fetched per-page via `useState`/`useEffect` through `services/api.ts`; no global store (Context for auth/theme only). UI from `components/ui` (shadcn-style). Toasts via `sonner` (`toast.error('Erreur ...')`). Permission-gate UI with `usePermission`/`<RequirePermission>` — treat client gating as advisory; **enforce on the server**.
+- **Audit:** mutations log via `AuditService`/`audit` middleware (writes are fire-and-forget / non-fatal).
 
 ## Known Issues & Limitations
 
-Top items (see [AUDIT.md](AUDIT.md) for the full prioritized roadmap):
+See [AUDIT.md](AUDIT.md) for the full prioritized roadmap. Top current items (post-hardening):
 
-- **🔴 Schema forks:** `ecritures_comptables` (019 vs 069) and `audit_log` (004 vs 063) are each defined twice with different columns via `CREATE TABLE IF NOT EXISTS` — only one wins per DB, breaking GL/Comptabilité or audit depending on apply order.
-- **🔴 SQL injection** in `CrmService.ts:75-79` and `ComptabiliteService.ts:147-149,204-205` (string-interpolated query filters).
-- **🔴 Missing authorization** on several mutating routes: invoice create/pay (`factures.ts`), POS (`pos.ts`, also trusts client price), CRM, clients, produits writes; `employes` reads leak salary; `notifications/status` unauthenticated.
-- **🟠 Committed secrets** in `ecosystem.config.js`; JWT in `localStorage` and passed in SSE query string.
-- **🟠 Broken endpoints:** `POST /api/paiements/` (always 404), `addStockMovement` (arg-order), CashVariance (renamed columns → 500), supplier-acompte list/get (non-existent column), camion routes (unmounted).
-- **🟡 TVA is inert** — a rate engine exists but `027_enforce_no_tax.sql` forces tva=0; purchasing/sales store tva=0. Decide policy before relying on tax.
-- **🟡 Inventory valuation** computed three inconsistent ways; CMP not maintained on sales/transfers.
-- **🟡 RBAC fragmented** across 3 systems; per-user DB permissions (057/058) are largely unenforced.
-- **🟡 Dead/duplicate code:** V1 Caisse/Depense/CompteClient, FournisseurController, TaxReport*, `ComptabiliteService.ecrituresFrom*` — see AUDIT.md §4.
-- **Tests:** thin backend coverage; ~4 frontend tests vs a 60% threshold; no E2E; no CI.
+- **✅ Period lock enforced at DB level** — `075_period_lock_ecritures` adds a `BEFORE INSERT` trigger on `ecritures_comptables` (single chokepoint), so **every** GL posting path (072 auto-post triggers, BL→facture, POS, caisse→GL, `enregistrerPiece`, manual entries) is blocked for a closed (`fermee`) period, not just the app-layer `PeriodService.checkPeriodIsOpen` calls.
+- **🟡 Inventory valuation** — `076_stock_valeur_invariant` now keeps `valeur_stock = quantite × cmp` in sync (decremented on sales/transfers), and all three readers (`ProduitService`, `ReportingService:507`, `ComptabiliteService:391`) compute inventory value the same way via `SUM(spl.valeur_stock)`. Residual: the CMP **unit cost** itself is still recomputed on reception only.
+- **✅ Returns** correctly restock **on approval only** (`updateStatut` → `traite`), not at create; guarded state machine (`en_attente`→`traite`/`annule`, `traite`→`annule`), period-checked, cancel-of-approved reverses the restock. All transactional.
+- **✅ `factures-fournisseur` routes** now use `validateBody` (`createFactureFournisseurSchema`, `recordFactureFournisseurPaiementSchema`).
+- **✅ 3-way match** implemented — `082_three_way_match` restores `factures_fournisseur.commande_id` + `three_way_match_config` (tolerance/blocage); wired in `CommandeController`, `FactureFournisseurController`/`Service`, `ReceptionService`. Detail UI shows the Cmd/Reçu/Facturé rapprochement.
+- **✅ Client credit limit enforced** — `CreditService.assertWithinCreditLimit` (live `SUM(remaining_due)` + tiers row lock) gates all three credit-extension paths: BL create, direct facture create, and devis-confirm auto-BL. `credit_max <= 0` = no limit.
+- **✅ Reorder automation** — `GET /produits/reorder-suggestions` computes low-stock products live and the Réapprovisionnement page generates supplier-grouped commandes. `produits.fournisseur_id` is now writable end-to-end (schema + `ProduitService` create/update + form), so products can carry a default supplier.
+- **✅ `quantite_reservee`** reservations column dropped in `078` (was half-built); no TS references remain.
+- **✅ Multi-currency** dormant `066/067` columns dropped in `077`; only the live `company_settings` currency fields remain. `XOF` is the only currency.
+- **✅ Caisse→GL posting** enabled (`CAISSE_GL_POSTING=true`). Prerequisites fixed so it actually posts: chart-of-accounts seeded (`086`: 53/54/51/419/409/604/65/75), legacy `ecritures_comptables` NOT NULL columns relaxed (`087`, completing `071` on legacy-built DBs), and the invalid journal codes corrected (`'BQ'`→`'TRESORERIE'` in caisse, `'VT'`→`'OD'` default in `enregistrerPiece`) — these had never matched the `journal` CHECK, so the new-style manual inserters would have failed. Verified: balanced Dr/Cr legs insert cleanly.
+- **✅ RBAC consolidated** onto the single `authorize(roles)` mechanism (role string from `roles.nom` via `utilisateurs.role_id`). The DB permission system (`056/057/058`: `permissions`/`role_permissions`/`user_permissions` + `customiser_permissions`) and the in-memory `ROLE_PERMISSIONS` matrix were removed (`084` drops the tables); `permissions.ts` retains only the `getUserLocationRole` location helper. FE `usePermission` remains as **advisory** UI gating (role-based, no server dependency).
+- **✅ Token handling** — auth is the httpOnly `auth_token` cookie (`withCredentials`); the FE caches only the non-sensitive `auth_user` in localStorage (no token). Login still returns the token in the body **intentionally** for non-browser API clients.
+- **🟡 Frontend quality** — ESLint now present and FE lint+tests run in CI, but FE tests still far below the 60% threshold; `api.ts` ~131 `Promise<any>`; duplicated axios instance (`api.ts` vs `authService.ts` — intentionally divergent interceptors); PWA service worker unregistered.
+- **🟡 Leftover** — `DepenseService` V1 CRUD pruned (only its report/category helpers remain); some legacy root `.mjs`/`.js` fix scripts removed, but the wired `db:*` fix scripts and `backend/scripts/` ad-hoc set still remain.
 
 ## Commands Reference
 
@@ -154,7 +165,7 @@ Top items (see [AUDIT.md](AUDIT.md) for the full prioritized roadmap):
 | Coverage | `npm run test:coverage` | `npm run test:coverage` |
 | Lint | `npm run lint` | — (no eslint) |
 | Format | `npm run format` | — |
-| DB setup | `node setup-db.mjs` (+ phase/erp scripts) | — |
+| Migrate | `node migrate.mjs` (`--status`/`--dry-run`/`--baseline`) | — |
 | DB seed | `node seed-data.mjs` / `seed-hitek-demo.mjs` | — |
 | Health check | `GET /api/health` | — |
 

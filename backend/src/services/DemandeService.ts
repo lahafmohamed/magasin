@@ -825,8 +825,7 @@ export class DemandeService {
                 p.reference,
                 p.nom AS produit_nom,
                 p.prix_vente,
-                COALESCE(spl.quantite, 0) AS quantite_disponible,
-                COALESCE(spl.quantite_reservee, 0) AS quantite_reservee
+                COALESCE(spl.quantite, 0) AS quantite_disponible
             FROM produits p
             LEFT JOIN stock_par_location spl ON p.id = spl.produit_id AND spl.location_id = $1
             WHERE p.deleted_at IS NULL

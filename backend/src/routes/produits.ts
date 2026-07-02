@@ -17,6 +17,7 @@ router.get('/suggestions', ProduitController.getSuggestions);
 
 router.get('/', ProduitController.getAll);
 router.get('/alertes-stock', ProduitController.getAlertesStock);
+router.get('/reorder-suggestions', ProduitController.getReorderSuggestions);
 router.get('/stock-valuation', ProduitController.getStockValuation);
 router.get('/stock-by-category', ProduitController.getStockByCategory);
 router.get('/:id/info-achat', ProduitController.getPurchaseInfo);

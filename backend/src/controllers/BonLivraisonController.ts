@@ -63,6 +63,10 @@ export class BonLivraisonController {
       res.status(201).json({ success: true, data: result });
     } catch (error: any) {
       const msg = error?.message || 'Erreur lors de la création du bon de livraison';
+      if (error?.statusCode) {
+        res.status(error.statusCode).json({ success: false, error: msg, code: error.code });
+        return;
+      }
       const isBusinessError =
         msg.includes('devis') ||
         msg.includes('Devis') ||

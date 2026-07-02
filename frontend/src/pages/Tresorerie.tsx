@@ -4,9 +4,17 @@ import { formatCurrency } from '../utils/format';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Loader2, Wallet, TrendingUp, TrendingDown, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import {
+  CHART_POSITIVE,
+  CHART_NEGATIVE,
+  CHART_GRID,
+  CHART_AXIS,
+  CHART_TOOLTIP_STYLE,
+} from '@/lib/chartColors';
 
 export default function TresoreriePage() {
   const [data, setData] = useState<any>(null);
@@ -56,9 +64,9 @@ export default function TresoreriePage() {
             <CardContent className="pt-5">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-medium text-muted-foreground uppercase">Encaissements prévus</p>
-                <TrendingUp className="h-4 w-4 text-green-600" />
+                <TrendingUp className="h-4 w-4 text-success-700" />
               </div>
-              <p className="text-2xl font-bold text-green-600 mt-2">+{formatCurrency(data?.total_encaissements || 0)}</p>
+              <p className="text-2xl font-bold text-success-700 mt-2">+{formatCurrency(data?.total_encaissements || 0)}</p>
               <p className="text-xs text-muted-foreground mt-1">{data?.encaissements?.length || 0} facture(s) en attente</p>
             </CardContent>
           </Card>
@@ -76,9 +84,9 @@ export default function TresoreriePage() {
             <CardContent className="pt-5">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-medium text-muted-foreground uppercase">Solde net prévisionnel</p>
-                <Wallet className={`h-4 w-4 ${soldeNet >= 0 ? 'text-green-600' : 'text-destructive'}`} />
+                <Wallet className={`h-4 w-4 ${soldeNet >= 0 ? 'text-success-700' : 'text-destructive'}`} />
               </div>
-              <p className={`text-2xl font-bold mt-2 ${soldeNet >= 0 ? 'text-green-600' : 'text-destructive'}`}>
+              <p className={`text-2xl font-bold mt-2 ${soldeNet >= 0 ? 'text-success-700' : 'text-destructive'}`}>
                 {formatCurrency(soldeNet)}
               </p>
               {soldeNet < 0 && (
@@ -89,6 +97,13 @@ export default function TresoreriePage() {
         </div>
 
         {/* Échéancier graphique */}
+        {(!data?.echeancier || data.echeancier.length === 0) && (
+          <Card>
+            <CardContent>
+              <EmptyState icon={Calendar} title="Aucune échéance" description="Aucun flux de trésorerie projeté sur la période." />
+            </CardContent>
+          </Card>
+        )}
         {data?.echeancier?.length > 0 && (
           <Card>
             <CardHeader className="pb-3">
@@ -103,12 +118,12 @@ export default function TresoreriePage() {
                   Décaissements: e.decaissements,
                   Solde: e.solde,
                 }))}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="periode" tick={{ fontSize: 10 }} />
-                  <YAxis tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                  <Bar dataKey="Encaissements" fill="#16a34a" stackId="a" />
-                  <Bar dataKey="Décaissements" fill="#dc2626" stackId="a" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART_GRID} />
+                  <XAxis dataKey="periode" tick={{ fontSize: 10, fill: CHART_AXIS }} />
+                  <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(value: any) => formatCurrency(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
+                  <Bar dataKey="Encaissements" fill={CHART_POSITIVE} stackId="a" />
+                  <Bar dataKey="Décaissements" fill={CHART_NEGATIVE} stackId="a" />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -129,7 +144,7 @@ export default function TresoreriePage() {
                       <p className="font-medium">{e.tiers_nom}</p>
                       <p className="text-xs text-muted-foreground">{e.reference} — Échéance: {new Date(e.echeance).toLocaleDateString('fr-FR')}</p>
                     </div>
-                    <span className="font-semibold text-green-600">{formatCurrency(e.montant)}</span>
+                    <span className="font-semibold text-success-700">{formatCurrency(e.montant)}</span>
                   </div>
                 ))}
               </div>

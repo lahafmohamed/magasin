@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "ERP Domain Knowledge": {
+      "source": "danhvb/my-ba-skills",
+      "sourceType": "github",
+      "skillPath": "multi-agent-ba/.agent/skills/domain-knowledge/erp/SKILL.md",
+      "computedHash": "7e109014b0f4be824468b7b67c520acc23929af85b60a8d3ed0829319a3a8085"
+    },
+    "erpnext": {
+      "source": "membranedev/application-skills",
+      "sourceType": "github",
+      "skillPath": "skills/erpnext/SKILL.md",
+      "computedHash": "6f9fbc6f1461705ba1237f0c715bb41a9755613899df979a50d4e15bee1d5f37"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "computedHash": "781bd6d3f9b19f8c9af6b53d8d0e4876d0183841b565db34ca7092ffa412d111"
+    }
+  }
+}

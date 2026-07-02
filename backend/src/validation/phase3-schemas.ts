@@ -30,12 +30,6 @@ export const createReturnSchema = z.object({
   notes: z.string().max(2000).optional().or(z.literal('')),
 });
 
-// Reporting schemas
-export const reportDateRangeSchema = z.object({
-  date_debut: z.string().datetime().or(z.string().date()),
-  date_fin: z.string().datetime().or(z.string().date()),
-});
-
 export const productImportSchema = z.object({
   reference: z.string().min(1).max(50),
   nom: z.string().min(1).max(255),

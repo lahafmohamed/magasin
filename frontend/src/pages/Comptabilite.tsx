@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { comptabiliteService } from '../services/api';
+import { comptabiliteService, generalLedgerService } from '../services/api';
 import { formatCurrency } from '../utils/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,14 +7,18 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, BookOpen, Search, FileText, Scale, Calendar } from 'lucide-react';
+import { BookOpen, Search, FileText, Scale, Calendar, FileDown } from 'lucide-react';
 import { toast } from 'sonner';
+import { QueryState } from '@/components/ui/query-state';
+import { TableSkeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 type Tab = 'journal' | 'grand-livre' | 'balance' | 'plan';
 
 export default function ComptabilitePage() {
   const [tab, setTab] = useState<Tab>('journal');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
 
   // Journal
   const [journalData, setJournalData] = useState<any[]>([]);
@@ -38,47 +42,80 @@ export default function ComptabilitePage() {
   const [planClasse, setPlanClasse] = useState<number | undefined>();
 
   const loadJournal = async () => {
+    setLoading(true); setError(null);
     try {
       const data = await comptabiliteService.getJournal({ date_debut: dateDebut, date_fin: dateFin, journal: journalFilter || undefined });
       setJournalData(data);
-    } catch { toast.error('Erreur chargement journal'); }
+    } catch (e) { setError(e); toast.error('Erreur chargement journal'); }
+    finally { setLoading(false); }
   };
 
   const loadBalance = async () => {
+    setLoading(true); setError(null);
     try {
       const data = await comptabiliteService.getBalance(dateDebut, dateFin);
       setBalanceData(data?.filter((r: any) => Math.abs(parseFloat(r.total_debit)) > 0 || Math.abs(parseFloat(r.total_credit)) > 0));
-    } catch { toast.error('Erreur chargement balance'); }
+    } catch (e) { setError(e); toast.error('Erreur chargement balance'); }
+    finally { setLoading(false); }
   };
 
   const loadPlan = async () => {
+    setLoading(true); setError(null);
     try {
       const data = await comptabiliteService.getPlanComptable(planClasse);
       setPlanData(data);
-    } catch { toast.error('Erreur chargement plan'); }
+    } catch (e) { setError(e); toast.error('Erreur chargement plan comptable'); }
+    finally { setLoading(false); }
   };
 
   const loadGrandLivre = async () => {
     if (!compteSelected) return;
+    setLoading(true); setError(null);
     try {
       const data = await comptabiliteService.getGrandLivre(compteSelected, dateDebut, dateFin);
       setGrandLivreData(data);
-    } catch { toast.error('Erreur chargement grand-livre'); }
+    } catch (e) { setError(e); toast.error('Erreur chargement grand-livre'); }
+    finally { setLoading(false); }
+  };
+
+  /** Recharge l'onglet actif — sert aussi de callback « Réessayer ». */
+  const reload = () => {
+    if (tab === 'journal') return loadJournal();
+    if (tab === 'balance') return loadBalance();
+    if (tab === 'plan') return loadPlan();
+    return loadGrandLivre();
   };
 
   useEffect(() => {
-    setLoading(true);
-    if (tab === 'journal') loadJournal().finally(() => setLoading(false));
-    else if (tab === 'balance') loadBalance().finally(() => setLoading(false));
-    else if (tab === 'plan') loadPlan().finally(() => setLoading(false));
+    if (tab === 'journal') loadJournal();
+    else if (tab === 'balance') loadBalance();
+    else if (tab === 'plan') loadPlan();
     else setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, dateDebut, dateFin, journalFilter, planClasse]);
 
   useEffect(() => {
     if (tab === 'grand-livre' && compteSelected) {
       loadGrandLivre();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, compteSelected, dateDebut, dateFin]);
+
+  const openBlob = (blob: Blob) => {
+    const url = window.URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+  };
+
+  const exportBilan = async () => {
+    try { openBlob(await generalLedgerService.exportBalanceSheetPdf(dateFin)); }
+    catch { toast.error('Erreur lors de la génération du bilan'); }
+  };
+
+  const exportCompteResultat = async () => {
+    try { openBlob(await generalLedgerService.exportIncomeStatementPdf(dateDebut, dateFin)); }
+    catch { toast.error('Erreur lors de la génération du compte de résultat'); }
+  };
 
   return (
     <div className="p-3 sm:p-6 w-full max-w-full">
@@ -91,19 +128,20 @@ export default function ComptabilitePage() {
           </div>
         </div>
 
+        <Tabs value={tab} onValueChange={v => setTab(v as Tab)} className="space-y-4">
         {/* Tabs */}
-        <div className="flex flex-wrap gap-2 border-b pb-2">
+        <TabsList>
           {[
             { id: 'journal' as Tab, label: 'Journal', icon: FileText },
             { id: 'grand-livre' as Tab, label: 'Grand-livre', icon: Search },
             { id: 'balance' as Tab, label: 'Balance', icon: Scale },
             { id: 'plan' as Tab, label: 'Plan comptable', icon: BookOpen },
           ].map(t => (
-            <Button key={t.id} variant={tab === t.id ? 'default' : 'ghost'} size="sm" onClick={() => setTab(t.id)} className="gap-1">
+            <TabsTrigger key={t.id} value={t.id}>
               <t.icon className="h-4 w-4" /> {t.label}
-            </Button>
+            </TabsTrigger>
           ))}
-        </div>
+        </TabsList>
 
         {/* Filtres date */}
         <div className="flex flex-wrap items-center gap-3">
@@ -112,6 +150,14 @@ export default function ComptabilitePage() {
             <Input type="date" value={dateDebut} onChange={e => setDateDebut(e.target.value)} className="w-40" />
             <span className="text-muted-foreground">—</span>
             <Input type="date" value={dateFin} onChange={e => setDateFin(e.target.value)} className="w-40" />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={exportBilan} className="gap-1" title="Télécharger le bilan (PDF)">
+              <FileDown className="h-4 w-4" /> Bilan PDF
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportCompteResultat} className="gap-1" title="Télécharger le compte de résultat (PDF)">
+              <FileDown className="h-4 w-4" /> Compte de résultat PDF
+            </Button>
           </div>
           {tab === 'journal' && (
             <Select value={journalFilter || '__all'} onValueChange={v => setJournalFilter(v === '__all' ? '' : v)}>
@@ -140,12 +186,19 @@ export default function ComptabilitePage() {
           )}
         </div>
 
-        {loading ? (
-          <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>
-        ) : (
-          <>
+        <>
             {/* JOURNAL */}
-            {tab === 'journal' && (
+            <TabsContent value="journal">
+              <QueryState
+                loading={loading}
+                error={error}
+                isEmpty={journalData.length === 0}
+                onRetry={reload}
+                skeleton={<TableSkeleton rows={8} columns={7} />}
+                emptyTitle="Aucune écriture"
+                emptyDescription="Aucune écriture sur la période sélectionnée."
+                emptyIcon={FileText}
+              >
               <Card>
                 <CardContent className="p-0 overflow-x-auto">
                   <Table>
@@ -161,9 +214,7 @@ export default function ComptabilitePage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {journalData.length === 0 ? (
-                        <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Aucune écriture</TableCell></TableRow>
-                      ) : journalData.map((e: any) => (
+                      {journalData.map((e: any) => (
                         <TableRow key={e.id} className="text-sm">
                           <TableCell className="text-xs">{new Date(e.date_ecriture).toLocaleDateString('fr-FR')}</TableCell>
                           <TableCell className="font-mono text-xs">{e.numero_piece}</TableCell>
@@ -178,10 +229,11 @@ export default function ComptabilitePage() {
                   </Table>
                 </CardContent>
               </Card>
-            )}
+              </QueryState>
+            </TabsContent>
 
             {/* GRAND-LIVRE */}
-            {tab === 'grand-livre' && (
+            <TabsContent value="grand-livre">
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <Input
@@ -197,7 +249,17 @@ export default function ComptabilitePage() {
                 {compteSelected && (
                   <p className="text-sm text-muted-foreground">Compte sélectionné : <strong>{compteSelected}</strong></p>
                 )}
-                {grandLivreData.length > 0 && (
+                {compteSelected && (
+                  <QueryState
+                    loading={loading}
+                    error={error}
+                    isEmpty={grandLivreData.length === 0}
+                    onRetry={loadGrandLivre}
+                    skeleton={<TableSkeleton rows={6} columns={6} />}
+                    emptyTitle="Aucun mouvement"
+                    emptyDescription="Aucun mouvement pour ce compte sur la période."
+                    emptyIcon={Search}
+                  >
                   <Card>
                     <CardContent className="p-0 overflow-x-auto">
                       <Table>
@@ -232,12 +294,23 @@ export default function ComptabilitePage() {
                       </Table>
                     </CardContent>
                   </Card>
+                  </QueryState>
                 )}
               </div>
-            )}
+            </TabsContent>
 
             {/* BALANCE */}
-            {tab === 'balance' && (
+            <TabsContent value="balance">
+              <QueryState
+                loading={loading}
+                error={error}
+                isEmpty={balanceData.length === 0}
+                onRetry={reload}
+                skeleton={<TableSkeleton rows={8} columns={6} />}
+                emptyTitle="Aucun mouvement"
+                emptyDescription="Aucun mouvement sur la période sélectionnée."
+                emptyIcon={Scale}
+              >
               <Card>
                 <CardContent className="p-0 overflow-x-auto">
                   <Table>
@@ -252,13 +325,11 @@ export default function ComptabilitePage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {balanceData.length === 0 ? (
-                        <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Aucun mouvement</TableCell></TableRow>
-                      ) : balanceData.map((r: any) => {
+                      {balanceData.map((r: any) => {
                         const solde = parseFloat(r.solde);
                         const className = parseFloat(r.type_compte) === 1 || r.type_compte === 'actif' || r.type_compte === 'charge'
-                          ? (solde > 0 ? 'text-green-600' : 'text-destructive')
-                          : (solde > 0 ? 'text-destructive' : 'text-green-600');
+                          ? (solde > 0 ? 'text-success-700' : 'text-destructive')
+                          : (solde > 0 ? 'text-destructive' : 'text-success-700');
                         return (
                           <TableRow key={r.numero} className="text-sm">
                             <TableCell className="font-mono text-xs">{r.numero}</TableCell>
@@ -274,10 +345,21 @@ export default function ComptabilitePage() {
                   </Table>
                 </CardContent>
               </Card>
-            )}
+              </QueryState>
+            </TabsContent>
 
             {/* PLAN COMPTABLE */}
-            {tab === 'plan' && (
+            <TabsContent value="plan">
+              <QueryState
+                loading={loading}
+                error={error}
+                isEmpty={planData.length === 0}
+                onRetry={reload}
+                skeleton={<TableSkeleton rows={8} columns={5} />}
+                emptyTitle="Plan comptable vide"
+                emptyDescription="Aucun compte pour ce filtre."
+                emptyIcon={BookOpen}
+              >
               <Card>
                 <CardContent className="p-0 overflow-x-auto">
                   <Table>
@@ -304,9 +386,10 @@ export default function ComptabilitePage() {
                   </Table>
                 </CardContent>
               </Card>
-            )}
+              </QueryState>
+            </TabsContent>
           </>
-        )}
+        </Tabs>
       </div>
     </div>
   );

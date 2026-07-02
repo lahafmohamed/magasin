@@ -24,6 +24,10 @@ router.patch('/:id/promouvoir', authorize(['admin', 'manager']), TiersController
 // Compte (unified ledger + balances)
 router.get('/:id/compte', TiersController.getCompte);
 
+// Relevé de compte client détaillé (lignes produits + versements)
+router.get('/:id/releve-detaille', TiersController.getReleveDetaille);
+router.get('/:id/releve-detaille/pdf', TiersController.getRelevePDF);
+
 // Acomptes
 router.post('/:id/acomptes-client', TiersController.recordAcompteClient);
 router.post('/:id/acomptes-fournisseur', authorize(['admin', 'manager']), TiersController.recordAcompteFournisseur);

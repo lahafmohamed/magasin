@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { formatFCFA as formatXOF } from '../utils/format';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,6 +31,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/AuthContext';
+import { EmptyState } from '@/components/ui/empty-state';
+import { TableSkeleton } from '@/components/ui/skeleton';
 
 interface Magasin {
   id: number;
@@ -66,6 +69,7 @@ interface SessionCaisse {
 
 export default function DepensesV2() {
   useAuth();
+  const confirm = useConfirm();
   const [magasins, setMagasins] = useState<Magasin[]>([]);
   const [selectedMagasin, setSelectedMagasin] = useState<number | null>(null);
   const [sessionActive, setSessionActive] = useState<SessionCaisse | null>(null);
@@ -261,7 +265,7 @@ export default function DepensesV2() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer cette dépense ?')) return;
+    if (!(await confirm({ title: 'Supprimer cette dépense ?', description: 'Cette action est irréversible.', confirmLabel: 'Supprimer', destructive: true }))) return;
 
     try {
       const response = await fetch(`/api/depenses/${id}`, {
@@ -299,10 +303,10 @@ export default function DepensesV2() {
 
   const getMethodBadge = (methode: string) => {
     const colors: Record<string, string> = {
-      'espece': 'bg-green-100 text-green-800',
-      'carte': 'bg-blue-100 text-blue-800',
-      'cheque': 'bg-orange-100 text-orange-800',
-      'virement': 'bg-purple-100 text-purple-800',
+      'espece': 'bg-green-100 dark:bg-green-500/20 text-green-800 dark:text-green-200',
+      'carte': 'bg-blue-100 dark:bg-blue-500/20 text-blue-800 dark:text-blue-200',
+      'cheque': 'bg-orange-100 dark:bg-orange-500/20 text-orange-800 dark:text-orange-200',
+      'virement': 'bg-purple-100 dark:bg-purple-500/20 text-purple-800 dark:text-purple-200',
       'mobile_money': 'bg-pink-100 text-pink-800'
     };
     const labels: Record<string, string> = {
@@ -313,7 +317,7 @@ export default function DepensesV2() {
       'mobile_money': 'Mobile Money'
     };
     return (
-      <Badge className={colors[methode] || 'bg-gray-100'}>
+      <Badge className={colors[methode] || 'bg-gray-100 dark:bg-muted'}>
         {labels[methode] || methode}
       </Badge>
     );
@@ -351,20 +355,20 @@ export default function DepensesV2() {
 
       {/* Caisse status alert */}
       {selectedMagasin && (
-        <Card className={`p-4 mb-6 ${sessionActive ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+        <Card className={`p-4 mb-6 ${sessionActive ? 'bg-success-50 dark:bg-success-500/10 border-success-200 dark:border-success-500/30' : 'bg-warning-50 dark:bg-warning-500/10 border-warning-200 dark:border-warning-500/30'}`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               {sessionActive ? (
                 <>
-                  <div className="w-2 h-2 rounded-full bg-green-500" />
-                  <span className="text-green-800 font-medium">
+                  <div className="w-2 h-2 rounded-full bg-success-500" />
+                  <span className="text-success-800 dark:text-success-200 font-medium">
                     Caisse ouverte — Les dépenses en espèces seront enregistrées
                   </span>
                 </>
               ) : (
                 <>
-                  <AlertCircle className="h-4 w-4 text-amber-600" />
-                  <span className="text-amber-800 font-medium">
+                  <AlertCircle className="h-4 w-4 text-warning-600 dark:text-warning-300" />
+                  <span className="text-warning-800 dark:text-warning-200 font-medium">
                     Caisse fermée — Ouvrez la caisse pour enregistrer des dépenses en espèces
                   </span>
                 </>
@@ -387,7 +391,7 @@ export default function DepensesV2() {
       <div className="grid gap-4 md:grid-cols-3 mb-6">
         <Card className="p-4">
           <div className="flex items-center gap-2">
-            <Receipt className="h-5 w-5 text-red-600" />
+            <Receipt className="h-5 w-5 text-danger-600 dark:text-danger-300" />
             <div>
               <p className="text-sm text-muted-foreground">Total dépenses</p>
               <p className="text-2xl font-bold">{formatXOF(totalDepenses)}</p>
@@ -414,15 +418,15 @@ export default function DepensesV2() {
                 <div className="space-y-4 py-4">
                   {/* Cash warning */}
                   {isCashPayment && !sessionActive && (
-                    <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg flex items-start gap-2">
-                      <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5" />
+                    <div className="bg-warning-50 dark:bg-warning-500/10 border border-warning-200 dark:border-warning-500/30 p-3 rounded-lg flex items-start gap-2">
+                      <AlertCircle className="h-5 w-5 text-warning-600 dark:text-warning-300 mt-0.5" />
                       <div>
-                        <p className="text-amber-800 font-medium">Caisse fermée</p>
-                        <p className="text-amber-700 text-sm">
-                          La caisse de ce magasin n'est pas ouverte. 
-                          <Button 
-                            variant="link" 
-                            className="p-0 h-auto text-amber-800 underline"
+                        <p className="text-warning-800 dark:text-warning-200 font-medium">Caisse fermée</p>
+                        <p className="text-warning-700 dark:text-warning-300 text-sm">
+                          La caisse de ce magasin n'est pas ouverte.
+                          <Button
+                            variant="link"
+                            className="p-0 h-auto text-warning-800 dark:text-warning-200 underline"
                             onClick={() => { setOpenDialog(false); window.location.href = '/caisse'; }}
                           >
                             Ouvrir la caisse →
@@ -434,11 +438,11 @@ export default function DepensesV2() {
 
                   {/* Cash info */}
                   {isCashPayment && sessionActive && (
-                    <div className="bg-green-50 border border-green-200 p-3 rounded-lg flex items-start gap-2">
-                      <LinkIcon className="h-5 w-5 text-green-600 mt-0.5" />
+                    <div className="bg-success-50 dark:bg-success-500/10 border border-success-200 dark:border-success-500/30 p-3 rounded-lg flex items-start gap-2">
+                      <LinkIcon className="h-5 w-5 text-success-600 dark:text-success-300 mt-0.5" />
                       <div>
-                        <p className="text-green-800 font-medium">Cette dépense sera liée à la caisse</p>
-                        <p className="text-green-700 text-sm">
+                        <p className="text-success-800 dark:text-success-200 font-medium">Cette dépense sera liée à la caisse</p>
+                        <p className="text-success-700 dark:text-success-300 text-sm">
                           Elle décrémentera le solde de la caisse ouverte du magasin.
                         </p>
                       </div>
@@ -546,14 +550,18 @@ export default function DepensesV2() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-8">
-                  Chargement...
+                <TableCell colSpan={9} className="p-0">
+                  <TableSkeleton rows={8} columns={9} />
                 </TableCell>
               </TableRow>
             ) : depenses.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                  {selectedMagasin ? 'Aucune dépense trouvée' : 'Sélectionnez un magasin'}
+                <TableCell colSpan={9} className="p-0">
+                  <EmptyState
+                    icon={Receipt}
+                    title={selectedMagasin ? 'Aucune dépense trouvée' : 'Sélectionnez un magasin'}
+                    description={selectedMagasin ? undefined : 'Choisissez un magasin pour afficher ses dépenses.'}
+                  />
                 </TableCell>
               </TableRow>
             ) : (
@@ -573,12 +581,12 @@ export default function DepensesV2() {
                     {depense.description}
                   </TableCell>
                   <TableCell>{getMethodBadge(depense.methode_paiement)}</TableCell>
-                  <TableCell className="text-right font-medium text-red-600">
+                  <TableCell className="text-right font-medium text-danger-600 dark:text-danger-300">
                     -{formatXOF(depense.montant)}
                   </TableCell>
                   <TableCell className="text-center">
                     {depense.session_caisse_id ? (
-                      <LinkIcon className="h-4 w-4 text-green-600 mx-auto" aria-label="Liée à la caisse" />
+                      <LinkIcon className="h-4 w-4 text-success-600 dark:text-success-300 mx-auto" aria-label="Liée à la caisse" />
                     ) : (
                       <span className="text-muted-foreground">-</span>
                     )}
@@ -589,7 +597,7 @@ export default function DepensesV2() {
                       size="sm"
                       onClick={() => handleDelete(depense.id)}
                     >
-                      <Trash2 className="h-4 w-4 text-red-600" />
+                      <Trash2 className="h-4 w-4 text-danger-600 dark:text-danger-300" />
                     </Button>
                   </TableCell>
                 </TableRow>

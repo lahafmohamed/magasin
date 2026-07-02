@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { commandeService, produitService } from '../services/api';
 import { Button } from '@/components/ui/button';
+import StatusBadge from '@/components/StatusBadge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -9,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { TiersPicker } from '../components/TiersPicker';
+import { AttachmentPanel } from '../components/AttachmentPanel';
 import { Tiers } from '../types';
 import { 
   ArrowLeft, ShoppingCart, Truck, CheckCircle, Clock, 
@@ -16,13 +18,17 @@ import {
   Trash2, BookOpen, X, Loader2, Calendar
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 export default function CommandeDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const [commande, setCommande] = useState<any>(null);
   const [lignes, setLignes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [match, setMatch] = useState<any>(null);
+  const [matchLoading, setMatchLoading] = useState(false);
 
   // Edit states
   const [isEditing, setIsEditing] = useState(false);
@@ -42,7 +48,20 @@ export default function CommandeDetail() {
 
   useEffect(() => {
     loadCommande();
+    loadMatch();
   }, [id]);
+
+  const loadMatch = async () => {
+    if (!id) return;
+    setMatchLoading(true);
+    try {
+      setMatch(await commandeService.getMatch(parseInt(id)));
+    } catch {
+      setMatch(null);
+    } finally {
+      setMatchLoading(false);
+    }
+  };
 
   const loadCommande = async () => {
     if (!id) return;
@@ -176,6 +195,13 @@ export default function CommandeDetail() {
 
   const updateStatut = async (statut: string) => {
     if (!id) return;
+    const confirmOpts =
+      statut === 'annulee'
+        ? { title: 'Annuler cette commande ?', description: 'La commande fournisseur sera annulée.', confirmLabel: 'Annuler la commande', cancelLabel: 'Retour', destructive: true }
+        : statut === 'validee'
+          ? { title: 'Valider cette commande ?', description: 'La commande sera validée et prête à être expédiée par le fournisseur.', confirmLabel: 'Valider' }
+          : { title: 'Marquer la commande comme expédiée ?', confirmLabel: 'Confirmer' };
+    if (!(await confirm(confirmOpts))) return;
     try {
       await commandeService.updateStatut(parseInt(id), statut);
       loadCommande();
@@ -411,7 +437,7 @@ export default function CommandeDetail() {
                             </div>
                             <div className="text-right">
                               <p className="text-sm font-bold text-primary">{parseFloat(p.prix_achat).toFixed(2)} XOF</p>
-                              <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${isLowStock ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
+                              <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
                                 Stock: {p.stock} (Min: {p.stock_min})
                               </p>
                             </div>
@@ -451,7 +477,7 @@ export default function CommandeDetail() {
                                 <div>
                                   <p className="font-semibold text-sm">{ligne.produit_nom}</p>
                                   <div className="flex gap-2 items-center mt-1">
-                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${isLowStock ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
+                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
                                       Stock: {ligne.stock} / Min: {ligne.stock_min}
                                     </span>
                                   </div>
@@ -596,7 +622,7 @@ export default function CommandeDetail() {
                       <p className="text-xs font-mono text-muted-foreground">{p.reference}</p>
                       <div className="flex gap-2 items-center mt-1">
                         <span className="text-xs font-bold text-primary">{parseFloat(p.prix_achat).toFixed(2)} XOF</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isLowStock ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
                           Stock: {p.stock} (Min: {p.stock_min})
                         </span>
                       </div>
@@ -690,6 +716,76 @@ export default function CommandeDetail() {
         </CardContent>
       </Card>
 
+      {/* 3-way match (No Print) */}
+      <Card className="no-print border border-border/60 shadow-md">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            {match ? (
+              match.coherent ? <CheckCircle className="h-5 w-5 text-success-600 dark:text-success-300" />
+                : match.within_tolerance ? <Clock className="h-5 w-5 text-warning-500" />
+                : <XCircle className="h-5 w-5 text-danger-600 dark:text-danger-300" />
+            ) : <Package className="h-5 w-5 text-muted-foreground" />}
+            Rapprochement 3 voies
+          </CardTitle>
+          <CardDescription>Commandé vs Reçu vs Facturé (par produit)</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {matchLoading ? (
+            <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin" /></div>
+          ) : !match || match.lignes.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Aucune donnée de rapprochement.</p>
+          ) : (
+            <>
+              {match.violations?.length > 0 && (
+                <div className="mb-3 rounded-md border border-danger-300 dark:border-danger-500/30 bg-danger-50 dark:bg-danger-500/10 p-3 text-sm text-danger-800 dark:text-danger-200">
+                  <p className="font-medium">Écarts détectés{match.config?.bloquer ? ' (création de facture bloquée)' : ' (avertissement)'} :</p>
+                  <ul className="list-disc pl-5 mt-1">
+                    {match.violations.map((v: any, i: number) => (
+                      <li key={i}>{v.produit_nom || `Produit ${v.produit_id}`} — {v.reasons.join('; ')}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow>
+                      <TableHead>Produit</TableHead>
+                      <TableHead className="text-right">Cmd</TableHead>
+                      <TableHead className="text-right">Reçu</TableHead>
+                      <TableHead className="text-right">Facturé</TableHead>
+                      <TableHead className="text-right">Prix cmd</TableHead>
+                      <TableHead className="text-right">Prix fact.</TableHead>
+                      <TableHead className="text-center">État</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {match.lignes.map((l: any) => (
+                      <TableRow key={l.produit_id}>
+                        <TableCell className="text-sm">{l.produit_nom || `#${l.produit_id}`}<span className="block text-xs font-mono text-muted-foreground">{l.reference}</span></TableCell>
+                        <TableCell className="text-right num">{l.qte_commandee}</TableCell>
+                        <TableCell className="text-right num">{l.qte_recue}</TableCell>
+                        <TableCell className="text-right num">{l.qte_facturee}</TableCell>
+                        <TableCell className="text-right num">{l.prix_commande ?? '—'}</TableCell>
+                        <TableCell className="text-right num">{l.prix_facture ?? '—'}</TableCell>
+                        <TableCell className="text-center">
+                          {l.coherent ? <CheckCircle className="h-4 w-4 text-success-600 dark:text-success-300 inline" />
+                            : l.within_tolerance ? <Clock className="h-4 w-4 text-warning-500 inline" />
+                            : <XCircle className="h-4 w-4 text-danger-600 dark:text-danger-300 inline" />}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Attachments (No Print) */}
+      <AttachmentPanel entityType="commande" entityId={commande.id} />
+
       {/* Actions (No Print) */}
       {commande.statut !== 'livree' && commande.statut !== 'annulee' && (
         <Card className="no-print border border-border/60 shadow-md">
@@ -713,7 +809,7 @@ export default function CommandeDetail() {
               )}
               {(commande.statut === 'en_attente' || commande.statut === 'validee' || commande.statut === 'expediee') && (
                 <>
-                  <Button onClick={() => navigate(`/receptions?commande_id=${id}`)} className="gap-2 bg-green-600 hover:bg-green-700">
+                  <Button onClick={() => navigate(`/receptions?commande_id=${id}`)} className="gap-2 bg-success-600 hover:bg-success-700">
                     <Package className="h-4 w-4" />
                     Enregistrer la réception
                   </Button>
@@ -785,12 +881,12 @@ export default function CommandeDetail() {
               {commande.date_livraison_reelle && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground font-semibold">Livraison Réelle:</span>
-                  <span className="font-bold text-green-600">{new Date(commande.date_livraison_reelle).toLocaleDateString('fr-FR')}</span>
+                  <span className="font-bold text-success-600">{new Date(commande.date_livraison_reelle).toLocaleDateString('fr-FR')}</span>
                 </div>
               )}
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span className="text-muted-foreground font-semibold">Statut:</span>
-                <span className="font-bold uppercase text-xs">{commande.statut.replace('_', ' ')}</span>
+                <StatusBadge type="commande" statut={commande.statut} />
               </div>
             </CardContent>
           </Card>

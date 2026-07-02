@@ -3,9 +3,19 @@ import { Loader2 } from 'lucide-react';
 import { api } from '../services/authService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { toast } from 'sonner';
 import { formatFCFA } from '../utils/format';
+import {
+  CHART_COLORS as COLORS,
+  CHART_PRIMARY,
+  CHART_POSITIVE,
+  chartColor,
+  CHART_GRID,
+  CHART_AXIS,
+  CHART_TOOLTIP_STYLE,
+} from '@/lib/chartColors';
 
 const TABLE_HEAD = 'px-3 py-2 font-medium';
 
@@ -56,9 +66,6 @@ export default function Reporting() {
     return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
 
-  const COLORS = ['#1E3A8A', '#1D4ED8', '#3B82F6', '#60A5FA', '#93C5FD', '#BFDBFE'];
-  const CHART_PRIMARY = '#1D4ED8';
-
   return (
     <div className="container mx-auto p-6">
       {/* Title & Date range */}
@@ -71,29 +78,11 @@ export default function Reporting() {
         </div>
       </div>
 
-      {/* Tabs System */}
-      <div className="flex border-b mb-6">
-        <button
-          onClick={() => setActiveTab('general')}
-          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
-            activeTab === 'general'
-              ? 'border-primary text-primary'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          Vue Générale
-        </button>
-        <button
-          onClick={() => setActiveTab('margins')}
-          className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors ${
-            activeTab === 'margins'
-              ? 'border-primary text-primary'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          Analyse des Marges & Rentabilité
-        </button>
-      </div>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'general' | 'margins')}>
+      <TabsList className="mb-6">
+        <TabsTrigger value="general">Vue Générale</TabsTrigger>
+        <TabsTrigger value="margins">Analyse des Marges & Rentabilité</TabsTrigger>
+      </TabsList>
 
       {/* KPI Cards (5 columns when Margins is loaded) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
@@ -140,7 +129,7 @@ export default function Reporting() {
       </div>
 
       {/* Tab 1: General View */}
-      {activeTab === 'general' && (
+      <TabsContent value="general">
         <div className="space-y-6">
           {pnl && (
             <Card>
@@ -184,7 +173,7 @@ export default function Reporting() {
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value: any) => formatFCFA(value)} />
+                      <Tooltip formatter={(value: any) => formatFCFA(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
                       <Legend />
                     </PieChart>
                   </ResponsiveContainer>
@@ -200,11 +189,11 @@ export default function Reporting() {
                 {topProducts.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <BarChart data={topProducts.map((p) => ({ nom: p.nom.substring(0, 20), marge: parseFloat(p.marge_brute) }))}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="nom" tick={{ fontSize: 10 }} />
-                      <YAxis />
-                      <Tooltip formatter={(value: any) => formatFCFA(value)} />
-                      <Bar dataKey="marge" fill="#059669" />
+                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+                      <XAxis dataKey="nom" tick={{ fontSize: 10, fill: CHART_AXIS }} />
+                      <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} />
+                      <Tooltip formatter={(value: any) => formatFCFA(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
+                      <Bar dataKey="marge" fill={CHART_POSITIVE} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -248,10 +237,11 @@ export default function Reporting() {
             </CardContent>
           </Card>
         </div>
-      )}
+      </TabsContent>
 
       {/* Tab 2: Margins & Profitability Dashboard */}
-      {activeTab === 'margins' && marginsReport && (
+      <TabsContent value="margins">
+        {marginsReport && (
         <div className="space-y-6">
           {/* Trend & Category Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -267,13 +257,13 @@ export default function Reporting() {
                       CA: parseFloat(m.chiffre_affaires),
                       Marge: parseFloat(m.marge_brute),
                     }))}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="mois" />
-                      <YAxis />
-                      <Tooltip formatter={(value: any) => formatFCFA(value)} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+                      <XAxis dataKey="mois" tick={{ fontSize: 11, fill: CHART_AXIS }} />
+                      <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} />
+                      <Tooltip formatter={(value: any) => formatFCFA(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
                       <Legend />
-                      <Bar dataKey="CA" fill="#3B82F6" name="Chiffre d'Affaires" />
-                      <Bar dataKey="Marge" fill="#10B981" name="Marge Brute" />
+                      <Bar dataKey="CA" fill={CHART_PRIMARY} name="Chiffre d'Affaires" />
+                      <Bar dataKey="Marge" fill={CHART_POSITIVE} name="Marge Brute" />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -297,11 +287,11 @@ export default function Reporting() {
                       }))}
                       margin={{ left: 50 }}
                     >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis type="number" unit="%" />
-                      <YAxis dataKey="categorie" type="category" />
-                      <Tooltip formatter={(value: any) => `${value}%`} />
-                      <Bar dataKey="taux" fill="#8B5CF6" name="Taux de Marge (%)" />
+                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+                      <XAxis type="number" unit="%" tick={{ fontSize: 11, fill: CHART_AXIS }} />
+                      <YAxis dataKey="categorie" type="category" tick={{ fontSize: 11, fill: CHART_AXIS }} />
+                      <Tooltip formatter={(value: any) => `${value}%`} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
+                      <Bar dataKey="taux" fill={chartColor(3)} name="Taux de Marge (%)" />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -384,7 +374,9 @@ export default function Reporting() {
             </Card>
           </div>
         </div>
-      )}
+        )}
+      </TabsContent>
+      </Tabs>
     </div>
   );
 }

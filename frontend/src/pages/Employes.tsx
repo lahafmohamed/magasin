@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
+import { TableSkeleton } from '@/components/ui/skeleton';
 import { formatFCFA } from '../utils/format';
 
 interface Employe {
@@ -146,7 +147,11 @@ export default function Employes() {
   }, [employes, sort]);
 
   if (loading) {
-    return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+    return (
+      <div className="container mx-auto p-6">
+        <TableSkeleton rows={10} columns={7} />
+      </div>
+    );
   }
 
   return (

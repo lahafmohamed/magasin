@@ -82,4 +82,38 @@ router.get('/export-pdf', async (req, res) => {
   }
 });
 
+// Compte de résultat (income statement) PDF
+router.get('/income-statement/export-pdf', async (req, res) => {
+  try {
+    const { date_debut, date_fin } = req.query;
+    if (!date_debut || !date_fin) {
+      res.status(400).json({ success: false, error: 'date_debut et date_fin requis' });
+      return;
+    }
+    const buffer = await PDFService.generateIncomeStatementPDF(date_debut as string, date_fin as string);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="compte_de_resultat.pdf"');
+    res.send(buffer);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Bilan (balance sheet) PDF
+router.get('/balance-sheet/export-pdf', async (req, res) => {
+  try {
+    const { date_fin } = req.query;
+    if (!date_fin) {
+      res.status(400).json({ success: false, error: 'date_fin requis' });
+      return;
+    }
+    const buffer = await PDFService.generateBalanceSheetPDF(date_fin as string);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="bilan.pdf"');
+    res.send(buffer);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 export default router;

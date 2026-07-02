@@ -93,7 +93,7 @@ export function InlineEdit({
           size="sm"
           onClick={handleSave}
           disabled={isLoading}
-          className="h-8 w-8 p-0 text-green-600 hover:text-green-700"
+          className="h-8 w-8 p-0 text-success-600 hover:text-success-700 dark:text-success-400 dark:hover:text-success-300"
         >
           <Check className="h-3 w-3" />
         </Button>
@@ -102,7 +102,7 @@ export function InlineEdit({
           variant="ghost"
           onClick={handleCancel}
           disabled={isLoading}
-          className="h-8 w-8 p-0 text-red-600 hover:text-red-700"
+          className="h-8 w-8 p-0 text-danger-600 hover:text-danger-700 dark:text-danger-400 dark:hover:text-danger-300"
         >
           <X className="h-3 w-3" />
         </Button>

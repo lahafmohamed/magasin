@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { demandeService } from '../services/api';
 import { useAuth } from '../lib/AuthContext';
 import { usePermission, Permissions } from '../hooks/usePermission';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -130,6 +131,7 @@ const STATUS_CONFIG: Record<string, { label: string; variant: 'default' | 'secon
 export default function DemandeDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const confirm = useConfirm();
   useAuth();
   const { hasPermission, userRole } = usePermission();
 
@@ -457,7 +459,11 @@ export default function DemandeDetail() {
               {canExecute && (
                 <Button 
                   className="w-full gap-2" 
-                  onClick={() => handleAction('execute')}
+                  onClick={async () => {
+                    if (await confirm({ title: 'Exécuter le transfert ?', description: 'Les quantités approuvées seront transférées et le stock mis à jour.', confirmLabel: 'Exécuter' })) {
+                      handleAction('execute');
+                    }
+                  }}
                   disabled={!!actionLoading}
                 >
                   {actionLoading === 'execute' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
@@ -479,8 +485,8 @@ export default function DemandeDetail() {
                 <Button 
                   variant="outline" 
                   className="w-full gap-2 text-destructive hover:text-destructive" 
-                  onClick={() => {
-                    if (confirm('Êtes-vous sûr de vouloir annuler cette demande ?')) {
+                  onClick={async () => {
+                    if (await confirm({ title: 'Annuler cette demande ?', description: 'La demande sera annulée.', confirmLabel: 'Annuler la demande', cancelLabel: 'Retour', destructive: true })) {
                       handleAction('cancel');
                     }
                   }}

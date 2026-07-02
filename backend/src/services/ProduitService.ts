@@ -25,6 +25,7 @@ export interface CreateProduitInput {
   prix_vente: number;
   stock?: number;
   stock_min?: number;
+  fournisseur_id?: number;
   location_id?: number;
   initial_stock?: number;
   cree_par?: number;
@@ -39,12 +40,13 @@ export interface UpdateProduitInput {
   prix_vente?: number;
   stock?: number;
   stock_min?: number;
+  fournisseur_id?: number | null;
   modifie_par?: number;
 }
 
 export class ProduitService extends BaseService<ProduitRecord> {
   protected tableName = 'produits';
-  protected selectColumns = 'id, reference, nom, description, categorie, prix_achat, prix_vente, stock, stock_min, created_at, updated_at';
+  protected selectColumns = 'id, reference, nom, description, categorie, prix_achat, prix_vente, stock, stock_min, fournisseur_id, created_at, updated_at';
   protected defaultSortColumn = 'nom';
   protected allowedSortColumns = ['nom', 'reference', 'categorie', 'prix_vente', 'stock', 'created_at'];
 
@@ -189,8 +191,8 @@ export class ProduitService extends BaseService<ProduitRecord> {
       const initialProductStock = effectiveLocationId ? 0 : requestedInitialStock;
 
       const { rows: insertRows } = await client.query(
-        `INSERT INTO produits (reference, nom, description, categorie, prix_achat, prix_vente, stock, stock_min, cree_par)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO produits (reference, nom, description, categorie, prix_achat, prix_vente, stock, stock_min, fournisseur_id, cree_par)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
         [
           input.reference,
@@ -201,6 +203,7 @@ export class ProduitService extends BaseService<ProduitRecord> {
           input.prix_vente,
           initialProductStock,
           input.stock_min ?? 5,
+          input.fournisseur_id ?? null,
           input.cree_par || null,
         ]
       );
@@ -246,6 +249,7 @@ export class ProduitService extends BaseService<ProduitRecord> {
     if (input.prix_vente !== undefined) { fields.push(`prix_vente = $${paramIndex++}`); params.push(input.prix_vente); }
     // stock is intentionally excluded: use adjustStock() or the reception flow
     if (input.stock_min !== undefined) { fields.push(`stock_min = $${paramIndex++}`); params.push(input.stock_min); }
+    if (input.fournisseur_id !== undefined) { fields.push(`fournisseur_id = $${paramIndex++}`); params.push(input.fournisseur_id ?? null); }
     if (input.modifie_par !== undefined) { fields.push(`modifie_par = $${paramIndex++}`); params.push(input.modifie_par); }
 
     if (fields.length === 0) throw new Error('Aucun champ à mettre à jour');
@@ -320,9 +324,10 @@ export class ProduitService extends BaseService<ProduitRecord> {
       `SELECT
         COUNT(DISTINCT p.id) as total_produits,
         COALESCE(SUM(spl.quantite), 0) as total_unites,
-        COALESCE(SUM(spl.quantite * p.prix_achat), 0) as valeur_achat,
+        -- Cost basis = maintained per-location valeur_stock (= quantite × cmp), trigger 076.
+        COALESCE(SUM(spl.valeur_stock), 0) as valeur_achat,
         COALESCE(SUM(spl.quantite * p.prix_vente), 0) as valeur_vente,
-        COALESCE(SUM(spl.quantite * (p.prix_vente - p.prix_achat)), 0) as marge_potentielle
+        COALESCE(SUM(spl.quantite * p.prix_vente), 0) - COALESCE(SUM(spl.valeur_stock), 0) as marge_potentielle
        FROM produits p
        LEFT JOIN stock_par_location spl ON p.id = spl.produit_id
        LEFT JOIN stock_locations sl ON spl.location_id = sl.id AND sl.actif = true
@@ -340,7 +345,8 @@ export class ProduitService extends BaseService<ProduitRecord> {
         COALESCE(p.categorie, 'Sans catégorie') as categorie,
         COUNT(DISTINCT p.id) as nombre_produits,
         COALESCE(SUM(spl.quantite), 0) as total_unites,
-        COALESCE(SUM(spl.quantite * p.prix_achat), 0) as valeur_achat,
+        -- Cost basis = maintained per-location valeur_stock (= quantite × cmp), trigger 076.
+        COALESCE(SUM(spl.valeur_stock), 0) as valeur_achat,
         COALESCE(SUM(spl.quantite * p.prix_vente), 0) as valeur_vente
        FROM produits p
        LEFT JOIN stock_par_location spl ON p.id = spl.produit_id
@@ -576,6 +582,29 @@ export class ProduitService extends BaseService<ProduitRecord> {
       ) as low_stock_products`
     );
     return parseInt(rows[0].count);
+  }
+
+  /**
+   * Reorder suggestions: products at/below their stock_min, with a suggested
+   * reorder quantity (top up to 2× the minimum, at least 1) and their default
+   * supplier so the UI can group draft purchase orders per fournisseur.
+   */
+  async getReorderSuggestions(): Promise<any[]> {
+    const { rows } = await pool.query(
+      `SELECT p.id AS produit_id, p.reference, p.nom, p.prix_achat, p.stock_min,
+              p.fournisseur_id, t.raison_sociale AS fournisseur_nom,
+              COALESCE(SUM(spl.quantite), 0)::int AS stock,
+              GREATEST(p.stock_min * 2 - COALESCE(SUM(spl.quantite), 0), 1)::int AS quantite_suggeree
+       FROM produits p
+       LEFT JOIN stock_par_location spl ON p.id = spl.produit_id
+       LEFT JOIN stock_locations sl ON spl.location_id = sl.id AND sl.actif = true
+       LEFT JOIN tiers t ON p.fournisseur_id = t.id
+       WHERE p.deleted_at IS NULL
+       GROUP BY p.id, p.reference, p.nom, p.prix_achat, p.stock_min, p.fournisseur_id, t.raison_sociale
+       HAVING COALESCE(SUM(spl.quantite), 0) <= p.stock_min
+       ORDER BY t.raison_sociale NULLS LAST, p.nom ASC`
+    );
+    return rows;
   }
 }
 

@@ -89,6 +89,31 @@ npm run dev
 
 Le frontend tourne sur **http://localhost:6001**
 
+### 4. Production / Déploiement
+
+```bash
+# Backend (process managé par PM2)
+cd backend && npm run build
+pm2 start ecosystem.config.js          # app "hitektest-api" → dist/server.js (port 6100)
+node migrate.mjs                        # applique les migrations en attente (table schema_migrations)
+
+# Frontend (build statique)
+cd frontend && npm run build           # génère dist/
+```
+
+> **Secrets** : `JWT_SECRET` (≥32 caractères) et les variables `DB_*` doivent provenir d'un `.env` non versionné — `ecosystem.config.js` les lit depuis `process.env`.
+>
+> **Servir le frontend** : `frontend/dist/` est un SPA statique. Servez-le derrière un reverse proxy (nginx/Caddy) qui :
+> 1. sert les fichiers statiques de `dist/` avec fallback SPA vers `index.html` ;
+> 2. proxifie `/api` vers le backend (`http://localhost:6100`) ;
+> 3. transmet les cookies (auth via cookie httpOnly `auth_token`).
+>
+> Exemple nginx minimal :
+> ```nginx
+> location / { root /var/www/hitek/dist; try_files $uri /index.html; }
+> location /api { proxy_pass http://127.0.0.1:6100; proxy_set_header Host $host; }
+> ```
+
 ## 📋 Fonctionnalités
 
 - **📊 Dashboard** - Vue d'ensemble avec statistiques rapides

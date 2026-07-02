@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertTriangle, CheckCircle2, RefreshCw, Filter } from 'lucide-react';
-import { formatFCFA } from '@/lib/utils';
+import { formatFCFA } from '@/utils/format';
 import { toast } from 'sonner';
 
 const SOURCE_KINDS = [
@@ -19,9 +19,9 @@ const SOURCE_KINDS = [
 ];
 
 const KIND_BADGE: Record<string, string> = {
-  paiement: 'bg-green-50 text-green-700',
-  acompte_client: 'bg-blue-50 text-blue-700',
-  acompte_fournisseur: 'bg-orange-50 text-orange-700',
+  paiement: 'bg-success-50 dark:bg-success-500/10 text-success-700 dark:text-success-300',
+  acompte_client: 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300',
+  acompte_fournisseur: 'bg-warning-50 dark:bg-warning-500/10 text-warning-700 dark:text-warning-300',
 };
 
 export default function CaisseAudit() {
@@ -67,15 +67,15 @@ export default function CaisseAudit() {
 
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <Card className={orphansTotal > 0 ? 'border-red-500 border-2' : 'border-green-500 border-2'}>
+        <Card className={orphansTotal > 0 ? 'border-danger-500 border-2' : 'border-success-500 border-2'}>
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
               {orphansTotal > 0
-                ? <AlertTriangle className="h-5 w-5 text-red-600" />
-                : <CheckCircle2 className="h-5 w-5 text-green-600" />}
+                ? <AlertTriangle className="h-5 w-5 text-danger-600 dark:text-danger-300" />
+                : <CheckCircle2 className="h-5 w-5 text-success-600 dark:text-success-300" />}
               <div>
                 <p className="text-xs text-muted-foreground">Orphelins (espèce sans caisse)</p>
-                <p className={`text-2xl font-bold ${orphansTotal > 0 ? 'text-red-600' : 'text-green-600'}`}>{orphansTotal}</p>
+                <p className={`text-2xl font-bold ${orphansTotal > 0 ? 'text-danger-600 dark:text-danger-300' : 'text-success-600 dark:text-success-300'}`}>{orphansTotal}</p>
               </div>
             </div>
           </CardContent>
@@ -158,7 +158,7 @@ export default function CaisseAudit() {
               </TableHeader>
               <TableBody>
                 {items.map((it: any) => (
-                  <TableRow key={`${it.source_kind}-${it.source_id}`} className={it.is_orphan ? 'bg-red-50' : ''}>
+                  <TableRow key={`${it.source_kind}-${it.source_id}`} className={it.is_orphan ? 'bg-danger-50 dark:bg-danger-500/10' : ''}>
                     <TableCell className="text-xs whitespace-nowrap">{(it.source_date || '').substring(0, 10)}</TableCell>
                     <TableCell>
                       <span className={`text-xs px-1.5 py-0.5 rounded ${KIND_BADGE[it.source_kind] || ''}`}>

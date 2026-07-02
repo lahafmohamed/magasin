@@ -502,9 +502,9 @@ export class ReportingService {
         SELECT
           COUNT(*) as total_produits,
           COALESCE(SUM(spl.quantite), 0) as stock_total,
-          -- Canonical inventory valuation: quantity × current purchase cost.
-          -- (spl.valeur_stock drifts because it is not decremented on sales/transfers.)
-          COALESCE(SUM(spl.quantite * p.prix_achat), 0) as valeur_stock
+          -- Canonical inventory valuation: maintained per-location value (= quantite × cmp),
+          -- kept correct on receptions, sales and transfers by trigger trg_stock_valeur_invariant (076).
+          COALESCE(SUM(spl.valeur_stock), 0) as valeur_stock
         FROM stock_par_location spl
         JOIN stock_locations l ON spl.location_id = l.id
         JOIN produits p ON p.id = spl.produit_id

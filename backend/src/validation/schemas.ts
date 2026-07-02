@@ -46,6 +46,7 @@ export const createProduitSchema = z.object({
   prix_vente: z.coerce.number().nonnegative('Prix de vente doit être positif'),
   stock: z.coerce.number().int().nonnegative('Stock doit être positif').default(0),
   stock_min: z.coerce.number().int().nonnegative('Stock minimum doit être positif').default(5),
+  fournisseur_id: z.coerce.number().int().positive('Fournisseur ID invalide').optional(),
   location_id: z.coerce.number().int().positive('Location ID invalide').optional(),
   initial_stock: z.coerce.number().int().nonnegative('Stock initial doit être positif').optional(),
 }).superRefine((data, ctx) => {
@@ -66,6 +67,7 @@ export const updateProduitSchema = z.object({
   prix_achat: z.coerce.number().nonnegative().optional(),
   prix_vente: z.coerce.number().nonnegative().optional(),
   stock_min: z.coerce.number().int().nonnegative().optional(),
+  fournisseur_id: z.coerce.number().int().positive('Fournisseur ID invalide').nullable().optional(),
   // stock intentionally omitted: use PATCH /:id/stock to adjust stock levels
 });
 
@@ -229,6 +231,63 @@ export const updateCommandeStatutSchema = z.object({
 });
 
 // ============================================
+// Facture fournisseur (supplier invoice) schemas
+// ============================================
+export const factureFournisseurLigneSchema = z.object({
+  produit_id: z.coerce.number().int().positive().optional(),
+  description: z.string().max(500).optional().or(z.literal('')),
+  quantite: z.coerce.number().positive('Quantité doit être positive'),
+  prix_unitaire: z.coerce.number().nonnegative('Prix unitaire invalide'),
+}).refine(l => l.produit_id !== undefined || (l.description && l.description.length > 0), {
+  message: 'Chaque ligne doit avoir un produit ou une description',
+});
+
+export const createFactureFournisseurSchema = z.object({
+  tiers_id: z.coerce.number().int().positive().optional(),
+  fournisseur_id: z.coerce.number().int().positive().optional(),
+  reception_id: z.coerce.number().int().positive().optional(),
+  commande_id: z.coerce.number().int().positive().optional(),
+  numero_facture_fournisseur: z.string().min(1, 'Numéro de facture requis').max(100),
+  date_facture: z.string().min(1, 'Date de facture requise'),
+  date_echeance: z.string().optional().or(z.literal('')),
+  condition_paiement: z.string().max(100).optional().or(z.literal('')),
+  notes: z.string().max(2000).optional().or(z.literal('')),
+  lignes: z.array(factureFournisseurLigneSchema).min(1, 'Au moins une ligne requise'),
+}).refine(d => d.tiers_id !== undefined || d.fournisseur_id !== undefined, {
+  message: 'Fournisseur (tiers_id) requis',
+});
+
+export const recordFactureFournisseurPaiementSchema = z.object({
+  montant: z.coerce.number().positive('Montant doit être positif'),
+  methode_paiement: z.enum([
+    'espece', 'carte', 'cheque', 'virement',
+    'mobile_money', 'orange_money', 'mtn_money', 'wave',
+  ]),
+  reference: z.string().max(100).optional().or(z.literal('')),
+});
+
+// ============================================
+// Payroll schemas
+// ============================================
+export const createPayrollRunSchema = z.object({
+  periode: z.string().regex(/^\d{4}-\d{2}$/, "Période au format 'YYYY-MM' requise"),
+  notes: z.string().max(2000).optional().or(z.literal('')),
+});
+
+export const updatePayslipSchema = z.object({
+  primes: z.coerce.number().nonnegative('Primes invalides').optional(),
+  deductions: z.coerce.number().nonnegative('Déductions invalides').optional(),
+  notes: z.string().max(1000).optional().or(z.literal('')),
+});
+
+export const markPayrollPaidSchema = z.object({
+  methode_paiement: z.enum([
+    'espece', 'carte', 'cheque', 'virement',
+    'mobile_money', 'orange_money', 'mtn_money', 'wave',
+  ]).optional(),
+});
+
+// ============================================
 // Devis schemas
 // ============================================
 export const devisLigneSchema = z.object({
@@ -346,45 +405,6 @@ export const companySettingsSchema = z.object({
   taux_conversion: z.coerce.number().positive('Taux de conversion doit être positif').max(999999).optional(),
 });
 
-// ============================================
-// Lot / batch tracking schemas (migration 015)
-// ============================================
-export const createLotSchema = z.object({
-  produit_id: z.coerce.number().int().positive('Produit ID requis'),
-  numero_lot: z.string().min(1, 'Numéro de lot requis').max(100),
-  quantite: z.coerce.number().int().positive('Quantité doit être positive'),
-  date_fabrication: z.string().optional().or(z.literal('')),
-  date_expiration: z.string().optional().or(z.literal('')),
-  prix_achat_unitaire: z.coerce.number().nonnegative().optional(),
-  fournisseur_id: z.coerce.number().int().positive('Fournisseur (tiers) ID invalide').optional(),
-  notes: z.string().max(2000).optional().or(z.literal('')),
-});
-
-export const adjustLotQuantiteSchema = z.object({
-  delta: z.coerce.number().int().refine(val => val !== 0, 'Le delta ne peut pas être zéro'),
-});
-
-// ============================================
-// Serial number tracking schemas (migration 016)
-// ============================================
-export const registerSerialSchema = z.object({
-  produit_id: z.coerce.number().int().positive('Produit ID requis'),
-  numero_serie: z.string().min(1, 'Numéro de série requis').max(100),
-  lot_id: z.coerce.number().int().positive('Lot ID invalide').optional(),
-  statut: z.enum(['en_stock', 'vendu', 'retourne', 'en_garantie', 'reforme']).optional(),
-  date_achat: z.string().optional().or(z.literal('')),
-  prix_vente: z.coerce.number().nonnegative().optional(),
-  notes: z.string().max(2000).optional().or(z.literal('')),
-});
-
-export const markSerialSoldSchema = z.object({
-  client_id: z.coerce.number().int().positive('Client (tiers) ID invalide').optional(),
-  facture_id: z.coerce.number().int().positive('Facture ID invalide').optional(),
-  prix_vente: z.coerce.number().nonnegative().optional(),
-  garantie_jusqu: z.string().optional().or(z.literal('')),
-  date_vente: z.string().optional().or(z.literal('')),
-});
-
-export const markSerialWarrantySchema = z.object({
-  garantie_jusqu: z.string().optional().or(z.literal('')),
-});
+// Lot/batch (migration 015) and serial-number (migration 016) tracking schemas
+// were removed with the batch/serial module (no routes/UI ever wired). The
+// backing tables are dropped in migration 085.

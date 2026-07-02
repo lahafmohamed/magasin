@@ -5,7 +5,6 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import produitsRoutes from './routes/produits';
-import produitsImportRoutes from './routes/produits-import';
 import tiersRoutes from './routes/tiers';
 import clientsRoutes from './routes/clients';
 import facturesRoutes from './routes/factures';
@@ -18,7 +17,6 @@ import retoursRoutes from './routes/retours';
 import reportsRoutes from './routes/reports';
 import caisseRoutes from './routes/caisse';
 import posRoutes from './routes/pos';
-import cashVarianceRoutes from './routes/cash-variance';
 import comptesClientsRoutes from './routes/comptes-clients';
 import acomptesRoutes from './routes/acomptes';
 import stockLocationsRoutes from './routes/stock-locations';
@@ -38,13 +36,10 @@ import adminUsersRoutes from './routes/admin-users';
 import companySettingsRoutes from './routes/company-settings';
 import auditRoutes from './routes/audit';
 import notificationRoutes from './routes/notifications';
-import batchExportRoutes from './routes/export-batch';
 import crmRoutes from './routes/crm';
-import importExportRoutes from './routes/import-export';
 import comptabiliteRoutes from './routes/comptabilite';
-import camionsRoutes from './routes/camions';
-import lotsRoutes from './routes/lots';
-import serialsRoutes from './routes/serials';
+import payrollRoutes from './routes/payroll';
+import attachmentsRoutes from './routes/attachments';
 import { logger, requestLogger } from './utils/logger';
 
 dotenv.config();
@@ -84,6 +79,9 @@ const authLimiter = rateLimit({
 app.use(limiter);
 
 // Middleware
+// Attachments carry base64 file payloads; give that path a larger JSON limit.
+// (express.json below no-ops once the body is already parsed.)
+app.use('/api/attachments', express.json({ limit: '15mb' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -93,7 +91,6 @@ app.use(requestLogger);
 // Routes API
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/produits', produitsRoutes);
-app.use('/api/produits/import', produitsImportRoutes);
 app.use('/api/tiers', tiersRoutes);
 app.use('/api/clients', clientsRoutes);
 app.use('/api/comptes', comptesClientsRoutes);
@@ -107,7 +104,6 @@ app.use('/api/retours', retoursRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/caisse', caisseRoutes);
 app.use('/api/pos', posRoutes);
-app.use('/api/reports/cash-variance', cashVarianceRoutes);
 // ERP Modules
 app.use('/api/stock-locations', stockLocationsRoutes);
 app.use('/api/stock-transfers', stockTransfersRoutes);
@@ -128,13 +124,10 @@ app.use('/api/admin/users', adminUsersRoutes);
 app.use('/api/company-settings', companySettingsRoutes);
 app.use('/api/admin/audit', auditRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/export', batchExportRoutes);
 app.use('/api/crm', crmRoutes);
-app.use('/api/import', importExportRoutes);
 app.use('/api/comptabilite', comptabiliteRoutes);
-app.use('/api/camions', camionsRoutes);
-app.use('/api/lots', lotsRoutes);
-app.use('/api/serials', serialsRoutes);
+app.use('/api/payroll', payrollRoutes);
+app.use('/api/attachments', attachmentsRoutes);
 
 // Health check (no rate limit)
 app.get('/api/health', (_req, res) => {

@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './lib/AuthContext';
 import { Toaster } from 'sonner';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ConfirmProvider } from './components/ui/confirm-dialog';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import { useERPShortcuts } from './hooks/useKeyboardShortcuts';
@@ -18,6 +19,7 @@ const FactureDetail = lazy(() => import('./pages/FactureDetail'));
 const NouvelleFacture = lazy(() => import('./pages/NouvelleFacture'));
 const StockValuation = lazy(() => import('./pages/StockValuation'));
 const Commandes = lazy(() => import('./pages/Commandes'));
+const Reapprovisionnement = lazy(() => import('./pages/Reapprovisionnement'));
 const CommandeDetail = lazy(() => import('./pages/CommandeDetail'));
 const Login = lazy(() => import('./pages/Login'));
 const Receptions = lazy(() => import('./pages/Receptions'));
@@ -33,8 +35,8 @@ const DemandeForm = lazy(() => import('./pages/DemandeForm'));
 const FacturesFournisseur = lazy(() => import('./pages/FacturesFournisseur'));
 const GeneralLedger = lazy(() => import('./pages/GeneralLedger'));
 const Employes = lazy(() => import('./pages/Employes'));
+const Payroll = lazy(() => import('./pages/Payroll'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
-const PermissionsPage = lazy(() => import('./pages/PermissionsPage'));
 // Phase 5 - New modules
 const Devis = lazy(() => import('./pages/Devis'));
 const NouveauDevis = lazy(() => import('./pages/NouveauDevis'));
@@ -52,6 +54,7 @@ const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 const TiersPage = lazy(() => import('./pages/Tiers'));
 const TiersDetail = lazy(() => import('./pages/TiersDetail'));
 const CompanySettings = lazy(() => import('./pages/CompanySettings'));
+const ParametresFinance = lazy(() => import('./pages/ParametresFinance'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
 const Comptabilite = lazy(() => import('./pages/Comptabilite'));
 const Tresorerie = lazy(() => import('./pages/Tresorerie'));
@@ -74,8 +77,8 @@ function AppWithShortcuts() {
     <Suspense fallback={<LoadingScreen />}>
       {/* Shortcuts help modal */}
       {helpOpen && (
-        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4" onClick={() => setHelpOpen(false)}>
-          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4 animate-in fade-in-0 duration-200" onClick={() => setHelpOpen(false)}>
+          <div className="bg-card text-card-foreground border rounded-lg shadow-xl max-w-lg w-full p-6 animate-in fade-in-0 zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-bold mb-4">Raccourcis clavier</h2>
             <div className="space-y-2">
               {shortcuts.map((s, i) => (
@@ -137,6 +140,11 @@ function AppWithShortcuts() {
         <Route path="/commandes" element={
           <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
             <Layout><Commandes /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/reapprovisionnement" element={
+          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
+            <Layout><Reapprovisionnement /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/commandes/:id" element={
@@ -297,19 +305,24 @@ function AppWithShortcuts() {
             <Layout><Employes /></Layout>
           </ProtectedRoute>
         } />
+        <Route path="/paie" element={
+          <ProtectedRoute requiredRoles={['admin', 'manager']}>
+            <Layout><Payroll /></Layout>
+          </ProtectedRoute>
+        } />
         <Route path="/admin/users" element={
           <ProtectedRoute requiredRoles={['admin']}>
             <Layout><UserManagement /></Layout>
           </ProtectedRoute>
         } />
-        <Route path="/admin/permissions" element={
-          <ProtectedRoute requiredRoles={['admin']}>
-            <Layout><PermissionsPage /></Layout>
-          </ProtectedRoute>
-        } />
         <Route path="/settings" element={
           <ProtectedRoute requiredRoles={['admin', 'manager']}>
             <Layout><CompanySettings /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/admin/parametres-finance" element={
+          <ProtectedRoute requiredRoles={['admin']}>
+            <Layout><ParametresFinance /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/admin/audit" element={
@@ -335,10 +348,12 @@ function AppWithShortcuts() {
 export default function App() {
   return (
     <AuthProvider>
-      <Toaster position="top-right" richColors closeButton />
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <AppWithShortcuts />
-      </BrowserRouter>
+      <ConfirmProvider>
+        <Toaster position="top-right" richColors closeButton />
+        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <AppWithShortcuts />
+        </BrowserRouter>
+      </ConfirmProvider>
     </AuthProvider>
   );
 }
