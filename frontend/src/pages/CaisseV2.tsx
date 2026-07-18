@@ -194,6 +194,18 @@ export default function CaisseV2() {
   const [diversMontant, setDiversMontant] = useState('');
   const [diversLibelle, setDiversLibelle] = useState('');
   const [diversMethode, setDiversMethode] = useState('espece');
+  // Clé d'idempotence stable pour la durée de vie du dialogue : un resubmit
+  // après erreur réseau réutilise la même clé (pas de doublon côté serveur).
+  const diversKeyRef = useRef('');
+
+  const resetDiversForm = () => {
+    setDiversType('encaissement');
+    setDiversCategorie('apport');
+    setDiversMethode('espece');
+    setDiversMontant('');
+    setDiversLibelle('');
+    diversKeyRef.current = '';
+  };
 
   // Read-only views of the consolidated close-dialog state (writes go through dispatchClose)
   const { fondFinal, closurePreview, commentaireCloture } = closeState;
@@ -319,6 +331,14 @@ export default function CaisseV2() {
     return () => clearTimeout(timer);
   }, [closeState.fondFinal, closeDialog, session?.id]);
 
+  // Fermeture du dialogue de clôture : invalide les previews en vol et
+  // réinitialise l'état pour que la prochaine ouverture reparte à zéro.
+  const closeCloseDialog = () => {
+    previewReqId.current++;
+    setCloseDialog(false);
+    dispatchClose({ type: 'reset' });
+  };
+
   const handleCloseSession = async () => {
     if (!session?.id || !closeState.fondFinal) {
       toast.error('Veuillez saisir le fond final réel');
@@ -341,11 +361,10 @@ export default function CaisseV2() {
       });
 
       toast.success(response.data?.message || 'Caisse clôturée avec succès');
-      setCloseDialog(false);
-      dispatchClose({ type: 'reset' });
+      closeCloseDialog();
       loadSession(selectedMagasin!);
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Erreur lors de la clôture');
+      toast.error(error.response?.data?.error || error.message || 'Erreur lors de la clôture');
     } finally {
       setClosing(false);
     }
@@ -364,18 +383,21 @@ export default function CaisseV2() {
     if (diversSubmitting) return;
     setDiversSubmitting(true);
     try {
+      // Clé générée à la première tentative, réutilisée en cas de réessai
+      if (!diversKeyRef.current) {
+        diversKeyRef.current = `divers-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      }
       await api.post(`/caisse/${session.id}/mouvement-divers`, {
         type: diversType,
         categorie: diversCategorie,
         montant: parseFloat(diversMontant),
         methode_paiement: diversMethode,
         libelle: diversLibelle.trim(),
-        idempotency_key: `divers-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        idempotency_key: diversKeyRef.current,
       });
       toast.success('Mouvement enregistré');
       setDiversDialog(false);
-      setDiversMontant('');
-      setDiversLibelle('');
+      resetDiversForm();
       loadSession(selectedMagasin!);
     } catch (e: any) {
       toast.error(e.response?.data?.error || e.message || 'Erreur réseau');
@@ -565,9 +587,9 @@ export default function CaisseV2() {
           </div>
 
           {/* Actions */}
-          <div className="flex justify-between items-center mb-4">
+          <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
             <h2 className="text-lg font-semibold">Mouvements de la session</h2>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button 
                 variant="outline" 
                 onClick={() => setMouvementsDialog(true)}
@@ -663,7 +685,16 @@ export default function CaisseV2() {
       )}
 
       {/* Open Session Dialog */}
-      <Dialog open={openDialog} onOpenChange={setOpenDialog}>
+      <Dialog
+        open={openDialog}
+        onOpenChange={(o) => {
+          setOpenDialog(o);
+          if (!o) {
+            setFondInitial('');
+            setCommentaireOuverture('');
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Ouvrir la caisse</DialogTitle>
@@ -690,12 +721,17 @@ export default function CaisseV2() {
                 value={commentaireOuverture}
                 onChange={(e) => setCommentaireOuverture(e.target.value)}
                 placeholder="Ex: Fond de caisse standard"
+                maxLength={2000}
                 className="mt-1"
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpenDialog(false)} disabled={opening}>
+            <Button
+              variant="outline"
+              onClick={() => { setOpenDialog(false); setFondInitial(''); setCommentaireOuverture(''); }}
+              disabled={opening}
+            >
               Annuler
             </Button>
             <Button onClick={handleOpenSession} disabled={!fondInitial || opening}>
@@ -713,7 +749,16 @@ export default function CaisseV2() {
       </Dialog>
 
       {/* Close Session Dialog */}
-      <Dialog open={closeDialog} onOpenChange={setCloseDialog}>
+      <Dialog
+        open={closeDialog}
+        onOpenChange={(o) => {
+          if (!o) {
+            closeCloseDialog();
+          } else {
+            setCloseDialog(true);
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Clôturer la caisse</DialogTitle>
@@ -800,21 +845,22 @@ export default function CaisseV2() {
               </div>
             )}
 
-            {/* Comment */}
+            {/* Comment — obligatoire seulement quand un écart non nul est calculé */}
             <div>
               <Label>
-                Commentaire {closurePreview?.ecart !== 0 && closurePreview?.ecart !== null && <span className="text-danger-500">*</span>}
+                Commentaire {closurePreview != null && closurePreview.ecart !== null && closurePreview.ecart !== 0 && <span className="text-danger-500">*</span>}
               </Label>
               <Input
                 value={commentaireCloture}
                 onChange={(e) => dispatchClose({ type: 'setCommentaire', value: e.target.value })}
-                placeholder={closurePreview?.ecart !== 0 ? "Expliquer l'écart..." : "Commentaire optionnel..."}
+                placeholder={closurePreview != null && closurePreview.ecart !== null && closurePreview.ecart !== 0 ? "Expliquer l'écart..." : "Commentaire optionnel..."}
+                maxLength={2000}
                 className="mt-1"
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCloseDialog(false)} disabled={closing}>
+            <Button variant="outline" onClick={closeCloseDialog} disabled={closing}>
               Annuler
             </Button>
             <Button
@@ -822,6 +868,7 @@ export default function CaisseV2() {
               onClick={handleCloseSession}
               disabled={
                 closing
+                || closeState.loading
                 || !fondFinal
                 || !closurePreview?.can_close
                 || (closurePreview?.ecart !== 0 && closurePreview?.ecart !== null && !commentaireCloture.trim())
@@ -841,7 +888,13 @@ export default function CaisseV2() {
       </Dialog>
 
       {/* Mouvement divers Dialog */}
-      <Dialog open={diversDialog} onOpenChange={setDiversDialog}>
+      <Dialog
+        open={diversDialog}
+        onOpenChange={(o) => {
+          setDiversDialog(o);
+          if (!o) resetDiversForm();
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Mouvement divers</DialogTitle>
@@ -927,11 +980,12 @@ export default function CaisseV2() {
                 value={diversLibelle}
                 onChange={(e) => setDiversLibelle(e.target.value)}
                 placeholder="Ex: Apport gérant, retrait dépôt banque..."
+                maxLength={500}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDiversDialog(false)} disabled={diversSubmitting}>Annuler</Button>
+            <Button variant="outline" onClick={() => { setDiversDialog(false); resetDiversForm(); }} disabled={diversSubmitting}>Annuler</Button>
             <Button onClick={handleDiversSubmit} disabled={diversSubmitting}>
               {diversSubmitting ? (
                 <>

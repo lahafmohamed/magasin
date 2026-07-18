@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { caisseService } from '../services/api';
+import { useEffect, useRef, useState } from 'react';
+import { caisseService } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,9 +7,12 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertTriangle, CheckCircle2, RefreshCw, Filter } from 'lucide-react';
-import { formatFCFA } from '@/utils/format';
+import { AlertTriangle, CheckCircle2, RefreshCw, Filter, ShieldCheck } from 'lucide-react';
+import { formatFCFA, formatDateShort } from '@/utils/format';
 import { toast } from 'sonner';
+import { PageHeader } from '@/components/ui/page-header';
+import { QueryState } from '@/components/ui/query-state';
+import { TableSkeleton } from '@/components/ui/skeleton';
 
 const SOURCE_KINDS = [
   { value: '', label: 'Tous' },
@@ -18,52 +21,98 @@ const SOURCE_KINDS = [
   { value: 'acompte_fournisseur', label: 'Acomptes fournisseur' },
 ];
 
+const KIND_LABELS: Record<string, string> = {
+  paiement: 'Paiement',
+  acompte_client: 'Acompte client',
+  acompte_fournisseur: 'Acompte fournisseur',
+};
+
 const KIND_BADGE: Record<string, string> = {
-  paiement: 'bg-success-50 dark:bg-success-500/10 text-success-700 dark:text-success-300',
+  // Palette catégorielle (pas de vert : réservé aux statuts/succès)
+  paiement: 'bg-teal-50 dark:bg-teal-500/10 text-teal-700 dark:text-teal-300',
   acompte_client: 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300',
   acompte_fournisseur: 'bg-warning-50 dark:bg-warning-500/10 text-warning-700 dark:text-warning-300',
 };
 
+interface AuditItem {
+  source_kind: string;
+  source_id: number;
+  source_date: string | null;
+  tiers_id: number | null;
+  methode_paiement: string;
+  montant: number | string;
+  session_caisse_id: number | null;
+  mouvement_caisse_id: number | null;
+  is_orphan: boolean;
+}
+
+interface AuditSummary {
+  source_kind: string;
+  total: number | string;
+  total_montant: number | string;
+  orphans: number | string;
+}
+
 export default function CaisseAudit() {
   const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any[]>([]);
+  const [error, setError] = useState<unknown>(null);
+  const [items, setItems] = useState<AuditItem[]>([]);
+  const [summary, setSummary] = useState<AuditSummary[]>([]);
   const [orphansTotal, setOrphansTotal] = useState(0);
   const [orphansOnly, setOrphansOnly] = useState(false);
   const [sourceKind, setSourceKind] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  // Monotonic request id: les changements rapides de filtres ne laissent
+  // jamais une réponse obsolète écraser la plus récente.
+  const reqIdRef = useRef(0);
 
   const load = async () => {
+    const reqId = ++reqIdRef.current;
     setLoading(true);
+    setError(null);
     try {
-      const r = await caisseService.getAudit({
-        orphans_only: orphansOnly,
+      const body = await caisseService.getAudit({
+        limit: 500,
+        orphans_only: orphansOnly || undefined,
         source_kind: sourceKind || undefined,
         date_from: dateFrom || undefined,
         date_to: dateTo || undefined,
-        limit: 500,
       });
-      setItems(r.data || []);
-      setSummary(r.summary || []);
-      setOrphansTotal(r.orphans_total || 0);
+      if (reqId !== reqIdRef.current) return; // réponse obsolète
+      setItems(body.data as AuditItem[]);
+      setSummary(body.summary as AuditSummary[]);
+      setOrphansTotal(body.orphans_total);
     } catch (err: any) {
+      if (reqId !== reqIdRef.current) return; // réponse obsolète
+      if (err?.response?.status === 401) {
+        // Session expirée — même comportement que l'intercepteur partagé
+        localStorage.removeItem('auth_user');
+        window.location.href = '/login';
+        return;
+      }
+      setError(err);
       toast.error(err?.response?.data?.error || 'Erreur audit');
     } finally {
-      setLoading(false);
+      if (reqId === reqIdRef.current) setLoading(false);
     }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [orphansOnly, sourceKind, dateFrom, dateTo]);
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-7xl space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Audit Caisse</h1>
-        <Button onClick={load} variant="outline" size="sm" className="gap-1">
-          <RefreshCw className="h-4 w-4" /> Actualiser
-        </Button>
-      </div>
+      <PageHeader
+        title="Audit caisse"
+        icon={ShieldCheck}
+        description="Rapprochement des encaissements espèces avec les mouvements de caisse"
+        actions={
+          <Button onClick={load} variant="outline" size="sm" className="gap-1" disabled={loading}>
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Actualiser
+          </Button>
+        }
+      />
 
       {/* KPIs */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -80,13 +129,13 @@ export default function CaisseAudit() {
             </div>
           </CardContent>
         </Card>
-        {summary.map((s: any) => (
+        {summary.map((s) => (
           <Card key={s.source_kind}>
             <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground capitalize">{s.source_kind.replace('_', ' ')}</p>
+              <p className="text-xs text-muted-foreground">{KIND_LABELS[s.source_kind] || s.source_kind}</p>
               <p className="text-xl font-bold">{s.total}</p>
               <p className="text-xs text-muted-foreground">{formatFCFA(s.total_montant)}</p>
-              {parseInt(s.orphans) > 0 && (
+              {Number(s.orphans) > 0 && (
                 <Badge variant="destructive" className="text-xs mt-1">{s.orphans} orphelins</Badge>
               )}
             </CardContent>
@@ -134,14 +183,21 @@ export default function CaisseAudit() {
       {/* Items */}
       <Card>
         <CardHeader className="py-3 px-4">
-          <CardTitle className="text-sm">Mouvements ({items.length})</CardTitle>
+          <CardTitle className="text-sm">
+            Mouvements ({items.length}{items.length >= 500 ? ' — limité à 500' : ''})
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {loading ? (
-            <div className="p-8 text-center text-muted-foreground text-sm">Chargement...</div>
-          ) : items.length === 0 ? (
-            <div className="p-8 text-center text-muted-foreground text-sm">Aucun mouvement.</div>
-          ) : (
+          <QueryState
+            loading={loading}
+            error={error}
+            isEmpty={items.length === 0}
+            onRetry={load}
+            skeleton={<TableSkeleton rows={8} columns={9} />}
+            emptyIcon={ShieldCheck}
+            emptyTitle="Aucun mouvement"
+            emptyDescription="Aucun mouvement ne correspond aux filtres sélectionnés."
+          >
             <Table>
               <TableHeader>
                 <TableRow>
@@ -157,12 +213,12 @@ export default function CaisseAudit() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.map((it: any) => (
+                {items.map((it) => (
                   <TableRow key={`${it.source_kind}-${it.source_id}`} className={it.is_orphan ? 'bg-danger-50 dark:bg-danger-500/10' : ''}>
-                    <TableCell className="text-xs whitespace-nowrap">{(it.source_date || '').substring(0, 10)}</TableCell>
+                    <TableCell className="text-xs whitespace-nowrap">{it.source_date ? formatDateShort(it.source_date) : '—'}</TableCell>
                     <TableCell>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${KIND_BADGE[it.source_kind] || ''}`}>
-                        {it.source_kind}
+                      <span className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${KIND_BADGE[it.source_kind] || ''}`}>
+                        {KIND_LABELS[it.source_kind] || it.source_kind}
                       </span>
                     </TableCell>
                     <TableCell className="text-xs font-mono">#{it.source_id}</TableCell>
@@ -180,7 +236,7 @@ export default function CaisseAudit() {
                 ))}
               </TableBody>
             </Table>
-          )}
+          </QueryState>
         </CardContent>
       </Card>
     </div>

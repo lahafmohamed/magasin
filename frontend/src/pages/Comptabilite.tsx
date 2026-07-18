@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { PageHeader } from '@/components/ui/page-header';
 
 type Tab = 'journal' | 'grand-livre' | 'balance' | 'plan';
 
@@ -120,13 +121,7 @@ export default function ComptabilitePage() {
   return (
     <div className="p-3 sm:p-6 w-full max-w-full">
       <div className="mx-auto space-y-4">
-        <div className="flex items-center gap-3 mb-4">
-          <BookOpen className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Comptabilité</h1>
-            <p className="text-muted-foreground mt-1">OHADA / SYSCOHADA</p>
-          </div>
-        </div>
+        <PageHeader title="Comptabilité" icon={BookOpen} description="OHADA / SYSCOHADA" className="mb-4" />
 
         <Tabs value={tab} onValueChange={v => setTab(v as Tab)} className="space-y-4">
         {/* Tabs */}
@@ -167,9 +162,11 @@ export default function ComptabilitePage() {
               <SelectContent>
                 <SelectItem value="__all">Tous les journaux</SelectItem>
                 <SelectItem value="VE">VE — Ventes</SelectItem>
-                <SelectItem value="BQ">BQ — Banque</SelectItem>
+                <SelectItem value="AC">AC — Achats</SelectItem>
+                <SelectItem value="TRESORERIE">TRESORERIE — Trésorerie / Caisse</SelectItem>
                 <SelectItem value="OD">OD — Opérations diverses</SelectItem>
-                <SelectItem value="VT">VT — Ventilation</SelectItem>
+                <SelectItem value="VENTES">VENTES — Ventes (saisies manuelles)</SelectItem>
+                <SelectItem value="ACHATS">ACHATS — Achats (saisies manuelles)</SelectItem>
               </SelectContent>
             </Select>
           )}
@@ -242,7 +239,18 @@ export default function ComptabilitePage() {
                     onChange={e => setCompteSearch(e.target.value)}
                     className="max-w-xs"
                   />
-                  <Button onClick={() => { setCompteSelected(compteSearch); loadGrandLivre(); }} variant="outline" className="gap-2">
+                  <Button
+                    onClick={() => {
+                      const compte = compteSearch.trim();
+                      if (!compte) return;
+                      // Le changement de compte déclenche le chargement via l'effet ;
+                      // un appel direct ici lirait l'ancien compte (état pas encore à jour).
+                      if (compte === compteSelected) loadGrandLivre();
+                      else setCompteSelected(compte);
+                    }}
+                    variant="outline"
+                    className="gap-2"
+                  >
                     <Search className="h-4 w-4" /> Voir
                   </Button>
                 </div>
@@ -337,7 +345,7 @@ export default function ComptabilitePage() {
                             <TableCell><Badge variant="outline" className="text-[10px]">Cl. {r.classe}</Badge></TableCell>
                             <TableCell className="text-right font-mono text-xs">{formatCurrency(r.total_debit)}</TableCell>
                             <TableCell className="text-right font-mono text-xs">{formatCurrency(r.total_credit)}</TableCell>
-                            <TableCell className={`text-right font-mono text-xs font-semibold ${className}`} title={solde >= 0 ? 'Solde débiteur' : 'Solde créditeur'}><span className="mr-1 not-italic font-bold">{solde >= 0 ? 'D' : 'C'}</span>{formatCurrency(solde)}</TableCell>
+                            <TableCell className={`text-right font-mono text-xs font-semibold ${className}`} title={solde >= 0 ? 'Solde débiteur' : 'Solde créditeur'}><span className="mr-1 not-italic font-bold">{solde >= 0 ? 'D' : 'C'}</span>{formatCurrency(Math.abs(solde))}</TableCell>
                           </TableRow>
                         );
                       })}

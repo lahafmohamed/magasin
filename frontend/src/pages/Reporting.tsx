@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import { api } from '../services/authService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,7 +6,9 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { toast } from 'sonner';
-import { formatFCFA } from '../utils/format';
+import { formatCurrency } from '../utils/format';
+import { PageHeader } from '@/components/ui/page-header';
+import { QueryState } from '@/components/ui/query-state';
 import {
   CHART_COLORS as COLORS,
   CHART_PRIMARY,
@@ -28,6 +30,9 @@ export default function Reporting() {
   const [receivables, setReceivables] = useState<any[]>([]);
   const [marginsReport, setMarginsReport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+  /** Identifiant de requête pour ignorer les réponses obsolètes (changements rapides de dates). */
+  const reqIdRef = useRef(0);
 
   const today = new Date();
   const [dateDebut, setDateDebut] = useState(new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]);
@@ -38,7 +43,9 @@ export default function Reporting() {
   }, [dateDebut, dateFin]);
 
   const fetchAllData = async () => {
+    const reqId = ++reqIdRef.current;
     setLoading(true);
+    setError(null);
     try {
       const [kpisRes, pnlRes, catRes, prodRes, recvRes, marginsRes] = await Promise.all([
         api.get('/reports/dashboard'),
@@ -49,35 +56,43 @@ export default function Reporting() {
         api.get(`/reports/margins?date_debut=${dateDebut}&date_fin=${dateFin}`),
       ]);
 
+      if (reqId !== reqIdRef.current) return; // réponse obsolète (dates modifiées entre-temps)
       setKpis(kpisRes.data.data);
       setPnl(pnlRes.data.data);
       setSalesByCategory(catRes.data.data);
       setTopProducts(prodRes.data.data);
       setReceivables(recvRes.data.data);
       setMarginsReport(marginsRes.data.data);
-    } catch {
-      toast.error('Erreur chargement données');
+    } catch (e) {
+      if (reqId !== reqIdRef.current) return;
+      setError(e);
+      toast.error('Erreur lors du chargement des rapports');
     } finally {
-      setLoading(false);
+      if (reqId === reqIdRef.current) setLoading(false);
     }
   };
 
-  if (loading) {
-    return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
-  }
-
   return (
     <div className="container mx-auto p-6">
-      {/* Title & Date range */}
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Rapports et analyses</h1>
-        <div className="flex items-center gap-2">
-          <Input type="date" className="h-8 w-auto" value={dateDebut} onChange={(e) => setDateDebut(e.target.value)} />
-          <span className="text-muted-foreground">→</span>
-          <Input type="date" className="h-8 w-auto" value={dateFin} onChange={(e) => setDateFin(e.target.value)} />
-        </div>
-      </div>
+      {/* Title & Date range — restent affichés pendant le chargement / en cas d'erreur */}
+      <PageHeader
+        title="Rapports et analyses"
+        className="mb-6"
+        actions={
+          <div className="flex items-center gap-2">
+            <Input type="date" className="h-8 w-auto" value={dateDebut} onChange={(e) => setDateDebut(e.target.value)} />
+            <span className="text-muted-foreground">→</span>
+            <Input type="date" className="h-8 w-auto" value={dateFin} onChange={(e) => setDateFin(e.target.value)} />
+          </div>
+        }
+      />
 
+      <QueryState
+        loading={loading}
+        error={error}
+        onRetry={fetchAllData}
+        skeleton={<div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}
+      >
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'general' | 'margins')}>
       <TabsList className="mb-6">
         <TabsTrigger value="general">Vue Générale</TabsTrigger>
@@ -89,7 +104,7 @@ export default function Reporting() {
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Chiffre d'affaires (mois)</CardTitle></CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold num">{formatFCFA(kpis?.revenue_mois?.total || 0)}</div>
+            <div className="text-2xl font-semibold num">{formatCurrency(kpis?.revenue_mois?.total || 0)}</div>
             <p className="text-xs text-muted-foreground">{kpis?.revenue_mois?.count || 0} factures</p>
           </CardContent>
         </Card>
@@ -99,7 +114,7 @@ export default function Reporting() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold num text-success-700">
-              {formatFCFA(kpis?.marge_mois?.marge_brute || 0)}
+              {formatCurrency(kpis?.marge_mois?.marge_brute || 0)}
             </div>
             <p className="text-xs text-muted-foreground text-success-800">
               Taux: {kpis?.marge_mois?.marge_pourcentage || 0}%
@@ -109,14 +124,14 @@ export default function Reporting() {
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Créances clients</CardTitle></CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold num">{formatFCFA(kpis?.creances?.total || 0)}</div>
+            <div className="text-2xl font-semibold num">{formatCurrency(kpis?.creances?.total || 0)}</div>
             <p className="text-xs text-muted-foreground">{kpis?.creances?.count || 0} factures impayées</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Valeur du stock</CardTitle></CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold num">{formatFCFA(kpis?.valeur_stock?.valeur || 0)}</div>
+            <div className="text-2xl font-semibold num">{formatCurrency(kpis?.valeur_stock?.valeur || 0)}</div>
           </CardContent>
         </Card>
         <Card>
@@ -138,15 +153,15 @@ export default function Reporting() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <p className="text-sm text-muted-foreground">Chiffre d'affaires</p>
-                    <p className="text-xl font-semibold text-success-700 num">+{formatFCFA(pnl.chiffre_affaires)}</p>
+                    <p className="text-xl font-semibold text-success-700 num">+{formatCurrency(pnl.chiffre_affaires)}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Coût des ventes</p>
-                    <p className="text-xl font-semibold text-danger-700 num">−{formatFCFA(pnl.cout_ventes)}</p>
+                    <p className="text-xl font-semibold text-danger-700 num">−{formatCurrency(pnl.cout_ventes)}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Marge brute</p>
-                    <p className="text-xl font-semibold num">{formatFCFA(pnl.marge_brute)}</p>
+                    <p className="text-xl font-semibold num">{formatCurrency(pnl.marge_brute)}</p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Marge %</p>
@@ -173,7 +188,7 @@ export default function Reporting() {
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value: any) => formatFCFA(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
+                      <Tooltip formatter={(value: any) => formatCurrency(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
                       <Legend />
                     </PieChart>
                   </ResponsiveContainer>
@@ -192,7 +207,7 @@ export default function Reporting() {
                       <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
                       <XAxis dataKey="nom" tick={{ fontSize: 10, fill: CHART_AXIS }} />
                       <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} />
-                      <Tooltip formatter={(value: any) => formatFCFA(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
+                      <Tooltip formatter={(value: any) => formatCurrency(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
                       <Bar dataKey="marge" fill={CHART_POSITIVE} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -222,10 +237,10 @@ export default function Reporting() {
                       {receivables.map((client) => (
                         <tr key={client.client_id} className="hover:bg-muted/30">
                           <td className="px-3 py-2 font-medium">{client.nom} {client.prenom}</td>
-                          <td className="px-3 py-2 text-right font-semibold text-danger-700 num">{formatFCFA(client.total_du)}</td>
-                          <td className="px-3 py-2 text-right text-success-700 num">{formatFCFA(client.moins_30_jours)}</td>
-                          <td className="px-3 py-2 text-right text-warning-700 num">{formatFCFA(client.entre_30_60_jours)}</td>
-                          <td className="px-3 py-2 text-right text-danger-700 num">{formatFCFA(client.plus_60_jours)}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-danger-700 num">{formatCurrency(client.total_du)}</td>
+                          <td className="px-3 py-2 text-right text-success-700 num">{formatCurrency(client.moins_30_jours)}</td>
+                          <td className="px-3 py-2 text-right text-warning-700 num">{formatCurrency(client.entre_30_60_jours)}</td>
+                          <td className="px-3 py-2 text-right text-danger-700 num">{formatCurrency(client.plus_60_jours)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -250,7 +265,7 @@ export default function Reporting() {
                 <CardTitle>Évolution mensuelle des Marges</CardTitle>
               </CardHeader>
               <CardContent>
-                {marginsReport.monthly_trend.length > 0 ? (
+                {marginsReport.monthly_trend?.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <BarChart data={marginsReport.monthly_trend.map((m: any) => ({
                       mois: new Date(m.mois).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' }),
@@ -260,7 +275,7 @@ export default function Reporting() {
                       <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
                       <XAxis dataKey="mois" tick={{ fontSize: 11, fill: CHART_AXIS }} />
                       <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} />
-                      <Tooltip formatter={(value: any) => formatFCFA(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
+                      <Tooltip formatter={(value: any) => formatCurrency(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
                       <Legend />
                       <Bar dataKey="CA" fill={CHART_PRIMARY} name="Chiffre d'Affaires" />
                       <Bar dataKey="Marge" fill={CHART_POSITIVE} name="Marge Brute" />
@@ -277,7 +292,7 @@ export default function Reporting() {
                 <CardTitle>Taux de Marge par Catégorie</CardTitle>
               </CardHeader>
               <CardContent>
-                {marginsReport.top_categories.length > 0 ? (
+                {marginsReport.top_categories?.length > 0 ? (
                   <ResponsiveContainer width="100%" height={300}>
                     <BarChart
                       layout="vertical"
@@ -309,16 +324,16 @@ export default function Reporting() {
                 <CardTitle>Top Clients les plus Profitables</CardTitle>
               </CardHeader>
               <CardContent>
-                {marginsReport.top_tiers.length > 0 ? (
+                {marginsReport.top_tiers?.length > 0 ? (
                   <div className="space-y-4">
                     {marginsReport.top_tiers.slice(0, 5).map((t: any) => (
                       <div key={t.tiers_id} className="flex items-center justify-between border-b pb-2 last:border-b-0 last:pb-0">
                         <div>
                           <p className="font-semibold text-sm">{t.nom} {t.prenom || ''}</p>
-                          <p className="text-xs text-muted-foreground">CA: {formatFCFA(t.chiffre_affaires)}</p>
+                          <p className="text-xs text-muted-foreground">CA: {formatCurrency(t.chiffre_affaires)}</p>
                         </div>
                         <div className="text-right">
-                          <p className="font-semibold text-sm text-success-700">+{formatFCFA(t.marge_brute)}</p>
+                          <p className="font-semibold text-sm text-success-700">+{formatCurrency(t.marge_brute)}</p>
                           <p className="text-xs text-muted-foreground">Marge: {t.marge_pourcentage}%</p>
                         </div>
                       </div>
@@ -336,7 +351,7 @@ export default function Reporting() {
                 <CardTitle>Rentabilité par Produit</CardTitle>
               </CardHeader>
               <CardContent>
-                {marginsReport.top_products.length > 0 ? (
+                {marginsReport.top_products?.length > 0 ? (
                   <div className="overflow-x-auto rounded-md border">
                     <table className="w-full text-sm">
                       <thead className="bg-muted/50 text-left">
@@ -356,10 +371,10 @@ export default function Reporting() {
                               {p.nom}
                             </td>
                             <td className="px-3 py-2 text-right num">{p.unites_vendues}</td>
-                            <td className="px-3 py-2 text-right num">{formatFCFA(p.chiffre_affaires)}</td>
-                            <td className="px-3 py-2 text-right num">{formatFCFA(p.cout_ventes)}</td>
+                            <td className="px-3 py-2 text-right num">{formatCurrency(p.chiffre_affaires)}</td>
+                            <td className="px-3 py-2 text-right num">{formatCurrency(p.cout_ventes)}</td>
                             <td className="px-3 py-2 text-right text-success-700 font-medium num">
-                              {formatFCFA(p.marge_brute)}
+                              {formatCurrency(p.marge_brute)}
                             </td>
                             <td className="px-3 py-2 text-right num">{p.marge_pourcentage}%</td>
                           </tr>
@@ -377,6 +392,7 @@ export default function Reporting() {
         )}
       </TabsContent>
       </Tabs>
+      </QueryState>
     </div>
   );
 }

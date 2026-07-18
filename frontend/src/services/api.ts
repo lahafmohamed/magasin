@@ -1204,15 +1204,21 @@ export const caisseService = {
     date_to?: string;
     limit?: number;
   } = {}): Promise<{ data: any[]; summary: any[]; orphans_total: number }> => {
-    const q = new URLSearchParams();
-    if (params.orphans_only) q.set('orphans_only', 'true');
-    if (params.source_kind) q.set('source_kind', params.source_kind);
-    if (params.tiers_id) q.set('tiers_id', String(params.tiers_id));
-    if (params.date_from) q.set('date_from', params.date_from);
-    if (params.date_to) q.set('date_to', params.date_to);
-    if (params.limit) q.set('limit', String(params.limit));
-    const { data } = await api.get(`/caisse/audit?${q.toString()}`);
-    return data;
+    const q: Record<string, string> = {};
+    if (params.orphans_only) q.orphans_only = 'true';
+    if (params.source_kind) q.source_kind = params.source_kind;
+    if (params.tiers_id) q.tiers_id = String(params.tiers_id);
+    if (params.date_from) q.date_from = params.date_from;
+    if (params.date_to) q.date_to = params.date_to;
+    if (params.limit) q.limit = String(params.limit);
+    // Raw axios on purpose: the shared interceptor unwraps the envelope down to
+    // `data` and would drop `summary` / `orphans_total`.
+    const { data: body } = await axios.get('/api/caisse/audit', { params: q, withCredentials: true });
+    return {
+      data: Array.isArray(body?.data) ? body.data : [],
+      summary: Array.isArray(body?.summary) ? body.summary : [],
+      orphans_total: Number(body?.orphans_total) || 0,
+    };
   },
 };
 

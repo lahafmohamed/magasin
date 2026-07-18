@@ -8,6 +8,21 @@ function isPathActive(pathname: string, path: string) {
   return pathname === path || pathname.startsWith(path + '/');
 }
 
+/**
+ * Longest matching path wins: on /caisse/audit both /caisse (prefix) and
+ * /caisse/audit (exact) match — only the most specific item may be active,
+ * otherwise two entries light up at once.
+ */
+function bestMatchingPath(pathname: string, paths: string[]): string | null {
+  let best: string | null = null;
+  for (const p of paths) {
+    if (isPathActive(pathname, p) && (best === null || p.length > best.length)) {
+      best = p;
+    }
+  }
+  return best;
+}
+
 function SideItem({
   item,
   active,
@@ -52,12 +67,16 @@ function NavList({
 }) {
   const location = useLocation();
   const categories = useNavCategories();
+  const activePath = bestMatchingPath(location.pathname, [
+    DASHBOARD_ITEM.path,
+    ...categories.flatMap((cat) => cat.items.map((it) => it.path)),
+  ]);
 
   return (
     <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
       <SideItem
         item={DASHBOARD_ITEM}
-        active={isPathActive(location.pathname, '/')}
+        active={activePath === DASHBOARD_ITEM.path}
         collapsed={collapsed}
         onNavigate={onNavigate}
       />
@@ -74,7 +93,7 @@ function NavList({
             <SideItem
               key={it.path + it.label}
               item={it}
-              active={isPathActive(location.pathname, it.path)}
+              active={activePath === it.path}
               collapsed={collapsed}
               onNavigate={onNavigate}
             />

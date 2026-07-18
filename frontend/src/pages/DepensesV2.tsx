@@ -97,6 +97,12 @@ const METHOD_LABELS: Record<string, string> = {
   mobile_money: 'Mobile Money',
 };
 
+/** Date du jour en heure LOCALE (YYYY-MM-DD) — toISOString() renverrait la date UTC. */
+const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 export default function DepensesV2() {
   useAuth();
   const navigate = useNavigate();
@@ -128,7 +134,7 @@ export default function DepensesV2() {
     methode_paiement: 'espece',
     beneficiaire_libre: '',
     fournisseur_id: '',
-    date_depense: new Date().toISOString().split('T')[0],
+    date_depense: todayLocal(),
   });
 
   // Load magasins and categories on mount
@@ -191,7 +197,8 @@ export default function DepensesV2() {
       );
       const rows: Depense[] = Array.isArray(data) ? data : [];
       setDepenses(rows);
-      setTotalDepenses(rows.reduce((sum: number, d: Depense) => sum + d.montant, 0));
+      // Number() défensif : NUMERIC Postgres peut arriver en string selon l'endpoint
+      setTotalDepenses(rows.reduce((sum: number, d: Depense) => sum + Number(d.montant || 0), 0));
       const pagination = (data as { pagination?: { total: number; totalPages: number } })
         ?.pagination;
       setTotal(pagination?.total ?? rows.length);
@@ -210,7 +217,12 @@ export default function DepensesV2() {
       return;
     }
 
-    if (!formData.montant || !formData.categorie_id || !formData.description) {
+    const montantNum = parseFloat(formData.montant);
+    if (!formData.montant || Number.isNaN(montantNum) || montantNum <= 0) {
+      toast.error('Montant invalide — il doit être supérieur à 0');
+      return;
+    }
+    if (!formData.categorie_id || !formData.description.trim()) {
       toast.error('Veuillez remplir les champs obligatoires');
       return;
     }
@@ -238,20 +250,26 @@ export default function DepensesV2() {
     try {
       await api.post('/depenses', {
         magasin_id: selectedMagasin,
-        montant: parseFloat(formData.montant),
+        montant: montantNum,
         categorie_id: parseInt(formData.categorie_id),
         methode_paiement: formData.methode_paiement,
-        description: formData.description,
-        beneficiaire_libre: formData.beneficiaire_libre || undefined,
+        description: formData.description.trim(),
+        beneficiaire_libre: formData.beneficiaire_libre.trim() || undefined,
         date_depense: formData.date_depense
       });
 
       toast.success('Dépense créée avec succès');
       setOpenDialog(false);
       resetForm();
-      loadDepenses();
-      // Refresh session to update balance
-      loadSessionActive(selectedMagasin);
+      if (page !== 1) {
+        // La nouvelle dépense apparaît en tête de liste — revenir page 1
+        // (l'effet [page] recharge liste + session)
+        setPage(1);
+      } else {
+        loadDepenses();
+        // Refresh session to update balance
+        loadSessionActive(selectedMagasin);
+      }
     } catch (error: any) {
       const data = error.response?.data;
       if (error.response?.status === 422 && data?.code === 'CAISSE_FERMEE') {
@@ -283,9 +301,15 @@ export default function DepensesV2() {
     try {
       await api.delete(`/depenses/${id}`);
       toast.success('Dépense supprimée');
-      loadDepenses();
-      if (selectedMagasin) {
-        loadSessionActive(selectedMagasin);
+      if (depenses.length === 1 && page > 1) {
+        // Dernière ligne de la page supprimée — reculer d'une page
+        // (l'effet [page] recharge liste + session)
+        setPage(page - 1);
+      } else {
+        loadDepenses();
+        if (selectedMagasin) {
+          loadSessionActive(selectedMagasin);
+        }
       }
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Erreur lors de la suppression');
@@ -300,7 +324,7 @@ export default function DepensesV2() {
       methode_paiement: 'espece',
       beneficiaire_libre: '',
       fournisseur_id: '',
-      date_depense: new Date().toISOString().split('T')[0],
+      date_depense: todayLocal(),
     });
   };
 
@@ -505,6 +529,7 @@ export default function DepensesV2() {
                       value={formData.beneficiaire_libre}
                       onChange={(e) => setFormData({...formData, beneficiaire_libre: e.target.value})}
                       placeholder="Nom du bénéficiaire (optionnel)"
+                      maxLength={255}
                     />
                   </div>
 
@@ -514,6 +539,7 @@ export default function DepensesV2() {
                       value={formData.description}
                       onChange={(e) => setFormData({...formData, description: e.target.value})}
                       placeholder="Description de la dépense"
+                      maxLength={2000}
                     />
                   </div>
 
