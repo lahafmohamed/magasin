@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { tiersService } from '../services/TiersService';
-import { TiersAllocationService } from '../services/TiersAllocationService';
+import { ClientAllocationService } from '../services/ClientAllocationService';
 import { CompensationService } from '../services/CompensationService';
 import { caisseMagasinService } from '../services/CaisseMagasinService';
 import { pdfService } from '../services/PDFService';
@@ -473,7 +473,7 @@ export class TiersController {
   static async recomputeAllocation(req: Request, res: Response): Promise<void> {
     try {
       const tiersId = parseInt(req.params.id);
-      const result = await TiersAllocationService.recomputeClientAllocations(tiersId);
+      const result = await ClientAllocationService.recomputeClientAllocations(tiersId);
       res.json({ success: true, data: result });
     } catch (err: any) {
       console.error('TiersController:', err);

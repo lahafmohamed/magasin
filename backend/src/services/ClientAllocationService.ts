@@ -57,11 +57,15 @@ export class ClientAllocationService {
         [clientId]
       );
 
-      // 3a. Reset acomptes back to 'disponible' for this client (idempotent recompute)
+      // 3a. Reset allocation-consumed acomptes back to 'disponible' (idempotent recompute).
+      // Only rows with montant_restant > 0: an acompte fully consumed through
+      // acompte_applications already lives on as paiements rows (source =
+      // 'acompte_application') which are counted in the pool — resetting it too
+      // would double-count the same money.
       await client.query(
         `UPDATE acomptes_clients
          SET statut = 'disponible', facture_id_applique = NULL, date_utilisation = NULL
-         WHERE tiers_id = $1 AND statut = 'utilise'`,
+         WHERE tiers_id = $1 AND statut = 'utilise' AND montant_restant > 0`,
         [clientId]
       );
 
@@ -73,11 +77,16 @@ export class ClientAllocationService {
         );
       }
 
-      // 3c. Load available acomptes (now includes any that were just reset)
+      // 3c. Load available acomptes (now includes any that were just reset).
+      // Pool at montant_restant, NOT montant: the applied part of an acompte is
+      // already represented by its acompte_application paiements rows.
       const { rows: acomptes } = await client.query(
-        `SELECT id, montant, date_acompte
+        `SELECT id, montant_restant AS montant, date_acompte
          FROM acomptes_clients
-         WHERE tiers_id = $1 AND statut = 'disponible'
+         WHERE tiers_id = $1
+           AND statut IN ('disponible', 'partiellement_utilise')
+           AND deleted_at IS NULL
+           AND montant_restant > 0
          ORDER BY date_acompte ASC, id ASC`,
         [clientId]
       );
@@ -285,10 +294,14 @@ export class ClientAllocationService {
         [clientId]
       );
 
+      // Same pooling rule as the real recompute: unapplied remainder only
       const { rows: acomptes } = await client.query(
-        `SELECT id, montant, date_acompte
+        `SELECT id, montant_restant AS montant, date_acompte
          FROM acomptes_clients
-         WHERE tiers_id = $1 AND statut = 'disponible'
+         WHERE tiers_id = $1
+           AND statut IN ('disponible', 'partiellement_utilise')
+           AND deleted_at IS NULL
+           AND montant_restant > 0
          ORDER BY date_acompte ASC, id ASC`,
         [clientId]
       );
