@@ -1,12 +1,14 @@
 import pool from '../db/connection';
 
-export type DocumentType = 'facture' | 'devis' | 'bl' | 'avoir';
+export type DocumentType = 'facture' | 'devis' | 'bl' | 'avoir' | 'commande' | 'facture_fournisseur';
 
 const sequenceNames: Record<DocumentType, string> = {
   facture: 'facture_numero_seq',
   devis: 'devis_seq',
   bl: 'bl_seq',
   avoir: 'avoir_seq',
+  commande: 'commande_numero_seq',
+  facture_fournisseur: 'facture_fournisseur_numero_seq',
 };
 
 const prefixes: Record<DocumentType, string> = {
@@ -14,6 +16,8 @@ const prefixes: Record<DocumentType, string> = {
   devis: 'DEV',
   bl: 'BL',
   avoir: 'AVOIR',
+  commande: 'CMD',
+  facture_fournisseur: 'FF',
 };
 
 /**
