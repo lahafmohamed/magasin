@@ -41,6 +41,7 @@ import comptabiliteRoutes from './routes/comptabilite';
 import payrollRoutes from './routes/payroll';
 import attachmentsRoutes from './routes/attachments';
 import pool from './db/connection';
+import { startSessionCleanup } from './services/SessionCleanupService';
 import { logger, requestLogger } from './utils/logger';
 
 dotenv.config();
@@ -157,6 +158,9 @@ if (process.env.NODE_ENV !== 'test') {
     logger.info(`Backend démarré sur http://localhost:${PORT}`);
     logger.info(`API Health: http://localhost:${PORT}/api/health`);
   });
+
+  // Periodic prune of expired/revoked session rows (unbounded growth guard)
+  startSessionCleanup();
 
   // Graceful shutdown: stop accepting connections, drain in-flight requests,
   // then close the pg pool. Forced exit after 10s if something hangs.
