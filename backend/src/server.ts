@@ -40,6 +40,7 @@ import crmRoutes from './routes/crm';
 import comptabiliteRoutes from './routes/comptabilite';
 import payrollRoutes from './routes/payroll';
 import attachmentsRoutes from './routes/attachments';
+import pool from './db/connection';
 import { logger, requestLogger } from './utils/logger';
 
 dotenv.config();
@@ -129,9 +130,15 @@ app.use('/api/comptabilite', comptabiliteRoutes);
 app.use('/api/payroll', payrollRoutes);
 app.use('/api/attachments', attachmentsRoutes);
 
-// Health check (no rate limit)
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// Health check (no rate limit) — includes a DB ping so monitors detect a dead Postgres
+app.get('/api/health', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok', db: 'ok', timestamp: new Date().toISOString() });
+  } catch (err) {
+    logger.error({ err }, 'Health check: database unreachable');
+    res.status(503).json({ status: 'degraded', db: 'unreachable', timestamp: new Date().toISOString() });
+  }
 });
 
 // 404 handler
@@ -146,10 +153,35 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 });
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     logger.info(`Backend démarré sur http://localhost:${PORT}`);
     logger.info(`API Health: http://localhost:${PORT}/api/health`);
   });
+
+  // Graceful shutdown: stop accepting connections, drain in-flight requests,
+  // then close the pg pool. Forced exit after 10s if something hangs.
+  const shutdown = (signal: string) => {
+    logger.info(`${signal} reçu — arrêt en cours`);
+    const forceExit = setTimeout(() => {
+      logger.error('Arrêt forcé (délai de 10s dépassé)');
+      process.exit(1);
+    }, 10_000);
+    forceExit.unref();
+
+    server.close(async () => {
+      try {
+        await pool.end();
+        logger.info('Arrêt propre terminé');
+        process.exit(0);
+      } catch (err) {
+        logger.error({ err }, 'Erreur lors de la fermeture du pool');
+        process.exit(1);
+      }
+    });
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 export default app;

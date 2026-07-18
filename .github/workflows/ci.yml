@@ -8,7 +8,7 @@ on:
 
 jobs:
   backend:
-    name: Backend (typecheck · lint · test)
+    name: Backend (typecheck · lint · test · build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,6 +31,8 @@ jobs:
           # Tests that need a DB are skipped/guarded; a dummy secret satisfies boot checks.
           JWT_SECRET: ci-only-placeholder-secret-at-least-32-characters-long
           NODE_ENV: test
+      - name: Build
+        run: npm run build
 
   frontend:
     name: Frontend (typecheck · lint · test · build)

@@ -24,7 +24,7 @@ French-language **ERP** for a retail + wholesale electronics business ("magasin 
 - **TailwindCSS ^3.4** + **shadcn/ui** style (Radix primitives + `class-variance-authority` + `cn()`)
 - **react-router-dom ^6.21** (lazy routes) · **react-hook-form ^7.72** + **zod** · **axios ^1.6** · **recharts ^3.8** · **sonner** toasts · **@tanstack/react-virtual**
 - Tests: **vitest** + Testing Library + jsdom. `playwright` is a devDep but **unused** (no config/specs).
-- PWA assets exist (`public/sw.js`, `manifest.json`) but the service worker is **not registered** in `main.tsx` — dead PWA.
+- PWA assets (`public/sw.js`, `manifest.json`) are **live**: `index.html` links the manifest and `main.tsx` registers the service worker outside localhost — it ships in production.
 
 **Ops:** PM2 (`ecosystem.config.js`) manages the **backend only** (secrets read from env). Frontend is a static Vite build (no deploy step in repo). **CI:** GitHub Actions (`.github/workflows/ci.yml`).
 
@@ -37,7 +37,8 @@ backend/src/
   routes/        33 Express routers, mounted in server.ts under /api/*
   middleware/    auth (JWT + httpOnly cookie + DB session), permissions, validation (Zod), audit, patch-router (global ID-param validation)
   models/        Thin partial models (Paiement, UserModel)
-  db/            83 numbered .sql migrations (001..083) + schema.sql. Triggers/functions hold core logic
+  db/            88 numbered .sql migrations (001..088, `024` duplicated) + schema.sql. Triggers/functions hold core logic
+                 ⚠ backend/migrations/ (001_fifo, 002_fuzzy) is a SECOND dir migrate.mjs never runs — applied out-of-band (db:fuzzy-search / scripts/run_fifo_migration.js)
   validation/    Zod schemas (schemas.ts, phase3-schemas.ts)
 backend/migrate.mjs   ordered, tracked migration runner (schema_migrations table)
 backend/*.mjs         ~30 LEGACY ad-hoc setup/seed/fix scripts (superseded by migrate.mjs)
@@ -48,7 +49,7 @@ frontend/src/
   lib/            AuthContext, ThemeContext, utils
   services/       api.ts (~30 service objects), authService.ts
   validation/     schemas.ts (zod)
-  public/         sw.js + manifest.json (PWA assets, SW unregistered)
+  public/         sw.js + manifest.json (PWA assets, SW registered in prod)
 ```
 
 - **Request flow:** route → `authenticate` → `authorize`/`validateBody` → controller → service → SQL/transaction. Response envelope: `{ success, data, pagination }`.
@@ -77,7 +78,7 @@ node migrate.mjs --dry-run       # preview
 node migrate.mjs --baseline      # mark existing as applied without running
 node seed-data.mjs               # / seed-hitek-demo.mjs, seed-clients-excel.mjs, ...
 ```
-> `migrate.mjs` is now a real ordered, transactional runner with a `schema_migrations` tracking table. The legacy ad-hoc setup/fix `.mjs` scripts (`setup-db.mjs`, `run-migrations.mjs`, `fix-*.mjs`, ...) are **superseded** — prefer `migrate.mjs`. Highest migration is `083`.
+> `migrate.mjs` is now a real ordered, transactional runner with a `schema_migrations` tracking table. The legacy ad-hoc setup/fix `.mjs` scripts (`setup-db.mjs`, `run-migrations.mjs`, `fix-*.mjs`, ...) are **superseded** — prefer `migrate.mjs`. Highest migration is `088`.
 
 **Frontend** (`cd frontend`)
 ```bash
@@ -129,7 +130,7 @@ Legend: ✅ Complete · 🟡 Partial · 🟥 Stub/Dead · ➖ Missing. Full evid
 - **Transactions:** multi-step writes use `pool.connect()` + `BEGIN/COMMIT/ROLLBACK`; lock contended rows with `SELECT ... FOR UPDATE`. Follow `FactureService`/`StockTransferService`/`ReturnService.updateStatut`.
 - **Numbering:** use `NumberingService` (atomic `nextval()`); don't call `nextval()` inline.
 - **Money:** stored `NUMERIC(15,2)`; round to 2 decimals; prefer SQL-side aggregation over JS float accumulation.
-- **Migrations:** add a new `NNN_*.sql` (next number after `083`) and apply with `migrate.mjs`. Don't add new ad-hoc `.mjs` fix scripts.
+- **Migrations:** add a new `NNN_*.sql` (next number after `088`) and apply with `migrate.mjs`. Don't add new ad-hoc `.mjs` fix scripts.
 - **Periods:** financial writes should call `PeriodService.checkPeriodIsOpen` for a friendly app-layer error, but the hard guarantee is the DB trigger from `075` on `ecritures_comptables` — closed periods are rejected on **every** posting path (see Known Issues).
 - **Frontend:** functional components + hooks; data fetched per-page via `useState`/`useEffect` through `services/api.ts`; no global store (Context for auth/theme only). UI from `components/ui` (shadcn-style). Toasts via `sonner` (`toast.error('Erreur ...')`). Permission-gate UI with `usePermission`/`<RequirePermission>` — treat client gating as advisory; **enforce on the server**.
 - **Audit:** mutations log via `AuditService`/`audit` middleware (writes are fire-and-forget / non-fatal).
@@ -163,7 +164,7 @@ See [AUDIT.md](AUDIT.md) for the full prioritized roadmap. Top current items (po
 | Start (prod) | `npm start` / `pm2 start ecosystem.config.js` | serve `dist/` (not configured) |
 | Test | `npm test` | `npm test` |
 | Coverage | `npm run test:coverage` | `npm run test:coverage` |
-| Lint | `npm run lint` | — (no eslint) |
+| Lint | `npm run lint` | `npm run lint` |
 | Format | `npm run format` | — |
 | Migrate | `node migrate.mjs` (`--status`/`--dry-run`/`--baseline`) | — |
 | DB seed | `node seed-data.mjs` / `seed-hitek-demo.mjs` | — |

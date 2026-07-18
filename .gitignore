@@ -77,6 +77,9 @@ backend/uploads/
 tmp/
 temp/
 
+# Real business data (client/supplier spreadsheets) — never commit
+excel/
+
 # Secrets / keys
 *.pem
 *.key

@@ -17,7 +17,7 @@ magasinProgramme/
 │   │   └── server.ts     # Point d'entrée
 │   └── .env              # Configuration
 │
-└── frontend/             # React + TypeScript + Vite + Tailwind + daisyUI
+└── frontend/             # React + TypeScript + Vite + Tailwind + shadcn/ui (Radix)
     └── src/
         ├── pages/        # Dashboard, Inventaire, Clients, Factures, Login
         ├── components/   # Navbar, ProtectedRoute, GlobalSearch
@@ -32,7 +32,7 @@ magasinProgramme/
 - **JWT Authentication** - Auth avec rôles (admin, manager, caissier)
 - **Zod Validation** - Validation de toutes les entrées API
 - **Helmet** - Security headers HTTP
-- **Rate Limiting** - Protection contre les abus (100 req/15min global, 10 req/15min auth)
+- **Rate Limiting** - Protection contre les abus (500 req/15min global, 10 req/15min auth)
 - **CORS Restricted** - Limité au frontend origin uniquement
 
 ### Database Improvements
@@ -65,8 +65,8 @@ cd backend
 copy .env.example .env
 # Modifier .env avec vos identifiants PostgreSQL
 
-# Appliquer les migrations
-node setup-db-phase1.mjs
+# Appliquer les migrations (runner transactionnel avec suivi schema_migrations)
+node migrate.mjs
 ```
 
 ### 2. Backend
@@ -77,7 +77,7 @@ npm install
 npm run dev
 ```
 
-Le backend tourne sur **http://localhost:6000**
+Le backend tourne sur **http://localhost:6000** en dev (`PORT` dans `.env` ; prod : 6100 via PM2)
 
 ### 3. Frontend
 
@@ -113,6 +113,17 @@ cd frontend && npm run build           # génère dist/
 > location / { root /var/www/hitek/dist; try_files $uri /index.html; }
 > location /api { proxy_pass http://127.0.0.1:6100; proxy_set_header Host $host; }
 > ```
+
+### 5. Sauvegardes
+
+```bash
+# Dump quotidien avec rétention (voir l'en-tête du script pour le cron)
+cd backend
+set -a && . ./.env && set +a
+PGPASSWORD="$DB_PASSWORD" ./scripts/backup-db.sh /var/backups/hitek
+```
+
+Le health check `GET /api/health` inclut un ping DB (HTTP 503 si PostgreSQL est injoignable) — à brancher sur votre monitoring.
 
 ## 📋 Fonctionnalités
 
@@ -169,4 +180,4 @@ cd frontend && npm run build           # génère dist/
 ## 🎨 Stack
 
 **Backend:** Node.js, Express, TypeScript, PostgreSQL, jsonwebtoken, bcrypt, zod, helmet, express-rate-limit
-**Frontend:** React, TypeScript, Vite, TailwindCSS, daisyUI (thème "corporate"), react-hook-form, zod
+**Frontend:** React, TypeScript, Vite, TailwindCSS, shadcn/ui (Radix), react-hook-form, zod

@@ -17,7 +17,6 @@
     "migrate": "node migrate.mjs",
     "migrate:status": "node migrate.mjs --status",
     "migrate:baseline": "node migrate.mjs --baseline",
-    "db:setup": "node setup-db-phase1.mjs",
     "db:fix-accounting-triggers": "node fix-accounting-triggers.mjs",
     "db:fix-bl-conversion": "node fix-bl-conversion-function.mjs",
     "db:fix-invoice-remaining-due": "node fix-invoice-remaining-due.mjs",

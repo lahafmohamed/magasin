@@ -2,6 +2,7 @@
 
 **Repo:** `magasinProgramme` (Hitek / "magasin informatique" — French-language ERP for a retail + wholesale electronics business in West Africa, currency XOF)
 **Date:** 2026-06-21 (re-audit after the 2026-06-20 hardening pass, commits `2af4127`, `e58cde0`, `84ce1e5`)
+**Partial refresh 2026-07-18:** counts updated below; migrations now run to `088` (period lock `075`, valuation `076`, 3-way match `082`, payroll `080/081`, attachments `083`, RBAC-table drop `084`, caisse→GL `086/087`, acompte statut width `088`). A P1 security pass (CRM SET-clause injection, fail-closed sessions, error-message scrub, period checks on acomptes/paiements, caisse reversal on payment delete, Zod on money routes) landed on `fix/p0-data-integrity`.
 **Method:** Read-only audit. Every finding is backed by a file path / `file:line` reference verified by reading the code. Items that could not be confirmed from code are marked `[unverified]`.
 **Scope of this pass:** Audit + documentation only. No source, schema, migration, or config files were modified.
 
@@ -31,11 +32,11 @@
 | Process mgr | PM2 (`ecosystem.config.js`) | |
 | CI | GitHub Actions (`.github/workflows/ci.yml`) | |
 
-### Counts (verified via Glob, 2026-06-21)
+### Counts (re-verified 2026-07-18)
 
-- Backend: **30** controllers, **44** services, **40** route files, **74** numbered SQL migrations (highest `074`) + `schema.sql`.
+- Backend: **30** controllers, **43** services, **35** route files, **88** numbered SQL migrations (highest `088`, number `024` duplicated) + `schema.sql`.
 - Frontend: **45** pages, ~29 `components/ui` primitives.
-- Tests: **10** backend `*.test.ts`, **6** frontend `*.test.tsx`.
+- Tests: **11** backend `*.test.ts`, **6** frontend `*.test.tsx`.
 
 ### Folder structure
 

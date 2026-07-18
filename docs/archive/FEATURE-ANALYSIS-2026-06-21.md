@@ -1,5 +1,10 @@
 # FEATURE-ANALYSIS.md
 
+> ⚠️ **ARCHIVED 2026-07-18 — STALE SNAPSHOT (2026-06-21).** Several "missing/partial" items
+> listed here have since been implemented (3-way match `082`, returns restock-on-approval,
+> supplier-invoice `validateBody`, payroll `080/081`, ...). Do NOT use as a to-do list;
+> see CLAUDE.md and AUDIT.md for current state.
+
 > Net-new feature roadmap for the Hitek ERP (French retail + wholesale electronics, currency **XOF**).
 > Derived by reading the actual repository on branch `fix/p0-data-integrity` (2026-06-21). Not bug fixes / refactors — **new** capabilities only.
 >
