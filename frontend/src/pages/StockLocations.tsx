@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Check, Loader2, Plus, Package } from 'lucide-react';
+import { Check, Loader2, Plus, Package, Warehouse } from 'lucide-react';
 import { stockLocationService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { PageHeader } from '@/components/ui/page-header';
+import { QueryState } from '@/components/ui/query-state';
+import { TableSkeleton } from '@/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { fuzzyScore } from '../utils/format';
 
 interface StockLocation {
@@ -38,6 +42,7 @@ export default function StockLocations() {
   const [stockLevels, setStockLevels] = useState<StockLevel[]>([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -53,11 +58,13 @@ export default function StockLocations() {
   }, []);
 
   const fetchLocations = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const data = await stockLocationService.getAll();
       setLocations(data.data || data);
-    } catch {
-      toast.error('Erreur chargement locations');
+    } catch (err) {
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -107,19 +114,19 @@ export default function StockLocations() {
     }
   };
 
-  if (loading) {
-    return <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
-  }
-
   return (
     <div className="container mx-auto p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Locations de stock</h1>
-        <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          Nouvelle location
-        </Button>
-      </div>
+      <PageHeader
+        className="mb-6"
+        title="Locations de stock"
+        icon={Warehouse}
+        actions={
+          <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            Nouvelle location
+          </Button>
+        }
+      />
 
       <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
         <DialogContent className="sm:max-w-md">
@@ -163,90 +170,109 @@ export default function StockLocations() {
         </DialogContent>
       </Dialog>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="rounded-md border bg-card shadow-sm">
-          <div className="p-5">
-            <h2 className="text-lg font-semibold mb-3">Locations</h2>
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-left">
-                  <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">Code</th>
-                    <th className="px-3 py-2 font-medium">Nom</th>
-                    <th className="px-3 py-2 font-medium">Principal</th>
-                    <th className="px-3 py-2 font-medium">Statut</th>
-                    <th className="px-3 py-2 font-medium">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {locations.map((location) => (
-                    <tr key={location.id} className={`hover:bg-muted/30 ${selectedLocation?.id === location.id ? 'bg-primary/10' : ''}`}>
-                      <td className="px-3 py-2 font-medium num">{location.code}</td>
-                      <td className="px-3 py-2">{location.nom}</td>
-                      <td className="px-3 py-2">
-                        {location.est_principal && <Check className="h-4 w-4 text-primary" aria-label="Principal" />}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                          location.actif ? 'bg-success-100 text-success-700' : 'bg-muted text-muted-foreground'
-                        }`}>
-                          {location.actif ? 'Actif' : 'Inactif'}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <Button variant="outline" size="sm" onClick={() => handleSelectLocation(location)}>
-                          Voir stock
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        {selectedLocation && (
+      <QueryState
+        loading={loading}
+        error={error}
+        isEmpty={locations.length === 0}
+        onRetry={fetchLocations}
+        skeleton={<TableSkeleton rows={6} columns={5} />}
+        emptyIcon={Warehouse}
+        emptyTitle="Aucune location de stock"
+        emptyDescription="Créez une location pour suivre le stock par site."
+        emptyAction={
+          <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" /> Nouvelle location
+          </Button>
+        }
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="rounded-md border bg-card shadow-sm">
             <div className="p-5">
-              <h2 className="text-lg font-semibold mb-3">Stock — {selectedLocation.nom}</h2>
-              <div className="mb-4">
-                <Input
-                  placeholder="Rechercher un produit"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
+              <h2 className="text-lg font-semibold mb-3">Locations</h2>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Code</TableHead>
+                      <TableHead>Nom</TableHead>
+                      <TableHead>Principal</TableHead>
+                      <TableHead>Statut</TableHead>
+                      <TableHead>Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {locations.map((location) => (
+                      <TableRow key={location.id} className={selectedLocation?.id === location.id ? 'bg-primary/10' : ''}>
+                        <TableCell className="font-medium num">{location.code}</TableCell>
+                        <TableCell>{location.nom}</TableCell>
+                        <TableCell>
+                          {location.est_principal && <Check className="h-4 w-4 text-primary" aria-label="Principal" />}
+                        </TableCell>
+                        <TableCell>
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                            location.actif ? 'bg-success-100 text-success-700' : 'bg-muted text-muted-foreground'
+                          }`}>
+                            {location.actif ? 'Actif' : 'Inactif'}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="outline" size="sm" onClick={() => handleSelectLocation(location)}>
+                            Voir stock
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
-              {filteredStockLevels.length === 0 ? (
-                <EmptyState icon={Package} title="Aucun stock dans cette location" />
-              ) : (
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50 text-left">
-                      <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                        <th className="px-3 py-2 font-medium">Référence</th>
-                        <th className="px-3 py-2 font-medium">Produit</th>
-                        <th className="px-3 py-2 font-medium text-right">Quantité</th>
-                        <th className="px-3 py-2 font-medium text-right">Disponible</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {filteredStockLevels.map((level) => (
-                        <tr key={level.id} className="hover:bg-muted/30">
-                          <td className="px-3 py-2 num">{level.reference}</td>
-                          <td className="px-3 py-2">{level.produit_nom}</td>
-                          <td className="px-3 py-2 text-right num">{level.quantite}</td>
-                          <td className="px-3 py-2 text-right font-medium num">{level.quantite_disponible}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
           </div>
-        )}
-      </div>
+
+          {selectedLocation && (
+            <div className="rounded-md border bg-card shadow-sm">
+              <div className="p-5">
+                <h2 className="text-lg font-semibold mb-3">Stock — {selectedLocation.nom}</h2>
+                <div className="mb-4">
+                  <Input
+                    placeholder="Rechercher un produit"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                </div>
+                {filteredStockLevels.length === 0 ? (
+                  <EmptyState
+                    icon={Package}
+                    title={searchQuery.trim() ? 'Aucun produit trouvé' : 'Aucun stock dans cette location'}
+                  />
+                ) : (
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Référence</TableHead>
+                          <TableHead>Produit</TableHead>
+                          <TableHead className="text-right">Quantité</TableHead>
+                          <TableHead className="text-right">Disponible</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredStockLevels.map((level) => (
+                          <TableRow key={level.id}>
+                            <TableCell className="num">{level.reference}</TableCell>
+                            <TableCell>{level.produit_nom}</TableCell>
+                            <TableCell className="text-right num">{level.quantite}</TableCell>
+                            <TableCell className="text-right font-medium num">{level.quantite_disponible}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </QueryState>
     </div>
   );
 }

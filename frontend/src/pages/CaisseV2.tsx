@@ -33,8 +33,10 @@ import {
   Lock,
   ArrowLeftRight,
   History,
-  Eye
+  Eye,
+  Loader2
 } from 'lucide-react';
+import { ListSkeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { formatFCFA as formatXOF } from '../utils/format';
 import { api } from '../services/api';
@@ -174,6 +176,11 @@ export default function CaisseV2() {
   const [fondInitial, setFondInitial] = useState('');
   const [commentaireOuverture, setCommentaireOuverture] = useState('');
 
+  // In-flight submit guards (empêche les doubles soumissions)
+  const [opening, setOpening] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [diversSubmitting, setDiversSubmitting] = useState(false);
+
   // Cash-close dialog: consolidated interdependent state (fondFinal,
   // closurePreview, ecart, commentaireCloture, loading/error)
   const [closeState, dispatchClose] = useReducer(closeDialogReducer, initialCloseDialogState);
@@ -247,7 +254,9 @@ export default function CaisseV2() {
       toast.error('Veuillez saisir le fond de caisse initial');
       return;
     }
+    if (opening) return;
 
+    setOpening(true);
     try {
       await api.post('/caisse/ouvrir', {
         magasin_id: selectedMagasin,
@@ -268,6 +277,8 @@ export default function CaisseV2() {
       } else {
         toast.error(error.response?.data?.error || error.message || 'Erreur lors de l\'ouverture');
       }
+    } finally {
+      setOpening(false);
     }
   };
 
@@ -320,7 +331,9 @@ export default function CaisseV2() {
       toast.error(`Écart de ${formatXOF(ecartLive)} — commentaire obligatoire`);
       return;
     }
+    if (closing) return;
 
+    setClosing(true);
     try {
       const response = await api.post(`/caisse/cloturer/${session.id}`, {
         fond_final_compte: fondFinalNum,
@@ -333,6 +346,8 @@ export default function CaisseV2() {
       loadSession(selectedMagasin!);
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Erreur lors de la clôture');
+    } finally {
+      setClosing(false);
     }
   };
 
@@ -346,6 +361,8 @@ export default function CaisseV2() {
       toast.error('Motif obligatoire (≥3 caractères)');
       return;
     }
+    if (diversSubmitting) return;
+    setDiversSubmitting(true);
     try {
       await api.post(`/caisse/${session.id}/mouvement-divers`, {
         type: diversType,
@@ -362,6 +379,8 @@ export default function CaisseV2() {
       loadSession(selectedMagasin!);
     } catch (e: any) {
       toast.error(e.response?.data?.error || e.message || 'Erreur réseau');
+    } finally {
+      setDiversSubmitting(false);
     }
   };
 
@@ -443,12 +462,15 @@ export default function CaisseV2() {
         </Card>
       )}
 
+      {/* Chargement */}
+      {selectedMagasin && loading && <ListSkeleton items={4} />}
+
       {/* Caisse fermée */}
       {selectedMagasin && !session && !loading && (
         <Card className="p-8">
           <div className="flex flex-col items-center text-center">
             <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-muted flex items-center justify-center mb-4">
-              <Lock className="h-8 w-8 text-gray-500" />
+              <Lock className="h-8 w-8 text-gray-500 dark:text-gray-400" />
             </div>
             <h3 className="text-xl font-semibold mb-2">Caisse fermée</h3>
             <p className="text-muted-foreground mb-6 max-w-md">
@@ -463,7 +485,7 @@ export default function CaisseV2() {
       )}
 
       {/* Caisse ouverte */}
-      {selectedMagasin && session && (
+      {selectedMagasin && session && !loading && (
         <>
           {/* Status bar */}
           <Card className="p-4 mb-6 bg-success-50 dark:bg-success-500/10 border-success-200 dark:border-success-500/30">
@@ -568,9 +590,8 @@ export default function CaisseV2() {
                 Mouvement divers
               </Button>
               <Button
-                variant="default"
+                variant="warning"
                 onClick={openCloseDialog}
-                className="bg-warning-600 hover:bg-warning-700"
               >
                 <Lock className="h-4 w-4 mr-2" />
                 Clôturer la caisse
@@ -674,11 +695,18 @@ export default function CaisseV2() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpenDialog(false)}>
+            <Button variant="outline" onClick={() => setOpenDialog(false)} disabled={opening}>
               Annuler
             </Button>
-            <Button onClick={handleOpenSession} disabled={!fondInitial}>
-              Ouvrir la caisse
+            <Button onClick={handleOpenSession} disabled={!fondInitial || opening}>
+              {opening ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Ouverture…
+                </>
+              ) : (
+                'Ouvrir la caisse'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -786,19 +814,27 @@ export default function CaisseV2() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCloseDialog(false)}>
+            <Button variant="outline" onClick={() => setCloseDialog(false)} disabled={closing}>
               Annuler
             </Button>
             <Button
+              variant="warning"
               onClick={handleCloseSession}
               disabled={
-                !fondFinal
+                closing
+                || !fondFinal
                 || !closurePreview?.can_close
                 || (closurePreview?.ecart !== 0 && closurePreview?.ecart !== null && !commentaireCloture.trim())
               }
-              className="bg-warning-600 hover:bg-warning-700"
             >
-              Confirmer la clôture
+              {closing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Clôture…
+                </>
+              ) : (
+                'Confirmer la clôture'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -895,8 +931,17 @@ export default function CaisseV2() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDiversDialog(false)}>Annuler</Button>
-            <Button onClick={handleDiversSubmit}>Enregistrer</Button>
+            <Button variant="outline" onClick={() => setDiversDialog(false)} disabled={diversSubmitting}>Annuler</Button>
+            <Button onClick={handleDiversSubmit} disabled={diversSubmitting}>
+              {diversSubmitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Enregistrement…
+                </>
+              ) : (
+                'Enregistrer'
+              )}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

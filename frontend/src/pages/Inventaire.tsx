@@ -20,7 +20,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog';
 
 import { Plus, Search, Pencil, Trash2, AlertCircle, XCircle, Package, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { normalizeSearch } from '@/utils/format';
+import { formatCurrency, normalizeSearch } from '@/utils/format';
 import { downloadCsv } from '@/utils/csv';
 
 interface StockLocation {
@@ -1044,7 +1044,7 @@ export default function Inventaire() {
                       case 'retour':
                         return <ArrowUpCircle className="h-4 w-4 text-success-500" />;
                       case 'ajustement':
-                        return <RefreshCw className="h-4 w-4 text-yellow-500" />;
+                        return <RefreshCw className="h-4 w-4 text-warning-500" />;
                       default:
                         return <Clock className="h-4 w-4 text-gray-500" />;
                     }
@@ -1148,20 +1148,20 @@ export default function Inventaire() {
                     {purchaseInfo.price_stats ? (
                       <div className="space-y-2">
                         {purchaseInfo.price_stats.prix_min === purchaseInfo.price_stats.prix_max ? (
-                          <p className="text-2xl font-bold">{purchaseInfo.price_stats.prix_min.toLocaleString('fr-FR')} XOF</p>
+                          <p className="text-2xl font-bold">{formatCurrency(purchaseInfo.price_stats.prix_min)}</p>
                         ) : (
                           <div>
                             <p className="text-lg font-bold">
-                              {purchaseInfo.price_stats.prix_min.toLocaleString('fr-FR')} - {purchaseInfo.price_stats.prix_max.toLocaleString('fr-FR')} XOF
+                              {formatCurrency(purchaseInfo.price_stats.prix_min)} - {formatCurrency(purchaseInfo.price_stats.prix_max)}
                             </p>
                             <p className="text-xs text-muted-foreground">
-                              Moyenne: {purchaseInfo.price_stats.prix_moyen.toLocaleString('fr-FR')} XOF · {purchaseInfo.price_stats.total_achats} achat(s)
+                              Moyenne: {formatCurrency(purchaseInfo.price_stats.prix_moyen)} · {purchaseInfo.price_stats.total_achats} achat(s)
                             </p>
                           </div>
                         )}
                         {purchaseInfo.recent_purchase && (
                           <p className="text-xs text-muted-foreground border-t pt-1 mt-1">
-                            Dernier: {purchaseInfo.recent_purchase.prix_unitaire.toLocaleString('fr-FR')} XOF
+                            Dernier: {formatCurrency(purchaseInfo.recent_purchase.prix_unitaire)}
                             {purchaseInfo.recent_purchase.fournisseur && ` chez ${purchaseInfo.recent_purchase.fournisseur}`}
                             {purchaseInfo.recent_purchase.date && ` (${new Date(purchaseInfo.recent_purchase.date).toLocaleDateString('fr-FR')})`}
                           </p>
@@ -1169,7 +1169,7 @@ export default function Inventaire() {
                       </div>
                     ) : (
                       <div>
-                        <p className="text-2xl font-bold">{purchaseInfo.prix_achat.toLocaleString('fr-FR')} XOF</p>
+                        <p className="text-2xl font-bold">{formatCurrency(purchaseInfo.prix_achat)}</p>
                         <p className="text-xs text-muted-foreground mt-1">Prix par défaut (aucun achat enregistré)</p>
                       </div>
                     )}
@@ -1207,8 +1207,8 @@ export default function Inventaire() {
                                   <span className="text-[10px] text-muted-foreground ml-1">{item.source}</span>
                                 </td>
                                 <td className="p-2 text-right">{item.quantite}</td>
-                                <td className="p-2 text-right font-semibold">{parseFloat(item.prix_unitaire).toLocaleString('fr-FR')}</td>
-                                <td className="p-2 text-right font-medium">{(parseFloat(item.prix_unitaire) * (item.quantite || 1)).toLocaleString('fr-FR')}</td>
+                                <td className="p-2 text-right font-semibold">{formatCurrency(item.prix_unitaire)}</td>
+                                <td className="p-2 text-right font-medium">{formatCurrency(parseFloat(item.prix_unitaire) * (item.quantite || 1))}</td>
                               </tr>
                             ))}
                         </tbody>
@@ -1244,7 +1244,7 @@ export default function Inventaire() {
                       <div className="text-right">
                         <p className="text-2xl font-bold">{purchaseInfo.top_buyer.total_quantite} unités</p>
                         <p className="text-sm text-muted-foreground">
-                          {purchaseInfo.top_buyer.nombre_factures} facture(s) · {parseFloat(purchaseInfo.top_buyer.total_depense).toLocaleString('fr-FR', { minimumFractionDigits: 0 })} XOF
+                          {purchaseInfo.top_buyer.nombre_factures} facture(s) · {formatCurrency(purchaseInfo.top_buyer.total_depense)}
                         </p>
                       </div>
                     </div>

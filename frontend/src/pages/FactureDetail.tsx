@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { factureService, paiementService, acompteService, tiersService } from '../services/api';
 import { FactureComplete, Paiement } from '../types';
 import { PaymentStatusBar } from '../components/PaymentStatusBar';
@@ -46,8 +46,6 @@ export default function FactureDetail() {
   const [acompteToApply, setAcompteToApply] = useState<any | null>(null);
   const [applyMontant, setApplyMontant] = useState('');
   const [applyLoading, setApplyLoading] = useState(false);
-  const [paiementToDelete, setPaiementToDelete] = useState<number | null>(null);
-  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     loadFacture();
@@ -181,23 +179,20 @@ export default function FactureDetail() {
     await loadFacture();
   };
 
-  const handleDeletePayment = (paiementId: number) => {
-    setPaiementToDelete(paiementId);
-  };
-
-  const confirmDeletePayment = async () => {
-    if (paiementToDelete == null) return;
-    setDeleteLoading(true);
+  const handleDeletePayment = async (paiementId: number) => {
+    if (!(await confirm({
+      title: 'Supprimer le paiement',
+      description: 'Êtes-vous sûr de vouloir supprimer ce paiement ? Cette action est irréversible.',
+      confirmLabel: 'Supprimer',
+      destructive: true,
+    }))) return;
     try {
-      await paiementService.delete(paiementToDelete);
+      await paiementService.delete(paiementId);
       toast.success('Paiement supprimé');
-      setPaiementToDelete(null);
       await loadFacture();
     } catch (error) {
       toast.error('Erreur lors de la suppression du paiement');
       console.error(error);
-    } finally {
-      setDeleteLoading(false);
     }
   };
 
@@ -317,7 +312,7 @@ export default function FactureDetail() {
           <div className="flex items-center gap-2 text-warning-800 dark:text-warning-200">
             <ArrowLeftRight className="h-5 w-5 flex-shrink-0" />
             <span className="text-sm font-medium">
-              Ce client est aussi fournisseur — vous lui devez <strong>{soldeFourn.toLocaleString('fr-FR')} XOF</strong>. Vous pouvez compenser jusqu'à <strong>{Math.min(remainingDue, soldeFourn).toLocaleString('fr-FR')} XOF</strong> sur cette facture.
+              Ce client est aussi fournisseur — vous lui devez <strong>{formatXOF(soldeFourn)}</strong>. Vous pouvez compenser jusqu'à <strong>{formatXOF(Math.min(remainingDue, soldeFourn))}</strong> sur cette facture.
             </span>
           </div>
           <Button
@@ -374,17 +369,17 @@ export default function FactureDetail() {
             {facture.origine && 'devis_id' in facture.origine && facture.origine.devis_id && (
               <div className="text-sm">
                 <span className="text-muted-foreground">Devis d'origine: </span>
-                <a href={`/devis/${facture.origine.devis_id}`} className="font-mono font-semibold text-primary hover:underline">
+                <Link to={`/devis/${facture.origine.devis_id}`} className="font-mono font-semibold text-primary hover:underline">
                   {facture.origine.numero_devis}
-                </a>
+                </Link>
               </div>
             )}
             {facture.origine && 'bl_id' in facture.origine && facture.origine.bl_id && (
               <div className="text-sm">
                 <span className="text-muted-foreground">Bon de livraison: </span>
-                <a href={`/bons-livraison/${facture.origine.bl_id}`} className="font-mono font-semibold text-primary hover:underline">
+                <Link to={`/bons-livraison/${facture.origine.bl_id}`} className="font-mono font-semibold text-primary hover:underline">
                   {facture.origine.numero_bl}
-                </a>
+                </Link>
               </div>
             )}
           </CardContent>
@@ -421,7 +416,7 @@ export default function FactureDetail() {
                       {ligne.produit_nom}
                       {(ligne as any).is_depot_only_history && (
                         <span
-                          className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-200 text-gray-700"
+                          className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
                           title="Cet article n'a plus de stock magasin — il était disponible en dépôt au moment de la création"
                         >
                           stock dépôt (historique)
@@ -594,15 +589,15 @@ export default function FactureDetail() {
           <div className="space-y-3">
             <div>
               <span className="text-sm font-medium block mb-1">Reste dû sur la facture</span>
-              <p className="text-lg font-bold text-danger-600 dark:text-danger-300">{remainingDue.toLocaleString('fr-FR')} XOF</p>
+              <p className="text-lg font-bold text-danger-600 dark:text-danger-300">{formatXOF(remainingDue)}</p>
             </div>
             <div>
               <span className="text-sm font-medium block mb-1">Votre dette fournisseur envers ce tiers</span>
-              <p className="text-lg font-bold text-blue-600 dark:text-blue-300">{soldeFourn.toLocaleString('fr-FR')} XOF</p>
+              <p className="text-lg font-bold text-blue-600 dark:text-blue-300">{formatXOF(soldeFourn)}</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="compensation-montant">
-                Montant à compenser (max {Math.min(remainingDue, soldeFourn).toLocaleString('fr-FR')} XOF)
+                Montant à compenser (max {formatXOF(Math.min(remainingDue, soldeFourn))})
               </Label>
               <Input
                 id="compensation-montant"
@@ -619,7 +614,7 @@ export default function FactureDetail() {
             <Button variant="outline" onClick={() => setShowCompensationModal(false)} disabled={compensationLoading}>
               Annuler
             </Button>
-            <Button onClick={handleCompensation} disabled={compensationLoading} className="bg-warning-600 hover:bg-warning-700 text-white">
+            <Button variant="warning" onClick={handleCompensation} disabled={compensationLoading}>
               {compensationLoading ? 'En cours...' : 'Confirmer la compensation'}
             </Button>
           </DialogFooter>
@@ -663,31 +658,6 @@ export default function FactureDetail() {
             </Button>
             <Button onClick={handleApplyAcompte} disabled={applyLoading}>
               {applyLoading ? 'En cours...' : 'Valider'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete payment confirmation Dialog */}
-      <Dialog
-        open={paiementToDelete != null}
-        onOpenChange={(open) => {
-          if (!open && !deleteLoading) setPaiementToDelete(null);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Supprimer le paiement</DialogTitle>
-            <DialogDescription>
-              Êtes-vous sûr de vouloir supprimer ce paiement ? Cette action est irréversible.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPaiementToDelete(null)} disabled={deleteLoading}>
-              Annuler
-            </Button>
-            <Button variant="destructive" onClick={confirmDeletePayment} disabled={deleteLoading}>
-              {deleteLoading ? 'Suppression...' : 'Supprimer'}
             </Button>
           </DialogFooter>
         </DialogContent>

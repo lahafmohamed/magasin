@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Users } from 'lucide-react';
 import { userLocationAssignmentService } from '../services/api';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { PageHeader } from '@/components/ui/page-header';
+import { QueryState } from '@/components/ui/query-state';
+import { TableSkeleton } from '@/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface AssignmentUser {
@@ -29,6 +33,7 @@ export default function AffectationsLocations() {
   const [selectedLocationIds, setSelectedLocationIds] = useState<number[]>([]);
   const [defaultLocationId, setDefaultLocationId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
 
   const selectedUser = useMemo(
@@ -41,6 +46,8 @@ export default function AffectationsLocations() {
   }, []);
 
   const fetchInitialData = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const [usersData, locationsData] = await Promise.all([
         userLocationAssignmentService.getUsers(),
@@ -56,8 +63,8 @@ export default function AffectationsLocations() {
       if (usersList.length > 0) {
         await selectUser(usersList[0].id, usersList);
       }
-    } catch {
-      toast.error('Erreur chargement des affectations');
+    } catch (err) {
+      setError(err);
     } finally {
       setLoading(false);
     }
@@ -123,148 +130,150 @@ export default function AffectationsLocations() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex justify-center p-8">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
   return (
     <div className="container mx-auto p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Affectations Utilisateur-Locations</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Configure les locations accessibles pour chaque utilisateur et la location par défaut.
-        </p>
-      </div>
+      <PageHeader
+        className="mb-6"
+        title="Affectations Utilisateur-Locations"
+        description="Configure les locations accessibles pour chaque utilisateur et la location par défaut."
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="rounded-md border bg-card shadow-sm">
-          <div className="p-5">
-            <h2 className="text-lg font-semibold mb-3">Utilisateurs</h2>
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-left">
-                  <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">Utilisateur</th>
-                    <th className="px-3 py-2 font-medium">Rôle</th>
-                    <th className="px-3 py-2 font-medium">Statut</th>
-                    <th className="px-3 py-2 font-medium">Locations</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {users.map((user) => (
-                    <tr
-                      key={user.id}
-                      className={`cursor-pointer hover:bg-muted/30 ${selectedUserId === user.id ? 'bg-primary/10' : ''}`}
-                      onClick={() => void selectUser(user.id)}
+      <QueryState
+        loading={loading}
+        error={error}
+        isEmpty={users.length === 0}
+        onRetry={() => void fetchInitialData()}
+        skeleton={<TableSkeleton rows={6} columns={4} />}
+        emptyIcon={Users}
+        emptyTitle="Aucun utilisateur"
+        emptyDescription="Créez des utilisateurs pour leur affecter des locations."
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="rounded-md border bg-card shadow-sm">
+            <div className="p-5">
+              <h2 className="text-lg font-semibold mb-3">Utilisateurs</h2>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Utilisateur</TableHead>
+                      <TableHead>Rôle</TableHead>
+                      <TableHead>Statut</TableHead>
+                      <TableHead>Locations</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {users.map((user) => (
+                      <TableRow
+                        key={user.id}
+                        className={`cursor-pointer ${selectedUserId === user.id ? 'bg-primary/10' : ''}`}
+                        onClick={() => void selectUser(user.id)}
+                      >
+                        <TableCell>
+                          <div className="font-medium">{user.username}</div>
+                          {user.nom_complet && (
+                            <div className="text-xs text-muted-foreground">{user.nom_complet}</div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs">
+                            {user.role}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                            user.actif ? 'bg-success-100 text-success-700' : 'bg-muted text-muted-foreground'
+                          }`}>
+                            {user.actif ? 'Actif' : 'Inactif'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="num">{user.locations.length}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-md border bg-card shadow-sm">
+            <div className="p-5">
+              <h2 className="text-lg font-semibold mb-3">Affectations</h2>
+              {!selectedUser ? (
+                <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">
+                  Sélectionnez un utilisateur pour modifier ses affectations.
+                </div>
+              ) : (
+                <>
+                  <div className="mb-4 text-sm">
+                    <span className="font-semibold">Utilisateur:</span> {selectedUser.username}
+                  </div>
+
+                  <div className="space-y-2 mb-6">
+                    {locations.map((location) => {
+                      const checked = selectedLocationIds.includes(location.id);
+                      return (
+                        <label key={location.id} className="flex items-center justify-between gap-3 p-3 rounded-md border hover:bg-muted/30 cursor-pointer">
+                          <div>
+                            <div className="font-medium">
+                              {location.nom} <span className="text-xs text-muted-foreground">({location.code})</span>
+                            </div>
+                            {location.est_principal && (
+                              <div className="text-xs text-primary">Location principale système</div>
+                            )}
+                          </div>
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
+                            checked={checked}
+                            onChange={(e) => toggleLocation(location.id, e.target.checked)}
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  <div className="space-y-1.5 mb-6">
+                    <Label htmlFor="default-location">Location par défaut</Label>
+                    <Select
+                      value={defaultLocationId == null ? '__none' : String(defaultLocationId)}
+                      onValueChange={(v) => setDefaultLocationId(v === '__none' ? null : parseInt(v, 10))}
+                      disabled={selectedLocationIds.length === 0}
                     >
-                      <td className="px-3 py-2">
-                        <div className="font-medium">{user.username}</div>
-                        {user.nom_complet && (
-                          <div className="text-xs text-muted-foreground">{user.nom_complet}</div>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs">
-                          {user.role}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                          user.actif ? 'bg-success-100 text-success-700' : 'bg-muted text-muted-foreground'
-                        }`}>
-                          {user.actif ? 'Actif' : 'Inactif'}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 num">{user.locations.length}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      <SelectTrigger id="default-location" className="h-9 w-full text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none">Aucune</SelectItem>
+                        {locations
+                          .filter((location) => selectedLocationIds.includes(location.id))
+                          .map((location) => (
+                            <SelectItem key={location.id} value={String(location.id)}>
+                              {location.nom} ({location.code})
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button onClick={handleSave} disabled={saving}>
+                      {saving ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Enregistrement…
+                        </>
+                      ) : (
+                        'Enregistrer'
+                      )}
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
-
-        <div className="rounded-md border bg-card shadow-sm">
-          <div className="p-5">
-            <h2 className="text-lg font-semibold mb-3">Affectations</h2>
-            {!selectedUser ? (
-              <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">
-                Sélectionnez un utilisateur pour modifier ses affectations.
-              </div>
-            ) : (
-              <>
-                <div className="mb-4 text-sm">
-                  <span className="font-semibold">Utilisateur:</span> {selectedUser.username}
-                </div>
-
-                <div className="space-y-2 mb-6">
-                  {locations.map((location) => {
-                    const checked = selectedLocationIds.includes(location.id);
-                    return (
-                      <label key={location.id} className="flex items-center justify-between gap-3 p-3 rounded-md border hover:bg-muted/30 cursor-pointer">
-                        <div>
-                          <div className="font-medium">
-                            {location.nom} <span className="text-xs text-muted-foreground">({location.code})</span>
-                          </div>
-                          {location.est_principal && (
-                            <div className="text-xs text-primary">Location principale système</div>
-                          )}
-                        </div>
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
-                          checked={checked}
-                          onChange={(e) => toggleLocation(location.id, e.target.checked)}
-                        />
-                      </label>
-                    );
-                  })}
-                </div>
-
-                <div className="space-y-1.5 mb-6">
-                  <Label htmlFor="default-location">Location par défaut</Label>
-                  <Select
-                    value={defaultLocationId == null ? '__none' : String(defaultLocationId)}
-                    onValueChange={(v) => setDefaultLocationId(v === '__none' ? null : parseInt(v, 10))}
-                    disabled={selectedLocationIds.length === 0}
-                  >
-                    <SelectTrigger id="default-location" className="h-9 w-full text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none">Aucune</SelectItem>
-                      {locations
-                        .filter((location) => selectedLocationIds.includes(location.id))
-                        .map((location) => (
-                          <SelectItem key={location.id} value={String(location.id)}>
-                            {location.nom} ({location.code})
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="flex justify-end">
-                  <Button onClick={handleSave} disabled={saving}>
-                    {saving ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Enregistrement…
-                      </>
-                    ) : (
-                      'Enregistrer'
-                    )}
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+      </QueryState>
     </div>
   );
 }

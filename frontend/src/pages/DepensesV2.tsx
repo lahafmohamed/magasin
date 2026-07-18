@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { formatFCFA as formatXOF } from '../utils/format';
+import { useNavigate } from 'react-router-dom';
+import { formatCurrency, formatDateShort } from '../utils/format';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,25 +15,36 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle 
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle
 } from '@/components/ui/dialog';
-import { 
-  Receipt, 
-  Plus, 
-  Trash2, 
+import {
+  Receipt,
+  Plus,
+  Trash2,
   Store,
   AlertCircle,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/AuthContext';
 import { api } from '../services/api';
-import { EmptyState } from '@/components/ui/empty-state';
+import { PageHeader } from '@/components/ui/page-header';
+import { QueryState } from '@/components/ui/query-state';
+import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
+import { Pagination } from '@/components/ui/pagination';
 import { TableSkeleton } from '@/components/ui/skeleton';
 
 interface Magasin {
@@ -68,8 +80,26 @@ interface SessionCaisse {
   statut: 'ouverte' | 'cloturee';
 }
 
+const METHOD_BADGE_CLASSES: Record<string, string> = {
+  // Palette catégorielle (pas de vert : réservé aux statuts/succès)
+  espece: 'bg-teal-100 dark:bg-teal-500/20 text-teal-800 dark:text-teal-200',
+  carte: 'bg-blue-100 dark:bg-blue-500/20 text-blue-800 dark:text-blue-200',
+  cheque: 'bg-orange-100 dark:bg-orange-500/20 text-orange-800 dark:text-orange-200',
+  virement: 'bg-purple-100 dark:bg-purple-500/20 text-purple-800 dark:text-purple-200',
+  mobile_money: 'bg-pink-100 dark:bg-pink-500/20 text-pink-800 dark:text-pink-200',
+};
+
+const METHOD_LABELS: Record<string, string> = {
+  espece: 'Espèces',
+  carte: 'Carte',
+  cheque: 'Chèque',
+  virement: 'Virement',
+  mobile_money: 'Mobile Money',
+};
+
 export default function DepensesV2() {
   useAuth();
+  const navigate = useNavigate();
   const confirm = useConfirm();
   const [magasins, setMagasins] = useState<Magasin[]>([]);
   const [selectedMagasin, setSelectedMagasin] = useState<number | null>(null);
@@ -77,11 +107,19 @@ export default function DepensesV2() {
   const [depenses, setDepenses] = useState<Depense[]>([]);
   const [categories, setCategories] = useState<CategorieDepense[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [totalDepenses, setTotalDepenses] = useState(0);
-  
+
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+
   // Dialog
   const [openDialog, setOpenDialog] = useState(false);
-  
+  const [saving, setSaving] = useState(false);
+
   // Form state
   const [formData, setFormData] = useState({
     montant: '',
@@ -99,13 +137,14 @@ export default function DepensesV2() {
     loadCategories();
   }, []);
 
-  // Load session and depenses when magasin changes
+  // Load session and depenses when magasin / page / limit change
   useEffect(() => {
     if (selectedMagasin) {
       loadSessionActive(selectedMagasin);
       loadDepenses();
     }
-  }, [selectedMagasin]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMagasin, page, limit]);
 
   const loadMagasins = async () => {
     try {
@@ -143,13 +182,22 @@ export default function DepensesV2() {
 
   const loadDepenses = async () => {
     if (!selectedMagasin) return;
-    
+
     setLoading(true);
+    setError(null);
     try {
-      const { data } = await api.get(`/depenses?magasin_id=${selectedMagasin}&limit=100`);
-      setDepenses(data || []);
-      setTotalDepenses((data || []).reduce((sum: number, d: Depense) => sum + d.montant, 0));
-    } catch (error) {
+      const { data } = await api.get(
+        `/depenses?magasin_id=${selectedMagasin}&page=${page}&limit=${limit}`
+      );
+      const rows: Depense[] = Array.isArray(data) ? data : [];
+      setDepenses(rows);
+      setTotalDepenses(rows.reduce((sum: number, d: Depense) => sum + d.montant, 0));
+      const pagination = (data as { pagination?: { total: number; totalPages: number } })
+        ?.pagination;
+      setTotal(pagination?.total ?? rows.length);
+      setTotalPages(pagination?.totalPages ?? 1);
+    } catch (err) {
+      setError(err);
       toast.error('Erreur lors du chargement des dépenses');
     } finally {
       setLoading(false);
@@ -172,10 +220,10 @@ export default function DepensesV2() {
       toast.error(
         <div className="flex flex-col gap-2">
           <span>Caisse fermée — ouvrez la caisse du magasin avant d'enregistrer cette dépense.</span>
-          <Button 
-            size="sm" 
+          <Button
+            size="sm"
             variant="outline"
-            onClick={() => window.location.href = '/caisse'}
+            onClick={() => navigate('/caisse')}
             className="w-fit"
           >
             Ouvrir la caisse →
@@ -186,6 +234,7 @@ export default function DepensesV2() {
       return;
     }
 
+    setSaving(true);
     try {
       await api.post('/depenses', {
         magasin_id: selectedMagasin,
@@ -209,10 +258,10 @@ export default function DepensesV2() {
         toast.error(
           <div className="flex flex-col gap-2">
             <span>{data.error}</span>
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="outline"
-              onClick={() => window.location.href = '/caisse'}
+              onClick={() => navigate('/caisse')}
               className="w-fit"
             >
               Ouvrir la caisse →
@@ -223,6 +272,8 @@ export default function DepensesV2() {
       } else {
         toast.error(data?.error || 'Erreur lors de la création');
       }
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -254,57 +305,46 @@ export default function DepensesV2() {
   };
 
 
-  const getMethodBadge = (methode: string) => {
-    const colors: Record<string, string> = {
-      'espece': 'bg-green-100 dark:bg-green-500/20 text-green-800 dark:text-green-200',
-      'carte': 'bg-blue-100 dark:bg-blue-500/20 text-blue-800 dark:text-blue-200',
-      'cheque': 'bg-orange-100 dark:bg-orange-500/20 text-orange-800 dark:text-orange-200',
-      'virement': 'bg-purple-100 dark:bg-purple-500/20 text-purple-800 dark:text-purple-200',
-      'mobile_money': 'bg-pink-100 text-pink-800'
-    };
-    const labels: Record<string, string> = {
-      'espece': 'Espèces',
-      'carte': 'Carte',
-      'cheque': 'Chèque',
-      'virement': 'Virement',
-      'mobile_money': 'Mobile Money'
-    };
-    return (
-      <Badge className={colors[methode] || 'bg-gray-100 dark:bg-muted'}>
-        {labels[methode] || methode}
-      </Badge>
-    );
-  };
+  const getMethodBadge = (methode: string) => (
+    <Badge className={METHOD_BADGE_CLASSES[methode] || 'bg-gray-100 dark:bg-muted'}>
+      {METHOD_LABELS[methode] || methode}
+    </Badge>
+  );
 
   const isCashPayment = formData.methode_paiement === 'espece';
 
   return (
     <div className="container mx-auto py-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Dépenses</h1>
-          <p className="text-muted-foreground text-sm">
-            Gestion des dépenses par magasin
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <Store className="h-4 w-4 text-muted-foreground" />
-          <select
-            value={selectedMagasin || ''}
-            onChange={(e) => setSelectedMagasin(e.target.value ? parseInt(e.target.value) : null)}
-            className="h-9 w-[200px] rounded-md border border-input bg-background px-3 text-sm"
-          >
-            <option value="">Sélectionner un magasin</option>
-            {magasins.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.code} - {m.nom}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      <PageHeader
+        title="Dépenses"
+        icon={Receipt}
+        description="Gestion des dépenses par magasin"
+        className="mb-6"
+        actions={
+          <div className="flex items-center gap-2">
+            <Store className="h-4 w-4 text-muted-foreground" />
+            <Select
+              value={selectedMagasin !== null ? String(selectedMagasin) : ''}
+              onValueChange={(v) => {
+                setSelectedMagasin(parseInt(v));
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-[220px]" aria-label="Magasin">
+                <SelectValue placeholder="Sélectionner un magasin" />
+              </SelectTrigger>
+              <SelectContent>
+                {magasins.map((m) => (
+                  <SelectItem key={m.id} value={String(m.id)}>
+                    {m.code} - {m.nom}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        }
+      />
 
       {/* Caisse status alert */}
       {selectedMagasin && (
@@ -328,10 +368,10 @@ export default function DepensesV2() {
               )}
             </div>
             {!sessionActive && (
-              <Button 
-                size="sm" 
+              <Button
+                size="sm"
                 variant="outline"
-                onClick={() => window.location.href = '/caisse'}
+                onClick={() => navigate('/caisse')}
               >
                 Ouvrir la caisse
               </Button>
@@ -346,15 +386,15 @@ export default function DepensesV2() {
           <div className="flex items-center gap-2">
             <Receipt className="h-5 w-5 text-danger-600 dark:text-danger-300" />
             <div>
-              <p className="text-sm text-muted-foreground">Total dépenses</p>
-              <p className="text-2xl font-bold">{formatXOF(totalDepenses)}</p>
+              <p className="text-sm text-muted-foreground">Total dépenses (page)</p>
+              <p className="text-2xl font-bold">{formatCurrency(totalDepenses)}</p>
             </div>
           </div>
         </Card>
         <Card className="p-4">
           <div>
             <p className="text-sm text-muted-foreground">Nombre de dépenses</p>
-            <p className="text-2xl font-bold">{depenses.length}</p>
+            <p className="text-2xl font-bold">{total}</p>
           </div>
         </Card>
         <Card className="p-4">
@@ -380,7 +420,7 @@ export default function DepensesV2() {
                           <Button
                             variant="link"
                             className="p-0 h-auto text-warning-800 dark:text-warning-200 underline"
-                            onClick={() => { setOpenDialog(false); window.location.href = '/caisse'; }}
+                            onClick={() => { setOpenDialog(false); navigate('/caisse'); }}
                           >
                             Ouvrir la caisse →
                           </Button>
@@ -423,33 +463,40 @@ export default function DepensesV2() {
 
                   <div>
                     <Label>Catégorie *</Label>
-                    <select
+                    <Select
                       value={formData.categorie_id}
-                      onChange={(e) => setFormData({...formData, categorie_id: e.target.value})}
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      onValueChange={(v) => setFormData({ ...formData, categorie_id: v })}
                     >
-                      <option value="">Sélectionner une catégorie</option>
-                      {categories.map((cat) => (
-                        <option key={cat.id} value={cat.id}>
-                          {cat.nom}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger aria-label="Catégorie">
+                        <SelectValue placeholder="Sélectionner une catégorie" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {categories.map((cat) => (
+                          <SelectItem key={cat.id} value={String(cat.id)}>
+                            {cat.nom}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div>
                     <Label>Mode de paiement *</Label>
-                    <select
+                    <Select
                       value={formData.methode_paiement}
-                      onChange={(e) => setFormData({...formData, methode_paiement: e.target.value})}
-                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      onValueChange={(v) => setFormData({ ...formData, methode_paiement: v })}
                     >
-                      <option value="espece">Espèces (décrémente la caisse)</option>
-                      <option value="carte">Carte bancaire</option>
-                      <option value="cheque">Chèque</option>
-                      <option value="virement">Virement</option>
-                      <option value="mobile_money">Mobile Money</option>
-                    </select>
+                      <SelectTrigger aria-label="Mode de paiement">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="espece">Espèces (décrémente la caisse)</SelectItem>
+                        <SelectItem value="carte">Carte bancaire</SelectItem>
+                        <SelectItem value="cheque">Chèque</SelectItem>
+                        <SelectItem value="virement">Virement</SelectItem>
+                        <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div>
@@ -470,12 +517,19 @@ export default function DepensesV2() {
                     />
                   </div>
 
-                  <Button 
-                    onClick={handleCreate} 
+                  <Button
+                    onClick={handleCreate}
                     className="w-full"
-                    disabled={isCashPayment && !sessionActive}
+                    disabled={saving || (isCashPayment && !sessionActive)}
                   >
-                    Créer la dépense
+                    {saving ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Création…
+                      </>
+                    ) : (
+                      'Créer la dépense'
+                    )}
                   </Button>
                 </div>
               </DialogContent>
@@ -486,78 +540,124 @@ export default function DepensesV2() {
 
       {/* Depenses list */}
       <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Numéro</TableHead>
-              <TableHead>Date</TableHead>
-              <TableHead>Catégorie</TableHead>
-              <TableHead>Bénéficiaire</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Mode</TableHead>
-              <TableHead className="text-right">Montant</TableHead>
-              <TableHead className="text-center">Caisse</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={9} className="p-0">
-                  <TableSkeleton rows={8} columns={9} />
-                </TableCell>
-              </TableRow>
-            ) : depenses.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={9} className="p-0">
-                  <EmptyState
-                    icon={Receipt}
-                    title={selectedMagasin ? 'Aucune dépense trouvée' : 'Sélectionnez un magasin'}
-                    description={selectedMagasin ? undefined : 'Choisissez un magasin pour afficher ses dépenses.'}
-                  />
-                </TableCell>
-              </TableRow>
-            ) : (
-              depenses.map((depense) => (
-                <TableRow key={depense.id}>
-                  <TableCell className="font-medium">{depense.numero_depense}</TableCell>
-                  <TableCell>
-                    {new Date(depense.date_depense).toLocaleDateString('fr-FR')}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{depense.categorie_nom}</Badge>
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {depense.fournisseur_nom || depense.beneficiaire_libre || '-'}
-                  </TableCell>
-                  <TableCell className="max-w-xs truncate">
-                    {depense.description}
-                  </TableCell>
-                  <TableCell>{getMethodBadge(depense.methode_paiement)}</TableCell>
-                  <TableCell className="text-right font-medium text-danger-600 dark:text-danger-300">
-                    -{formatXOF(depense.montant)}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {depense.session_caisse_id ? (
-                      <LinkIcon className="h-4 w-4 text-success-600 dark:text-success-300 mx-auto" aria-label="Liée à la caisse" />
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
+        <QueryState
+          loading={loading}
+          error={error}
+          isEmpty={depenses.length === 0}
+          onRetry={loadDepenses}
+          skeleton={<TableSkeleton rows={8} columns={9} />}
+          emptyIcon={Receipt}
+          emptyTitle={selectedMagasin ? 'Aucune dépense trouvée' : 'Sélectionnez un magasin'}
+          emptyDescription={selectedMagasin ? undefined : 'Choisissez un magasin pour afficher ses dépenses.'}
+        >
+          <ResponsiveTable
+            table={
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Numéro</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Catégorie</TableHead>
+                      <TableHead>Bénéficiaire</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Mode</TableHead>
+                      <TableHead className="text-right">Montant</TableHead>
+                      <TableHead className="text-center">Caisse</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {depenses.map((depense) => (
+                      <TableRow key={depense.id}>
+                        <TableCell className="font-medium">{depense.numero_depense}</TableCell>
+                        <TableCell>{formatDateShort(depense.date_depense)}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{depense.categorie_nom}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {depense.fournisseur_nom || depense.beneficiaire_libre || '-'}
+                        </TableCell>
+                        <TableCell className="max-w-xs truncate">
+                          {depense.description}
+                        </TableCell>
+                        <TableCell>{getMethodBadge(depense.methode_paiement)}</TableCell>
+                        <TableCell className="text-right font-medium text-danger-600 dark:text-danger-300">
+                          -{formatCurrency(depense.montant)}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {depense.session_caisse_id ? (
+                            <LinkIcon className="h-4 w-4 text-success-600 dark:text-success-300 mx-auto" aria-label="Liée à la caisse" />
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label="Supprimer la dépense"
+                            onClick={() => handleDelete(depense.id)}
+                          >
+                            <Trash2 className="h-4 w-4 text-danger-600 dark:text-danger-300" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            }
+            cards={depenses.map((depense) => (
+              <DataCard
+                key={depense.id}
+                title={depense.numero_depense}
+                badge={getMethodBadge(depense.methode_paiement)}
+              >
+                <DataCardRow label="Date" value={formatDateShort(depense.date_depense)} />
+                <DataCardRow label="Catégorie" value={depense.categorie_nom} />
+                <DataCardRow
+                  label="Bénéficiaire"
+                  value={depense.fournisseur_nom || depense.beneficiaire_libre || '-'}
+                />
+                <DataCardRow label="Description" value={depense.description} />
+                <DataCardRow
+                  label="Montant"
+                  value={
+                    <span className="font-medium text-danger-600 dark:text-danger-300">
+                      -{formatCurrency(depense.montant)}
+                    </span>
+                  }
+                />
+                <DataCardRow
+                  label="Caisse"
+                  value={depense.session_caisse_id ? 'Liée à la caisse' : '-'}
+                />
+                <DataCardRow
+                  label="Actions"
+                  value={
                     <Button
                       variant="ghost"
                       size="sm"
+                      aria-label="Supprimer la dépense"
                       onClick={() => handleDelete(depense.id)}
                     >
                       <Trash2 className="h-4 w-4 text-danger-600 dark:text-danger-300" />
                     </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+                  }
+                />
+              </DataCard>
+            ))}
+          />
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            limit={limit}
+            onPageChange={setPage}
+            onLimitChange={(l) => { setLimit(l); setPage(1); }}
+          />
+        </QueryState>
       </Card>
     </div>
   );

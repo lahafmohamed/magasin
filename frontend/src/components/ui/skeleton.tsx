@@ -98,7 +98,7 @@ export function ListSkeleton({ items = 8 }: { items?: number }) {
 // Dashboard skeleton
 export function DashboardSkeleton() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="dashboard-skeleton">
       {/* Stats cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, i) => (

@@ -6,11 +6,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
+import { PageHeader } from '@/components/ui/page-header';
+import { QueryState } from '@/components/ui/query-state';
+import { TableSkeleton } from '@/components/ui/skeleton';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Pagination } from '@/components/ui/pagination';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
-import { formatFCFA } from '../utils/format';
+import { formatCurrency, formatDate } from '../utils/format';
 
 interface PayrollRun {
   id: number;
@@ -50,41 +57,43 @@ interface Payslip {
 }
 
 const STATUT_LABEL: Record<string, string> = {
-  brouillon: 'Brouillon', valide: 'Validé', paye: 'Payé', annule: 'Annulé',
+  brouillon: 'Brouillon', valide: 'Validé', paye: 'Payé', annule: 'Annulé', en_attente: 'En attente',
 };
-const STATUT_CLASS: Record<string, string> = {
-  brouillon: 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200',
-  valide: 'bg-blue-100 dark:bg-blue-500/20 text-blue-800 dark:text-blue-200',
-  paye: 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200',
-  annule: 'bg-danger-100 dark:bg-danger-500/20 text-danger-800 dark:text-danger-200',
+const STATUT_VARIANT: Record<string, 'secondary' | 'info' | 'success' | 'destructive' | 'warning'> = {
+  brouillon: 'secondary', valide: 'info', paye: 'success', annule: 'destructive', en_attente: 'warning',
 };
 
 function StatutBadge({ statut }: { statut: string }) {
   return (
-    <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${STATUT_CLASS[statut] || 'bg-muted'}`}>
+    <Badge variant={STATUT_VARIANT[statut] ?? 'outline'}>
       {STATUT_LABEL[statut] || statut}
-    </span>
+    </Badge>
   );
 }
+
+const PAYSLIPS_PAGE_SIZE = 50;
 
 export default function Payroll() {
   const confirm = useConfirm();
   const [runs, setRuns] = useState<PayrollRun[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [selected, setSelected] = useState<(PayrollRun & { payslips: Payslip[] }) | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [periode, setPeriode] = useState(new Date().toISOString().slice(0, 7));
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [filterStatut, setFilterStatut] = useState<'all' | PayrollRun['statut']>('all');
+  const [payslipPage, setPayslipPage] = useState(1);
 
   const loadRuns = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await payrollService.getAll(1, 100);
       setRuns(Array.isArray(data) ? data : data?.data ?? []);
-    } catch {
-      toast.error('Erreur lors du chargement des cycles de paie');
+    } catch (e) {
+      setError(e);
     } finally {
       setLoading(false);
     }
@@ -94,6 +103,7 @@ export default function Payroll() {
 
   const openRun = async (id: number) => {
     try {
+      setPayslipPage(1);
       setSelected(await payrollService.getById(id));
     } catch {
       toast.error('Erreur lors du chargement du cycle');
@@ -149,99 +159,112 @@ export default function Payroll() {
 
   // ---------- Detail view ----------
   if (selected) {
+    const payslips = selected.payslips ?? [];
+    const payslipTotalPages = Math.ceil(payslips.length / PAYSLIPS_PAGE_SIZE);
+    const pagedPayslips = payslipTotalPages > 1
+      ? payslips.slice((payslipPage - 1) * PAYSLIPS_PAGE_SIZE, payslipPage * PAYSLIPS_PAGE_SIZE)
+      : payslips;
+
     return (
       <div className="space-y-4 p-4">
         <Button variant="ghost" size="sm" onClick={() => setSelected(null)}>
           <ArrowLeft className="mr-1 h-4 w-4" /> Retour
         </Button>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold">{selected.numero}</h1>
-            <p className="text-sm text-muted-foreground">
-              Période {selected.periode} · {selected.date_debut} → {selected.date_fin}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <StatutBadge statut={selected.statut} />
-            {selected.statut === 'brouillon' && (
-              <Button size="sm" disabled={busy} onClick={async () => {
-                if (!(await confirm({ title: 'Valider ce cycle de paie ?', description: `Le cycle ${selected.numero} (net à payer : ${formatFCFA(Number(selected.total_net))}) sera validé.`, confirmLabel: 'Valider' }))) return;
-                runAction(() => payrollService.validate(selected.id), 'Cycle validé');
-              }}>
-                <CheckCircle2 className="mr-1 h-4 w-4" /> Valider
-              </Button>
-            )}
-            {selected.statut === 'valide' && (
-              <Button size="sm" disabled={busy} onClick={async () => {
-                if (!(await confirm({ title: 'Marquer ce cycle comme payé ?', description: `Le paiement de ${formatFCFA(Number(selected.total_net))} (virement) sera enregistré pour le cycle ${selected.numero}.`, confirmLabel: 'Marquer payé' }))) return;
-                runAction(() => payrollService.markPaid(selected.id, 'virement'), 'Cycle payé');
-              }}>
-                <BadgeDollarSign className="mr-1 h-4 w-4" /> Marquer payé
-              </Button>
-            )}
-            {(selected.statut === 'brouillon' || selected.statut === 'valide') && (
-              <Button size="sm" variant="outline" disabled={busy} onClick={async () => {
-                if (!(await confirm({ title: 'Annuler ce cycle de paie ?', description: `Le cycle ${selected.numero} sera annulé.`, confirmLabel: 'Annuler le cycle', cancelLabel: 'Retour', destructive: true }))) return;
-                runAction(() => payrollService.cancel(selected.id), 'Cycle annulé');
-              }}>
-                <XCircle className="mr-1 h-4 w-4" /> Annuler
-              </Button>
-            )}
-          </div>
-        </div>
+        <PageHeader
+          title={selected.numero}
+          description={`Période ${selected.periode} · ${formatDate(selected.date_debut)} → ${formatDate(selected.date_fin)}`}
+          actions={
+            <>
+              <StatutBadge statut={selected.statut} />
+              {selected.statut === 'brouillon' && (
+                <Button size="sm" disabled={busy} onClick={async () => {
+                  if (!(await confirm({ title: 'Valider ce cycle de paie ?', description: `Le cycle ${selected.numero} (net à payer : ${formatCurrency(Number(selected.total_net))}) sera validé.`, confirmLabel: 'Valider' }))) return;
+                  runAction(() => payrollService.validate(selected.id), 'Cycle validé');
+                }}>
+                  <CheckCircle2 className="mr-1 h-4 w-4" /> Valider
+                </Button>
+              )}
+              {selected.statut === 'valide' && (
+                <Button size="sm" disabled={busy} onClick={async () => {
+                  if (!(await confirm({ title: 'Marquer ce cycle comme payé ?', description: `Le paiement de ${formatCurrency(Number(selected.total_net))} (virement) sera enregistré pour le cycle ${selected.numero}.`, confirmLabel: 'Marquer payé' }))) return;
+                  runAction(() => payrollService.markPaid(selected.id, 'virement'), 'Cycle payé');
+                }}>
+                  <BadgeDollarSign className="mr-1 h-4 w-4" /> Marquer payé
+                </Button>
+              )}
+              {(selected.statut === 'brouillon' || selected.statut === 'valide') && (
+                <Button size="sm" variant="outline" disabled={busy} onClick={async () => {
+                  if (!(await confirm({ title: 'Annuler ce cycle de paie ?', description: `Le cycle ${selected.numero} sera annulé.`, confirmLabel: 'Annuler le cycle', cancelLabel: 'Retour', destructive: true }))) return;
+                  runAction(() => payrollService.cancel(selected.id), 'Cycle annulé');
+                }}>
+                  <XCircle className="mr-1 h-4 w-4" /> Annuler
+                </Button>
+              )}
+            </>
+          }
+        />
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Brut</p><p className="num font-semibold">{formatFCFA(Number(selected.total_brut))}</p></div>
-          <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Commissions</p><p className="num font-semibold">{formatFCFA(Number(selected.total_commissions))}</p></div>
-          <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Retenues (CNPS+ITS+autres)</p><p className="num font-semibold">{formatFCFA(Number(selected.total_cnps || 0) + Number(selected.total_its || 0) + Number(selected.total_deductions))}</p></div>
-          <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Net à payer</p><p className="num font-semibold text-primary">{formatFCFA(Number(selected.total_net))}</p></div>
+          <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Brut</p><p className="num font-semibold">{formatCurrency(Number(selected.total_brut))}</p></div>
+          <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Commissions</p><p className="num font-semibold">{formatCurrency(Number(selected.total_commissions))}</p></div>
+          <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Retenues (CNPS+ITS+autres)</p><p className="num font-semibold">{formatCurrency(Number(selected.total_cnps || 0) + Number(selected.total_its || 0) + Number(selected.total_deductions))}</p></div>
+          <div className="rounded-lg border p-3"><p className="text-xs text-muted-foreground">Net à payer</p><p className="num font-semibold text-primary">{formatCurrency(Number(selected.total_net))}</p></div>
         </div>
 
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-left">
-              <tr>
-                <th className="px-3 py-2">Employé</th>
-                <th className="px-3 py-2 text-right">Base</th>
-                <th className="px-3 py-2 text-right">Commissions</th>
-                <th className="px-3 py-2 text-right">Primes</th>
-                <th className="px-3 py-2 text-right">CNPS</th>
-                <th className="px-3 py-2 text-right">ITS</th>
-                <th className="px-3 py-2 text-right">Déductions</th>
-                <th className="px-3 py-2 text-right">Net</th>
-                <th className="px-3 py-2">Statut</th>
-                <th className="px-3 py-2"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {selected.payslips?.map((p) => (
-                <tr key={p.id} className="hover:bg-muted/30">
-                  <td className="px-3 py-2">
+        <div className="rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Employé</TableHead>
+                <TableHead className="text-right">Base</TableHead>
+                <TableHead className="text-right">Commissions</TableHead>
+                <TableHead className="text-right">Primes</TableHead>
+                <TableHead className="text-right">CNPS</TableHead>
+                <TableHead className="text-right">ITS</TableHead>
+                <TableHead className="text-right">Déductions</TableHead>
+                <TableHead className="text-right">Net</TableHead>
+                <TableHead>Statut</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {pagedPayslips.map((p) => (
+                <TableRow key={p.id}>
+                  <TableCell>
                     <div className="font-medium">{p.nom_complet}</div>
                     <div className="text-xs text-muted-foreground">{p.matricule}{p.poste ? ` · ${p.poste}` : ''}</div>
-                  </td>
-                  <td className="px-3 py-2 text-right num">{formatFCFA(Number(p.salaire_base))}</td>
-                  <td className="px-3 py-2 text-right num">{formatFCFA(Number(p.commissions))}</td>
-                  <td className="px-3 py-2 text-right num">{formatFCFA(Number(p.primes))}</td>
-                  <td className="px-3 py-2 text-right num">{formatFCFA(Number(p.retenue_cnps))}</td>
-                  <td className="px-3 py-2 text-right num">{formatFCFA(Number(p.retenue_its))}</td>
-                  <td className="px-3 py-2 text-right num">{formatFCFA(Number(p.deductions))}</td>
-                  <td className="px-3 py-2 text-right num font-medium">{formatFCFA(Number(p.salaire_net))}</td>
-                  <td className="px-3 py-2"><StatutBadge statut={p.statut} /></td>
-                  <td className="px-3 py-2 text-right">
+                  </TableCell>
+                  <TableCell className="text-right num">{formatCurrency(Number(p.salaire_base))}</TableCell>
+                  <TableCell className="text-right num">{formatCurrency(Number(p.commissions))}</TableCell>
+                  <TableCell className="text-right num">{formatCurrency(Number(p.primes))}</TableCell>
+                  <TableCell className="text-right num">{formatCurrency(Number(p.retenue_cnps))}</TableCell>
+                  <TableCell className="text-right num">{formatCurrency(Number(p.retenue_its))}</TableCell>
+                  <TableCell className="text-right num">{formatCurrency(Number(p.deductions))}</TableCell>
+                  <TableCell className="text-right num font-medium">{formatCurrency(Number(p.salaire_net))}</TableCell>
+                  <TableCell><StatutBadge statut={p.statut} /></TableCell>
+                  <TableCell className="text-right">
                     <Button size="icon" variant="ghost" title="Télécharger le bulletin PDF" onClick={() => downloadPayslipPdf(p.id, p.nom_complet)}>
                       <FileDown className="h-4 w-4" />
                     </Button>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-              {(!selected.payslips || selected.payslips.length === 0) && (
-                <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">Aucun bulletin</td></tr>
+              {payslips.length === 0 && (
+                <TableRow><TableCell colSpan={10} className="py-6 text-center text-muted-foreground">Aucun bulletin</TableCell></TableRow>
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
+        {payslipTotalPages > 1 && (
+          <Pagination
+            page={payslipPage}
+            totalPages={payslipTotalPages}
+            total={payslips.length}
+            limit={PAYSLIPS_PAGE_SIZE}
+            onPageChange={setPayslipPage}
+          />
+        )}
         {selected.statut === 'brouillon' && (
           <p className="text-xs text-muted-foreground">
             Astuce: les primes/déductions par bulletin sont modifiables via l'API tant que le cycle est en brouillon.
@@ -254,95 +277,100 @@ export default function Payroll() {
   // ---------- List view ----------
   return (
     <div className="space-y-4 p-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Wallet className="h-5 w-5" />
-          <h1 className="text-xl font-semibold">Paie</h1>
-        </div>
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-1 h-4 w-4" /> Générer un cycle
-        </Button>
-      </div>
+      <PageHeader
+        title="Paie"
+        icon={Wallet}
+        actions={
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-1 h-4 w-4" /> Générer un cycle
+          </Button>
+        }
+      />
 
       {/* Statut filter */}
-      {!loading && runs.length > 0 && (
-        <div className="flex gap-1 bg-muted/40 rounded-lg p-1 w-fit">
-          {(['all', 'brouillon', 'valide', 'paye', 'annule'] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => setFilterStatut(s)}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterStatut === s ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              {s === 'all' ? 'Tous' : STATUT_LABEL[s]}
-            </button>
-          ))}
-        </div>
+      {!loading && !error && runs.length > 0 && (
+        <Tabs value={filterStatut} onValueChange={(v) => setFilterStatut(v as 'all' | PayrollRun['statut'])}>
+          <TabsList>
+            {(['all', 'brouillon', 'valide', 'paye', 'annule'] as const).map((s) => (
+              <TabsTrigger key={s} value={s}>
+                {s === 'all' ? 'Tous' : STATUT_LABEL[s]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       )}
 
-      {loading ? (
-        <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>
-      ) : runs.length === 0 ? (
-        <EmptyState icon={Wallet} title="Aucun cycle de paie" description="Générez votre premier cycle de paie pour une période." />
-      ) : (() => {
-        const filtered = filterStatut === 'all' ? runs : runs.filter((r) => r.statut === filterStatut);
-        if (filtered.length === 0) {
-          return <EmptyState icon={Wallet} title="Aucun cycle pour ce statut" />;
-        }
-        const deleteBtn = (r: PayrollRun) => r.statut === 'brouillon' && (
-          <Button
-            size="icon" variant="ghost"
-            onClick={async (e) => {
-              e.stopPropagation();
-              if (!(await confirm({ title: 'Supprimer ce cycle de paie ?', description: `Le cycle ${r.numero} (brouillon) et ses bulletins seront supprimés. Cette action est irréversible.`, confirmLabel: 'Supprimer', destructive: true }))) return;
-              runAction(() => payrollService.remove(r.id).then(() => ({})), 'Cycle supprimé');
-            }}
-          >
-            <Trash2 className="h-4 w-4 text-destructive" />
-          </Button>
-        );
-        return (
-          <ResponsiveTable
-            cards={filtered.map((r) => (
-              <DataCard key={r.id} onClick={() => openRun(r.id)} title={r.numero} badge={<StatutBadge statut={r.statut} />}>
-                <DataCardRow label="Période" value={r.periode} />
-                <DataCardRow label="Bulletins" value={<span className="num">{r.nb_bulletins ?? '—'}</span>} />
-                <DataCardRow label="Net" value={<span className="num font-semibold">{formatFCFA(Number(r.total_net))}</span>} />
-                {r.statut === 'brouillon' && (
-                  <div className="mt-2 flex justify-end" onClick={(e) => e.stopPropagation()}>{deleteBtn(r)}</div>
-                )}
-              </DataCard>
-            ))}
-            table={
-              <div className="overflow-x-auto rounded-lg border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 text-left">
-                    <tr>
-                      <th className="px-3 py-2">Numéro</th>
-                      <th className="px-3 py-2">Période</th>
-                      <th className="px-3 py-2 text-right">Bulletins</th>
-                      <th className="px-3 py-2 text-right">Net</th>
-                      <th className="px-3 py-2">Statut</th>
-                      <th className="px-3 py-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {filtered.map((r) => (
-                      <tr key={r.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openRun(r.id)}>
-                        <td className="px-3 py-2 font-medium">{r.numero}</td>
-                        <td className="px-3 py-2">{r.periode}</td>
-                        <td className="px-3 py-2 text-right num">{r.nb_bulletins ?? '—'}</td>
-                        <td className="px-3 py-2 text-right num">{formatFCFA(Number(r.total_net))}</td>
-                        <td className="px-3 py-2"><StatutBadge statut={r.statut} /></td>
-                        <td className="px-3 py-2 text-right">{deleteBtn(r)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            }
-          />
-        );
-      })()}
+      <QueryState
+        loading={loading}
+        error={error}
+        isEmpty={runs.length === 0}
+        onRetry={loadRuns}
+        skeleton={<TableSkeleton rows={6} columns={6} />}
+        emptyIcon={Wallet}
+        emptyTitle="Aucun cycle de paie"
+        emptyDescription="Générez votre premier cycle de paie pour une période."
+      >
+        {(() => {
+          const filtered = filterStatut === 'all' ? runs : runs.filter((r) => r.statut === filterStatut);
+          if (filtered.length === 0) {
+            return <EmptyState icon={Wallet} title="Aucun cycle pour ce statut" />;
+          }
+          const deleteBtn = (r: PayrollRun) => r.statut === 'brouillon' && (
+            <Button
+              size="icon" variant="ghost"
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (!(await confirm({ title: 'Supprimer ce cycle de paie ?', description: `Le cycle ${r.numero} (brouillon) et ses bulletins seront supprimés. Cette action est irréversible.`, confirmLabel: 'Supprimer', destructive: true }))) return;
+                runAction(() => payrollService.remove(r.id).then(() => ({})), 'Cycle supprimé');
+              }}
+            >
+              <Trash2 className="h-4 w-4 text-destructive" />
+            </Button>
+          );
+          return (
+            <ResponsiveTable
+              cards={filtered.map((r) => (
+                <DataCard key={r.id} onClick={() => openRun(r.id)} title={r.numero} badge={<StatutBadge statut={r.statut} />}>
+                  <DataCardRow label="Période" value={r.periode} />
+                  <DataCardRow label="Bulletins" value={<span className="num">{r.nb_bulletins ?? '—'}</span>} />
+                  <DataCardRow label="Net" value={<span className="num font-semibold">{formatCurrency(Number(r.total_net))}</span>} />
+                  {r.statut === 'brouillon' && (
+                    <div className="mt-2 flex justify-end" onClick={(e) => e.stopPropagation()}>{deleteBtn(r)}</div>
+                  )}
+                </DataCard>
+              ))}
+              table={
+                <div className="rounded-lg border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Numéro</TableHead>
+                        <TableHead>Période</TableHead>
+                        <TableHead className="text-right">Bulletins</TableHead>
+                        <TableHead className="text-right">Net</TableHead>
+                        <TableHead>Statut</TableHead>
+                        <TableHead />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map((r) => (
+                        <TableRow key={r.id} className="cursor-pointer" onClick={() => openRun(r.id)}>
+                          <TableCell className="font-medium">{r.numero}</TableCell>
+                          <TableCell>{r.periode}</TableCell>
+                          <TableCell className="text-right num">{r.nb_bulletins ?? '—'}</TableCell>
+                          <TableCell className="text-right num">{formatCurrency(Number(r.total_net))}</TableCell>
+                          <TableCell><StatutBadge statut={r.statut} /></TableCell>
+                          <TableCell className="text-right">{deleteBtn(r)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              }
+            />
+          );
+        })()}
+      </QueryState>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>

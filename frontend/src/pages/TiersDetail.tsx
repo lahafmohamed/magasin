@@ -4,23 +4,32 @@ import { tiersService, acompteService, acompteFournisseurService, crmService, ap
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { badgeVariants } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { PageHeader } from '@/components/ui/page-header';
+import { QueryState } from '@/components/ui/query-state';
+import { EmptyState } from '@/components/ui/empty-state';
+import { CardSkeleton, TableSkeleton } from '@/components/ui/skeleton';
+import { Pagination } from '@/components/ui/pagination';
 import {
-  ArrowLeft, Users, Truck, Wallet,
+  Users, Truck, Wallet,
   Plus, RefreshCw, GitMerge, Phone, Mail, MapPin, FileText,
   Calendar, CheckCircle2, Clock, MessageSquare,
   Trash2, AlertCircle, FileDown
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { formatFCFA } from '@/utils/format';
+import { cn } from '@/lib/utils';
+import { formatCurrency, formatDateShort } from '@/utils/format';
 
 const METHODES = ['espece', 'carte', 'cheque', 'virement', 'mobile_money', 'orange_money', 'mtn_money', 'wave'];
+
+const LEDGER_PAGE_SIZE = 25;
 
 const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   facture_client:    { label: 'Facture',         color: 'text-danger-600' },
@@ -40,8 +49,10 @@ export default function TiersDetail() {
 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [ledgerPage, setLedgerPage] = useState(1);
 
   const [showAcompteClient, setShowAcompteClient] = useState(false);
   const [showAcompteForun, setShowAcompteFourn] = useState(false);
@@ -77,7 +88,7 @@ export default function TiersDetail() {
   const [refundTarget, setRefundTarget] = useState<{ kind: 'client' | 'fournisseur'; acompte: any } | null>(null);
   const [refundForm, setRefundForm] = useState({ montant: '', methode: 'espece', session_caisse_id: '', notes: '' });
 
-  useEffect(() => { loadData(); }, [tiersId, dateFrom, dateTo]);
+  useEffect(() => { setLedgerPage(1); loadData(); }, [tiersId, dateFrom, dateTo]);
   useEffect(() => { tiersService.getCompensations(tiersId).then(setCompensations).catch(() => {}); }, [tiersId]);
   useEffect(() => { loadAcomptes(); }, [tiersId]);
 
@@ -216,10 +227,11 @@ export default function TiersDetail() {
 
   const loadData = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await tiersService.getCompte(tiersId, dateFrom || undefined, dateTo || undefined);
       setData(res);
-    } catch { toast.error('Erreur chargement compte tiers'); }
+    } catch (err) { setError(err); toast.error('Erreur chargement compte tiers'); }
     finally { setLoading(false); }
   };
 
@@ -295,8 +307,34 @@ export default function TiersDetail() {
     } catch { toast.error('Erreur recalcul'); }
   };
 
-  if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground">Chargement...</div>;
-  if (!data) return <div className="p-8 text-center text-muted-foreground">Tiers introuvable</div>;
+  if (loading || error || !data) {
+    return (
+      <div className="container mx-auto px-4 py-6 max-w-6xl space-y-6">
+        <PageHeader backTo="/tiers" title="Compte tiers" />
+        <QueryState
+          loading={loading}
+          error={error}
+          isEmpty={!data}
+          onRetry={loadData}
+          skeleton={
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Card key={i}><CardSkeleton lines={2} /></Card>
+                ))}
+              </div>
+              <Card><TableSkeleton rows={8} columns={6} /></Card>
+            </div>
+          }
+          emptyTitle="Tiers introuvable"
+          emptyDescription="Ce tiers n'existe pas ou n'est plus accessible."
+          emptyIcon={Users}
+        >
+          {null}
+        </QueryState>
+      </div>
+    );
+  }
 
   const { tiers, totaux, mouvements } = data;
   const soldeNet = totaux.solde_net;
@@ -306,41 +344,54 @@ export default function TiersDetail() {
   const soldeNetColor = soldeNet > 0 ? 'text-success-600' : soldeNet < 0 ? 'text-danger-600' : 'text-muted-foreground';
   const canCompensate = tiers.est_client && tiers.est_fournisseur && totaux.client.solde_client > 0 && totaux.fournisseur.solde_fournisseur > 0;
   const maxComp = canCompensate ? Math.min(totaux.client.solde_client, totaux.fournisseur.solde_fournisseur) : 0;
+  const ledgerTotalPages = Math.max(1, Math.ceil(mouvements.length / LEDGER_PAGE_SIZE));
+  const currentLedgerPage = Math.min(ledgerPage, ledgerTotalPages);
+  const pagedMouvements = mouvements.slice((currentLedgerPage - 1) * LEDGER_PAGE_SIZE, currentLedgerPage * LEDGER_PAGE_SIZE);
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-6xl space-y-6">
       {/* Back + Header */}
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/tiers')}><ArrowLeft className="h-4 w-4" /></Button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold">{tiers.raison_sociale}{tiers.prenom ? ` ${tiers.prenom}` : ''}</h1>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-xs font-mono text-muted-foreground">{tiers.code}</span>
-            {tiers.est_client && <Badge variant="outline" className="text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 text-xs py-0"><Users className="h-3 w-3 mr-1" />Client</Badge>}
-            {tiers.est_fournisseur && <Badge variant="outline" className="text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30 bg-orange-50 dark:bg-orange-500/10 text-xs py-0"><Truck className="h-3 w-3 mr-1" />Fournisseur</Badge>}
-          </div>
-        </div>
-        <div className="flex gap-2">
-          {tiers.est_client && (
-            <Button variant="outline" size="sm" onClick={() => setShowAcompteClient(true)} className="gap-1 text-xs">
-              <Plus className="h-3.5 w-3.5" /> Acompte client
+      <PageHeader
+        backTo="/tiers"
+        title={`${tiers.raison_sociale}${tiers.prenom ? ` ${tiers.prenom}` : ''}`}
+        description={
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-mono">{tiers.code}</span>
+            {tiers.est_client && (
+              <span className={cn(badgeVariants({ variant: 'outline' }), 'text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 text-xs py-0')}>
+                <Users className="h-3 w-3 mr-1" />Client
+              </span>
+            )}
+            {tiers.est_fournisseur && (
+              <span className={cn(badgeVariants({ variant: 'outline' }), 'text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30 bg-orange-50 dark:bg-orange-500/10 text-xs py-0')}>
+                <Truck className="h-3 w-3 mr-1" />Fournisseur
+              </span>
+            )}
+          </span>
+        }
+        actions={
+          <>
+            {tiers.est_client && (
+              <Button variant="outline" size="sm" onClick={() => setShowAcompteClient(true)} className="gap-1 text-xs">
+                <Plus className="h-3.5 w-3.5" /> Acompte client
+              </Button>
+            )}
+            {tiers.est_fournisseur && (
+              <Button variant="outline" size="sm" onClick={() => setShowAcompteFourn(true)} className="gap-1 text-xs">
+                <Plus className="h-3.5 w-3.5" /> Acompte fourn.
+              </Button>
+            )}
+            {canCompensate && (
+              <Button size="sm" onClick={() => { setCompForm(p => ({ ...p, montant: maxComp.toString() })); setShowCompensation(true); }} className="gap-1 text-xs bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600">
+                <GitMerge className="h-3.5 w-3.5" /> Compenser
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleRecompute} title="Recalculer allocation FIFO">
+              <RefreshCw className="h-3.5 w-3.5" />
             </Button>
-          )}
-          {tiers.est_fournisseur && (
-            <Button variant="outline" size="sm" onClick={() => setShowAcompteFourn(true)} className="gap-1 text-xs">
-              <Plus className="h-3.5 w-3.5" /> Acompte fourn.
-            </Button>
-          )}
-          {canCompensate && (
-            <Button size="sm" onClick={() => { setCompForm(p => ({ ...p, montant: maxComp.toString() })); setShowCompensation(true); }} className="gap-1 text-xs bg-purple-600 hover:bg-purple-700">
-              <GitMerge className="h-3.5 w-3.5" /> Compenser
-            </Button>
-          )}
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleRecompute} title="Recalculer allocation FIFO">
-            <RefreshCw className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* Contact info */}
       <Card>
@@ -362,10 +413,10 @@ export default function TiersDetail() {
             <CardContent className="pt-4">
               <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1"><Users className="h-3 w-3" /> Solde client</div>
               <div className={`text-xl font-bold ${totaux.client.solde_client > 0 ? 'text-danger-600' : totaux.client.solde_client < 0 ? 'text-success-600' : ''}`}>
-                {formatFCFA(totaux.client.solde_client)}
+                {formatCurrency(totaux.client.solde_client)}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
-                Facturé: {formatFCFA(totaux.client.total_facture)} · Payé: {formatFCFA(totaux.client.total_paye)}
+                Facturé: {formatCurrency(totaux.client.total_facture)} · Payé: {formatCurrency(totaux.client.total_paye)}
               </div>
             </CardContent>
           </Card>
@@ -375,10 +426,10 @@ export default function TiersDetail() {
             <CardContent className="pt-4">
               <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1"><Truck className="h-3 w-3" /> Solde fournisseur</div>
               <div className={`text-xl font-bold ${totaux.fournisseur.solde_fournisseur > 0 ? 'text-warning-600' : ''}`}>
-                {formatFCFA(totaux.fournisseur.solde_fournisseur)}
+                {formatCurrency(totaux.fournisseur.solde_fournisseur)}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
-                Facturé: {formatFCFA(totaux.fournisseur.total_facture_fourn)} · Payé: {formatFCFA(totaux.fournisseur.total_paye_fourn)}
+                Facturé: {formatCurrency(totaux.fournisseur.total_facture_fourn)} · Payé: {formatCurrency(totaux.fournisseur.total_paye_fourn)}
               </div>
             </CardContent>
           </Card>
@@ -386,7 +437,7 @@ export default function TiersDetail() {
         <Card className="border-2 border-primary/20">
           <CardContent className="pt-4">
             <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1"><Wallet className="h-3 w-3" /> Solde NET</div>
-            <div className={`text-2xl font-bold ${soldeNetColor}`}>{formatFCFA(soldeNet)}</div>
+            <div className={`text-2xl font-bold ${soldeNetColor}`}>{formatCurrency(soldeNet)}</div>
             <div className="text-xs text-muted-foreground mt-1">
               {soldeNet > 0 ? 'Il nous doit' : soldeNet < 0 ? 'Nous lui devons' : 'Compte soldé'}
             </div>
@@ -441,7 +492,7 @@ export default function TiersDetail() {
             <TableBody>
               {mouvements.length === 0 ? (
                 <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground text-sm">Aucun mouvement</TableCell></TableRow>
-              ) : mouvements.map((m: any, i: number) => {
+              ) : pagedMouvements.map((m: any, i: number) => {
                 const meta = TYPE_LABELS[m.type] || { label: m.type, color: '' };
                 const getDocumentLink = (movement: any): string | null => {
                   switch (movement.type) {
@@ -454,11 +505,11 @@ export default function TiersDetail() {
                 const link = getDocumentLink(m);
                 return (
                   <TableRow
-                    key={i}
+                    key={(currentLedgerPage - 1) * LEDGER_PAGE_SIZE + i}
                     className={`text-sm ${link ? 'cursor-pointer hover:bg-muted/80 transition-colors' : ''}`}
                     onClick={link ? () => navigate(link) : undefined}
                   >
-                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{m.date ? m.date.substring(0,10) : '—'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{m.date ? formatDateShort(m.date) : '—'}</TableCell>
                     <TableCell>
                       <span className={`text-xs px-1.5 py-0.5 rounded ${m.role === 'Client' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300' : 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300'}`}>
                         {m.role}
@@ -466,13 +517,24 @@ export default function TiersDetail() {
                     </TableCell>
                     <TableCell className={`text-xs font-medium ${meta.color}`}>{meta.label}</TableCell>
                     <TableCell className={`text-xs font-mono ${link ? 'text-primary underline' : ''}`}>{m.reference || m.libelle}</TableCell>
-                    <TableCell className="text-right text-xs text-danger-600">{m.debit > 0 ? formatFCFA(m.debit) : ''}</TableCell>
-                    <TableCell className="text-right text-xs text-success-600">{m.credit > 0 ? formatFCFA(m.credit) : ''}</TableCell>
+                    <TableCell className="text-right text-xs text-danger-600">{m.debit > 0 ? formatCurrency(m.debit) : ''}</TableCell>
+                    <TableCell className="text-right text-xs text-success-600">{m.credit > 0 ? formatCurrency(m.credit) : ''}</TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
           </Table>
+          {mouvements.length > LEDGER_PAGE_SIZE && (
+            <div className="border-t">
+              <Pagination
+                page={currentLedgerPage}
+                totalPages={ledgerTotalPages}
+                total={mouvements.length}
+                limit={LEDGER_PAGE_SIZE}
+                onPageChange={setLedgerPage}
+              />
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -503,10 +565,10 @@ export default function TiersDetail() {
                   <TableRow key={`c-${a.id}`} className="text-sm">
                     <TableCell><span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300">Client</span></TableCell>
                     <TableCell className="text-xs font-mono">{a.id}</TableCell>
-                    <TableCell className="text-xs">{(a.date_acompte || '').substring(0,10)}</TableCell>
+                    <TableCell className="text-xs">{formatDateShort(a.date_acompte)}</TableCell>
                     <TableCell className="text-xs">{a.methode_paiement}</TableCell>
-                    <TableCell className="text-right text-xs">{formatFCFA(a.montant)}</TableCell>
-                    <TableCell className="text-right text-xs font-semibold">{formatFCFA(a.montant_restant)}</TableCell>
+                    <TableCell className="text-right text-xs">{formatCurrency(a.montant)}</TableCell>
+                    <TableCell className="text-right text-xs font-semibold">{formatCurrency(a.montant_restant)}</TableCell>
                     <TableCell className="text-xs">{a.statut}</TableCell>
                     <TableCell>
                       <Button variant="outline" size="sm" className="text-xs h-7" onClick={() => openRefund('client', a)}>Rembourser</Button>
@@ -517,10 +579,10 @@ export default function TiersDetail() {
                   <TableRow key={`f-${a.id}`} className="text-sm">
                     <TableCell><span className="text-xs px-1.5 py-0.5 rounded bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300">Fourn.</span></TableCell>
                     <TableCell className="text-xs font-mono">{a.id}</TableCell>
-                    <TableCell className="text-xs">{(a.date_acompte || '').substring(0,10)}</TableCell>
+                    <TableCell className="text-xs">{formatDateShort(a.date_acompte)}</TableCell>
                     <TableCell className="text-xs">{a.methode_paiement}</TableCell>
-                    <TableCell className="text-right text-xs">{formatFCFA(a.montant)}</TableCell>
-                    <TableCell className="text-right text-xs font-semibold">{formatFCFA(a.montant_restant)}</TableCell>
+                    <TableCell className="text-right text-xs">{formatCurrency(a.montant)}</TableCell>
+                    <TableCell className="text-right text-xs font-semibold">{formatCurrency(a.montant_restant)}</TableCell>
                     <TableCell className="text-xs">{a.statut}</TableCell>
                     <TableCell>
                       <Button variant="outline" size="sm" className="text-xs h-7" onClick={() => openRefund('fournisseur', a)}>Rembourser</Button>
@@ -551,8 +613,8 @@ export default function TiersDetail() {
               <TableBody>
                 {compensations.map((c: any) => (
                   <TableRow key={c.id} className="text-sm">
-                    <TableCell className="text-xs">{c.date_compensation}</TableCell>
-                    <TableCell className="text-right text-xs font-semibold text-purple-700 dark:text-purple-300">{formatFCFA(c.montant)}</TableCell>
+                    <TableCell className="text-xs">{formatDateShort(c.date_compensation)}</TableCell>
+                    <TableCell className="text-right text-xs font-semibold text-purple-700 dark:text-purple-300">{formatCurrency(c.montant)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{c.notes || '—'}</TableCell>
                   </TableRow>
                 ))}
@@ -599,11 +661,11 @@ export default function TiersDetail() {
                         <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{typeConfig.label}</span>
                         <span className={`text-[10px] ${pConfig.color}`}>{pConfig.label}</span>
                         <span className="text-[10px] text-muted-foreground">
-                          {new Date(item.date_interaction).toLocaleDateString('fr-FR')}
+                          {formatDateShort(item.date_interaction)}
                         </span>
                         {item.date_rappel && (
                           <span className="text-[10px] text-warning-600 flex items-center gap-0.5">
-                            <Clock className="h-3 w-3" /> Rappel: {new Date(item.date_rappel).toLocaleDateString('fr-FR')}
+                            <Clock className="h-3 w-3" /> Rappel: {formatDateShort(item.date_rappel)}
                           </span>
                         )}
                       </div>
@@ -613,10 +675,7 @@ export default function TiersDetail() {
               })}
             </div>
           ) : (
-            <div className="px-4 py-6 text-center text-muted-foreground">
-              <MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">Aucune interaction enregistrée</p>
-            </div>
+            <EmptyState icon={MessageSquare} title="Aucune interaction enregistrée" className="py-8" />
           )}
         </CardContent>
       </Card>
@@ -669,7 +728,7 @@ export default function TiersDetail() {
                       )}
                       {t.date_echeance && (
                         <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
-                          <Calendar className="h-3 w-3" /> Échéance: {new Date(t.date_echeance).toLocaleDateString('fr-FR')}
+                          <Calendar className="h-3 w-3" /> Échéance: {formatDateShort(t.date_echeance)}
                         </span>
                       )}
                     </div>
@@ -678,10 +737,7 @@ export default function TiersDetail() {
               ))}
             </div>
           ) : (
-            <div className="px-4 py-6 text-center text-muted-foreground">
-              <CheckCircle2 className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">Aucune tâche</p>
-            </div>
+            <EmptyState icon={CheckCircle2} title="Aucune tâche" className="py-8" />
           )}
         </CardContent>
       </Card>
@@ -708,8 +764,7 @@ export default function TiersDetail() {
             </div>
             <div>
               <Label>Description</Label>
-              <textarea value={interactionForm.description} onChange={e => setInteractionForm(p => ({ ...p, description: e.target.value }))}
-                rows={3} className="w-full border rounded-md px-3 py-2 text-sm bg-background" />
+              <Textarea value={interactionForm.description} onChange={e => setInteractionForm(p => ({ ...p, description: e.target.value }))} rows={3} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -749,8 +804,7 @@ export default function TiersDetail() {
             </div>
             <div>
               <Label>Description</Label>
-              <textarea value={tacheForm.description} onChange={e => setTacheForm(p => ({ ...p, description: e.target.value }))}
-                rows={2} className="w-full border rounded-md px-3 py-2 text-sm bg-background" />
+              <Textarea value={tacheForm.description} onChange={e => setTacheForm(p => ({ ...p, description: e.target.value }))} rows={2} className="min-h-[60px]" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -850,15 +904,19 @@ export default function TiersDetail() {
             </div>
             <div>
               <Label>Magasin {acompteForm.methode === 'espece' && <span className="text-danger-500">*</span>}</Label>
-              <select
-                value={acompteForm.magasin_id}
-                onChange={e => setAcompteForm(p => ({ ...p, magasin_id: e.target.value }))}
-                required={acompteForm.methode === 'espece'}
-                className="w-full border rounded-md px-3 py-2 text-sm bg-background"
+              <Select
+                value={acompteForm.magasin_id || undefined}
+                onValueChange={v => setAcompteForm(p => ({ ...p, magasin_id: v }))}
               >
-                <option value="">-- Sélectionner --</option>
-                {magasinsList.map(m => <option key={m.id} value={m.id}>{m.nom} ({m.code})</option>)}
-              </select>
+                <SelectTrigger aria-label="Magasin">
+                  <SelectValue placeholder="— Choisir —" />
+                </SelectTrigger>
+                <SelectContent>
+                  {magasinsList.map(m => (
+                    <SelectItem key={m.id} value={String(m.id)}>{m.code} - {m.nom}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {acompteForm.methode === 'espece' && (
                 <p className="text-xs text-muted-foreground mt-1">Session caisse de ce magasin doit être ouverte.</p>
               )}
@@ -883,21 +941,21 @@ export default function TiersDetail() {
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle className="flex items-center gap-2"><GitMerge className="h-4 w-4 text-purple-600" /> Compensation (netting)</DialogTitle></DialogHeader>
           <div className="text-xs text-muted-foreground mb-3 p-3 bg-purple-50 dark:bg-purple-500/10 rounded-md">
-            Créance client : <strong>{formatFCFA(totaux.client.solde_client)}</strong><br />
-            Dette fournisseur : <strong>{formatFCFA(totaux.fournisseur.solde_fournisseur)}</strong><br />
-            Maximum compensable : <strong className="text-purple-700 dark:text-purple-300">{formatFCFA(maxComp)}</strong>
+            Créance client : <strong>{formatCurrency(totaux.client.solde_client)}</strong><br />
+            Dette fournisseur : <strong>{formatCurrency(totaux.fournisseur.solde_fournisseur)}</strong><br />
+            Maximum compensable : <strong className="text-purple-700 dark:text-purple-300">{formatCurrency(maxComp)}</strong>
           </div>
           <form onSubmit={handleCompensation} className="space-y-3">
             <div><Label>Date *</Label><Input type="date" value={compForm.date} onChange={e => setCompForm(p => ({ ...p, date: e.target.value }))} required /></div>
             <div>
               <Label>Montant à compenser *</Label>
               <MoneyInput value={compForm.montant} onChange={v => setCompForm(p => ({ ...p, montant: v }))} required placeholder="0" />
-              <p className="text-xs text-muted-foreground mt-0.5">Maximum: {formatFCFA(maxComp)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Maximum: {formatCurrency(maxComp)}</p>
             </div>
             <div><Label>Notes</Label><Input value={compForm.notes} onChange={e => setCompForm(p => ({ ...p, notes: e.target.value }))} /></div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowCompensation(false)}>Annuler</Button>
-              <Button type="submit" disabled={submitting} className="bg-purple-600 hover:bg-purple-700">{submitting ? 'Enregistrement...' : 'Compenser'}</Button>
+              <Button type="submit" disabled={submitting} className="bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600">{submitting ? 'Enregistrement...' : 'Compenser'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -914,7 +972,7 @@ export default function TiersDetail() {
           {refundTarget && (
             <form onSubmit={handleRefund} className="space-y-3">
               <div className="text-xs p-2 bg-muted rounded">
-                Restant : <strong>{formatFCFA(refundTarget.acompte.montant_restant)}</strong>
+                Restant : <strong>{formatCurrency(refundTarget.acompte.montant_restant)}</strong>
                 {refundTarget.kind === 'fournisseur' && (
                   <div className="mt-1 text-warning-600">Fournisseur restitue le cash → encaissement caisse.</div>
                 )}

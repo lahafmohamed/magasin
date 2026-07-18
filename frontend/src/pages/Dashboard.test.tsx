@@ -94,7 +94,7 @@ describe('Dashboard', () => {
 
   it('shows a loading state initially', () => {
     render(<Dashboard />);
-    expect(screen.getByText(/Chargement/i)).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-skeleton')).toBeInTheDocument();
   });
 
   it('renders the dashboard heading after loading', async () => {

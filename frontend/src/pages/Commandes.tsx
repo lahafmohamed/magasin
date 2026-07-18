@@ -24,7 +24,7 @@ import {
   X, AlertTriangle, BookOpen,
   TrendingUp
 } from 'lucide-react';
-import { normalizeSearch } from '@/utils/format';
+import { formatCurrency, normalizeSearch } from '@/utils/format';
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 
@@ -256,7 +256,7 @@ export default function Commandes() {
       case 'validee':
         return <Badge variant="default" className="gap-1"><CheckCircle className="h-3 w-3" /> Validée</Badge>;
       case 'expediee':
-        return <Badge className="gap-1 bg-blue-500 hover:bg-blue-600 text-white"><Truck className="h-3 w-3" /> Expédiée</Badge>;
+        return <Badge className="gap-1 bg-blue-500 text-white"><Truck className="h-3 w-3" /> Expédiée</Badge>;
       case 'livree':
         return <Badge variant="success" className="gap-1"><Package className="h-3 w-3" /> Livrée</Badge>;
       case 'annulee':
@@ -846,7 +846,7 @@ export default function Commandes() {
                       >
                         <DataCardRow label="Fournisseur" value={c.fournisseur_nom || '—'} />
                         <DataCardRow label="Date" value={new Date(c.date_commande).toLocaleDateString('fr-FR')} />
-                        <DataCardRow label="Montant" value={<span className="num font-semibold">{parseFloat(c.sous_total).toFixed(2)} XOF</span>} />
+                        <DataCardRow label="Montant" value={<span className="num font-semibold">{formatCurrency(c.sous_total)}</span>} />
                         <DataCardRow
                           label="Livraison"
                           value={c.date_livraison_prevue
@@ -913,7 +913,7 @@ export default function Commandes() {
                       <TableCell className="font-mono font-bold text-primary group-hover:underline">{c.numero_commande}</TableCell>
                       <TableCell className="font-semibold">{c.fournisseur_nom}</TableCell>
                       <TableCell>{new Date(c.date_commande).toLocaleDateString('fr-FR')}</TableCell>
-                      <TableCell className="font-bold">{parseFloat(c.sous_total).toFixed(2)} XOF</TableCell>
+                      <TableCell className="font-bold">{formatCurrency(c.sous_total)}</TableCell>
                       <TableCell>
                         {c.date_livraison_prevue ? (
                           <span className={`inline-flex items-center gap-1 font-semibold ${isLate ? 'text-destructive' : ''}`}>

@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { X, Loader2, Plus, FileText } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { EmptyState } from '@/components/ui/empty-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { factureFournisseurService, receptionService, produitService, acompteFournisseurService } from '../services/api';
@@ -10,11 +9,17 @@ import { Tiers } from '../types';
 import { toast } from 'sonner';
 import { MoneyInput } from '../components/ui/money-input';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { formatFCFA } from '../utils/format';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
+import { QueryState } from '@/components/ui/query-state';
+import { PageHeader } from '@/components/ui/page-header';
+import { Pagination } from '@/components/ui/pagination';
+import { formatCurrency, formatDateShort } from '../utils/format';
 
 
 interface Reception {
@@ -64,25 +69,23 @@ interface Product {
   nom: string;
 }
 
-const BADGE_BASE = 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium';
-
-const STATUT_BADGE: Record<string, string> = {
-  en_attente: 'bg-warning-100 text-warning-800',
-  validee: 'bg-info-100 text-info-700',
-  partiellement_payee: 'bg-primary-100 text-primary-700',
-  payee: 'bg-success-100 text-success-700',
-  annulee: 'bg-muted text-muted-foreground',
+// Statuts propres aux factures fournisseur — non couverts par <StatusBadge>
+// (pas de type "facture fournisseur") ; map locale sur les variantes sémantiques de <Badge>.
+const STATUT_CONFIG: Record<string, { label: string; variant: 'default' | 'secondary' | 'success' | 'warning' | 'info' }> = {
+  en_attente: { label: 'En attente', variant: 'warning' },
+  validee: { label: 'Validée', variant: 'info' },
+  partiellement_payee: { label: 'Partielle', variant: 'default' },
+  payee: { label: 'Payée', variant: 'success' },
+  annulee: { label: 'Annulée', variant: 'secondary' },
 };
 
-const STATUT_LABELS: Record<string, string> = {
-  en_attente: 'En attente',
-  validee: 'Validée',
-  partiellement_payee: 'Partielle',
-  payee: 'Payée',
-  annulee: 'Annulée',
-};
+function StatutBadge({ statut }: { statut: string }) {
+  const config = STATUT_CONFIG[statut];
+  if (!config) return <Badge variant="outline">{statut}</Badge>;
+  return <Badge variant={config.variant}>{config.label}</Badge>;
+}
 
-const TABLE_HEAD = 'px-1 py-1.5 font-medium text-xs';
+const TABLE_HEAD = 'h-auto px-1 py-1.5 font-medium text-xs';
 
 export default function FacturesFournisseur() {
   const [factures, setFactures] = useState<FactureFournisseur[]>([]);
@@ -93,9 +96,18 @@ export default function FacturesFournisseur() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
   const [filterStatut, setFilterStatut] = useState<string>('');
 
+  // Pagination serveur (l'API renvoie { data, pagination: { total, totalPages } }).
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+
+  // Tri client sur la page courante uniquement (le backend ne supporte pas de
+  // paramètre de tri sur cette liste — ORDER BY date_facture DESC fixe).
   type FactureSortKey = 'numero_facture_interne' | 'fournisseur_nom' | 'date_facture' | 'total';
   const [sort, setSort] = useState<SortState<FactureSortKey> | null>(null);
   const handleSort = (key: FactureSortKey) => setSort((s) => toggleSort(s, key));
@@ -122,17 +134,26 @@ export default function FacturesFournisseur() {
 
   useEffect(() => {
     fetchFactures();
+  }, [filterStatut, page, limit]);
+
+  useEffect(() => {
     fetchReceptions();
     fetchProducts();
-  }, [filterStatut]);
+  }, []);
 
   const fetchFactures = async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
-      const data = await factureFournisseurService.getAll(undefined, filterStatut || undefined, undefined, 1, 20);
-      setFactures(data.data || data);
+      const data = await factureFournisseurService.getAll(undefined, filterStatut || undefined, undefined, page, limit);
+      const rows = data.data || data;
+      setFactures(Array.isArray(rows) ? rows : []);
+      setTotal(data.pagination?.total ?? (Array.isArray(rows) ? rows.length : 0));
+      setTotalPages(data.pagination?.totalPages ?? 1);
     } catch (error: any) {
       console.error('Error fetching factures fournisseur:', error);
       toast.error(error.response?.data?.error || 'Erreur chargement factures');
+      setLoadError(error);
     } finally {
       setLoading(false);
     }
@@ -308,41 +329,39 @@ export default function FacturesFournisseur() {
     return arr;
   }, [factures, sort]);
 
-  if (loading) {
-    return (
-      <div className="container mx-auto p-6">
-        <TableSkeleton rows={10} columns={6} />
-      </div>
-    );
-  }
-
   return (
     <div className="container mx-auto p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Factures fournisseur</h1>
-        <div className="flex gap-2">
-          <Select
-            value={filterStatut === '' ? '__all' : filterStatut}
-            onValueChange={(v) => setFilterStatut(v === '__all' ? '' : v)}
-          >
-            <SelectTrigger className="w-auto" aria-label="Filtrer par statut">
-              <SelectValue placeholder="Tous les statuts" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all">Tous les statuts</SelectItem>
-              <SelectItem value="en_attente">En attente</SelectItem>
-              <SelectItem value="validee">Validée</SelectItem>
-              <SelectItem value="partiellement_payee">Partiellement payée</SelectItem>
-              <SelectItem value="payee">Payée</SelectItem>
-              <SelectItem value="annulee">Annulée</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
-            <Plus className="h-4 w-4" />
-            Nouvelle facture
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Factures fournisseur"
+        className="mb-6"
+        actions={
+          <>
+            <Select
+              value={filterStatut === '' ? '__all' : filterStatut}
+              onValueChange={(v) => {
+                setFilterStatut(v === '__all' ? '' : v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-auto" aria-label="Filtrer par statut">
+                <SelectValue placeholder="Tous les statuts" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all">Tous les statuts</SelectItem>
+                <SelectItem value="en_attente">En attente</SelectItem>
+                <SelectItem value="validee">Validée</SelectItem>
+                <SelectItem value="partiellement_payee">Partiellement payée</SelectItem>
+                <SelectItem value="payee">Payée</SelectItem>
+                <SelectItem value="annulee">Annulée</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
+              <Plus className="h-4 w-4" />
+              Nouvelle facture
+            </Button>
+          </>
+        }
+      />
 
       <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
         <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -492,7 +511,7 @@ export default function FacturesFournisseur() {
                   onChange={(v) => setPaymentData({ ...paymentData, montant: v })}
                   required
                 />
-                <p className="text-xs text-muted-foreground num">Reste dû: {formatFCFA(selectedFacture.reste_due)}</p>
+                <p className="text-xs text-muted-foreground num">Reste dû: {formatCurrency(selectedFacture.reste_due)}</p>
               </div>
 
               <div className="space-y-1.5">
@@ -573,7 +592,7 @@ export default function FacturesFournisseur() {
                       <SelectItem value="__none">— Sélectionner —</SelectItem>
                       {acomptesDispo.map(a => (
                         <SelectItem key={a.id} value={String(a.id)}>
-                          #{a.id} — {new Date(a.date_acompte).toLocaleDateString('fr-FR')} — restant {formatFCFA(a.montant_restant)} ({a.methode_paiement})
+                          #{a.id} — {formatDateShort(a.date_acompte)} — restant {formatCurrency(a.montant_restant)} ({a.methode_paiement})
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -587,7 +606,7 @@ export default function FacturesFournisseur() {
                     required
                   />
                   <p className="text-xs text-muted-foreground num">
-                    Reste dû facture: {formatFCFA(selectedFacture.reste_due)}
+                    Reste dû facture: {formatCurrency(selectedFacture.reste_due)}
                   </p>
                 </div>
                 <DialogFooter>
@@ -611,42 +630,73 @@ export default function FacturesFournisseur() {
         <div className="rounded-md border bg-card shadow-sm">
           <div className="p-5">
             <h2 className="text-lg font-semibold mb-3">Factures</h2>
-            {sortedFactures.length === 0 ? (
-              <EmptyState icon={FileText} title="Aucune facture fournisseur" />
-            ) : (
-              <div className="overflow-x-auto rounded-md border">
-                <table className="w-full text-xs">
-                  <thead className="bg-muted/50 text-left">
-                    <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                      <SortableHeader columnKey="numero_facture_interne" sort={sort} onSort={handleSort} buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">N° interne</SortableHeader>
-                      <SortableHeader columnKey="fournisseur_nom" sort={sort} onSort={handleSort} buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">Fournisseur</SortableHeader>
-                      <SortableHeader columnKey="date_facture" sort={sort} onSort={handleSort} buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">Date</SortableHeader>
-                      <SortableHeader columnKey="total" sort={sort} onSort={handleSort} align="right" buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">Total</SortableHeader>
-                      <th className={TABLE_HEAD}>Statut</th>
-                      <th className={TABLE_HEAD}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {sortedFactures.map((facture) => (
-                      <tr key={facture.id} className="hover:bg-muted/30">
-                        <td className="px-1 py-1.5 font-medium text-xs num">{facture.numero_facture_interne}</td>
-                        <td className="px-1 py-1.5">{facture.fournisseur_nom}</td>
-                        <td className="px-1 py-1.5 text-xs num">{new Date(facture.date_facture).toLocaleDateString('fr-FR')}</td>
-                        <td className="px-1 py-1.5 text-right font-medium num">{formatFCFA(facture.total)}</td>
-                        <td className="px-1 py-1.5">
-                          <span className={`${BADGE_BASE} ${STATUT_BADGE[facture.statut] || 'bg-muted text-muted-foreground'}`}>
-                            {STATUT_LABELS[facture.statut] || facture.statut}
-                          </span>
-                        </td>
-                        <td className="px-1 py-1.5">
-                          <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => handleSelectFacture(facture)}>Voir</Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <QueryState
+              loading={loading}
+              error={loadError}
+              isEmpty={factures.length === 0}
+              onRetry={fetchFactures}
+              skeleton={<TableSkeleton rows={10} columns={6} />}
+              emptyTitle="Aucune facture fournisseur"
+              emptyIcon={FileText}
+            >
+              <ResponsiveTable
+                table={
+                  <div className="rounded-md border">
+                    <Table className="text-xs">
+                      <TableHeader className="bg-muted/50">
+                        <TableRow className="text-xs uppercase tracking-wide hover:bg-transparent">
+                          <SortableHeader columnKey="numero_facture_interne" sort={sort} onSort={handleSort} buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">N° interne</SortableHeader>
+                          <SortableHeader columnKey="fournisseur_nom" sort={sort} onSort={handleSort} buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">Fournisseur</SortableHeader>
+                          <SortableHeader columnKey="date_facture" sort={sort} onSort={handleSort} buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">Date</SortableHeader>
+                          <SortableHeader columnKey="total" sort={sort} onSort={handleSort} align="right" buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">Total</SortableHeader>
+                          <TableHead className={TABLE_HEAD}>Statut</TableHead>
+                          <TableHead className={TABLE_HEAD}>Action</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sortedFactures.map((facture) => (
+                          <TableRow key={facture.id} className="hover:bg-muted/30">
+                            <TableCell className="px-1 py-1.5 font-medium text-xs num">{facture.numero_facture_interne}</TableCell>
+                            <TableCell className="px-1 py-1.5">{facture.fournisseur_nom}</TableCell>
+                            <TableCell className="px-1 py-1.5 text-xs num">{formatDateShort(facture.date_facture)}</TableCell>
+                            <TableCell className="px-1 py-1.5 text-right font-medium num">{formatCurrency(facture.total)}</TableCell>
+                            <TableCell className="px-1 py-1.5">
+                              <StatutBadge statut={facture.statut} />
+                            </TableCell>
+                            <TableCell className="px-1 py-1.5">
+                              <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => handleSelectFacture(facture)}>Voir</Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                }
+                cards={sortedFactures.map((facture) => (
+                  <DataCard
+                    key={facture.id}
+                    title={facture.numero_facture_interne}
+                    badge={<StatutBadge statut={facture.statut} />}
+                    onClick={() => handleSelectFacture(facture)}
+                  >
+                    <DataCardRow label="Fournisseur" value={facture.fournisseur_nom} />
+                    <DataCardRow label="Date" value={<span className="num">{formatDateShort(facture.date_facture)}</span>} />
+                    <DataCardRow label="Total" value={<span className="font-medium num">{formatCurrency(facture.total)}</span>} />
+                  </DataCard>
+                ))}
+              />
+              <Pagination
+                page={page}
+                totalPages={totalPages}
+                total={total}
+                limit={limit}
+                onPageChange={setPage}
+                onLimitChange={(l) => {
+                  setLimit(l);
+                  setPage(1);
+                }}
+              />
+            </QueryState>
           </div>
         </div>
 
@@ -663,68 +713,66 @@ export default function FacturesFournisseur() {
                 </div>
                 <div className="space-y-1 text-right">
                   <p className="text-muted-foreground">Date:</p>
-                  <p className="font-semibold">{new Date(selectedFacture.date_facture).toLocaleDateString('fr-FR')}</p>
+                  <p className="font-semibold">{formatDateShort(selectedFacture.date_facture)}</p>
                   {selectedFacture.date_echeance && (
                     <>
                       <p className="text-muted-foreground mt-2">Échéance:</p>
-                      <p className="font-semibold">{new Date(selectedFacture.date_echeance).toLocaleDateString('fr-FR')}</p>
+                      <p className="font-semibold">{formatDateShort(selectedFacture.date_echeance)}</p>
                     </>
                   )}
                 </div>
                 <div className="col-span-2 border-t pt-3 flex justify-between items-center">
                   <span className="text-muted-foreground">Statut:</span>
-                  <span className={`${BADGE_BASE} ${STATUT_BADGE[selectedFacture.statut] || 'bg-muted text-muted-foreground'}`}>
-                    {STATUT_LABELS[selectedFacture.statut] || selectedFacture.statut}
-                  </span>
+                  <StatutBadge statut={selectedFacture.statut} />
                 </div>
               </div>
 
               <div className="mb-4 p-3 bg-muted/40 rounded-md border text-sm space-y-1.5">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Total Facture:</span>
-                  <span className="font-semibold">{formatFCFA(selectedFacture.total)}</span>
+                  <span className="font-semibold">{formatCurrency(selectedFacture.total)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Montant payé:</span>
-                  <span className="font-semibold text-success-700 dark:text-success-400">{formatFCFA(selectedFacture.montant_paye)}</span>
+                  <span className="font-semibold text-success-700 dark:text-success-400">{formatCurrency(selectedFacture.montant_paye)}</span>
                 </div>
                 <div className="flex justify-between border-t pt-1.5 font-bold">
                   <span>Reste à payer:</span>
                   <span className={parseFloat(selectedFacture.reste_due) > 0 ? "text-danger-600 dark:text-danger-400" : "text-success-600"}>
-                    {formatFCFA(selectedFacture.reste_due)}
+                    {formatCurrency(selectedFacture.reste_due)}
                   </span>
                 </div>
               </div>
 
-              <div className="overflow-x-auto rounded-md border mb-4">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 text-left">
-                    <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className={TABLE_HEAD}>Produit</th>
-                      <th className={TABLE_HEAD + ' text-right'}>Qté</th>
-                      <th className={TABLE_HEAD + ' text-right'}>Prix unit.</th>
-                      <th className={TABLE_HEAD + ' text-right'}>TVA %</th>
-                      <th className={TABLE_HEAD + ' text-right'}>Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
+              <div className="rounded-md border mb-4">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow className="text-xs uppercase tracking-wide hover:bg-transparent">
+                      <TableHead className="h-auto px-3 py-2 text-xs">Produit</TableHead>
+                      <TableHead className="h-auto px-3 py-2 text-xs text-right">Qté</TableHead>
+                      <TableHead className="h-auto px-3 py-2 text-xs text-right">Prix unit.</TableHead>
+                      <TableHead className="h-auto px-3 py-2 text-xs text-right">TVA %</TableHead>
+                      <TableHead className="h-auto px-3 py-2 text-xs text-right">Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {selectedFacture.lignes.map((ligne) => (
-                      <tr key={ligne.id}>
-                        <td className="px-3 py-2">{ligne.produit_nom || ligne.description}</td>
-                        <td className="px-3 py-2 text-right num">{ligne.quantite}</td>
-                        <td className="px-3 py-2 text-right num">{formatFCFA(ligne.prix_unitaire)}</td>
-                        <td className="px-3 py-2 text-right num">{ligne.tva_taux}%</td>
-                        <td className="px-3 py-2 text-right font-medium num">{formatFCFA(ligne.total_ligne)}</td>
-                      </tr>
+                      <TableRow key={ligne.id}>
+                        <TableCell className="px-3 py-2">{ligne.produit_nom || ligne.description}</TableCell>
+                        <TableCell className="px-3 py-2 text-right num">{ligne.quantite}</TableCell>
+                        <TableCell className="px-3 py-2 text-right num">{formatCurrency(ligne.prix_unitaire)}</TableCell>
+                        <TableCell className="px-3 py-2 text-right num">{ligne.tva_taux}%</TableCell>
+                        <TableCell className="px-3 py-2 text-right font-medium num">{formatCurrency(ligne.total_ligne)}</TableCell>
+                      </TableRow>
                     ))}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               </div>
 
               <div className="flex gap-2">
                 {selectedFacture.statut !== 'payee' && (
                   <>
-                    <Button onClick={() => setShowPaymentForm(true)} className="bg-success-600 hover:bg-success-700 text-white">
+                    <Button variant="success" onClick={() => setShowPaymentForm(true)}>
                       Enregistrer paiement
                     </Button>
                     <Button variant="outline" onClick={openAcompteApply}>
