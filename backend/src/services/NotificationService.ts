@@ -38,6 +38,8 @@ export class NotificationService {
         res.write(':\n\n');
       } catch {
         clearInterval(heartbeat);
+        this.clients = this.clients.filter(c => c.id !== id);
+        logger.info(`SSE client ${id} removed on heartbeat error (${this.clients.length} remaining)`);
       }
     }, 30000);
 
@@ -56,13 +58,16 @@ export class NotificationService {
    */
   static broadcast(event: string, data: any): void {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const activeClients: SSEClient[] = [];
     this.clients.forEach(client => {
       try {
         client.res.write(payload);
+        activeClients.push(client);
       } catch {
-        // Client déconnecté, sera retiré au prochain heartbeat
+        logger.info(`SSE client ${client.id} failed to write on broadcast, removing.`);
       }
     });
+    this.clients = activeClients;
   }
 
   /**

@@ -28,6 +28,7 @@ interface SortableHeaderProps<K extends string> {
   className?: string;
   /** Aligne l'icône à droite (colonnes numériques). */
   align?: 'left' | 'right';
+  buttonClassName?: string;
 }
 
 /**
@@ -41,6 +42,7 @@ export function SortableHeader<K extends string>({
   children,
   className,
   align = 'left',
+  buttonClassName,
 }: SortableHeaderProps<K>) {
   const active = sort?.key === columnKey;
   const ariaSort = active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : 'none';
@@ -53,7 +55,8 @@ export function SortableHeader<K extends string>({
         onClick={() => onSort(columnKey)}
         className={cn(
           'flex w-full items-center gap-1.5 px-2 sm:px-4 py-2 font-medium transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm',
-          align === 'right' ? 'justify-end' : 'justify-start'
+          align === 'right' ? 'justify-end' : 'justify-start',
+          buttonClassName
         )}
       >
         {align === 'right' && (

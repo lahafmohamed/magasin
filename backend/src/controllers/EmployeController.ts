@@ -8,7 +8,7 @@ export class EmployeController {
    */
   static async getAll(req: Request, res: Response): Promise<void> {
     try {
-      const { search, departement, actif, page, limit } = req.query;
+      const { search, departement, actif, page, limit, sort, order } = req.query;
 
       const employees = await employeService.getAll({
         search: search as string,
@@ -16,6 +16,8 @@ export class EmployeController {
         actif: actif === 'true' ? true : actif === 'false' ? false : undefined,
         page: parseInt(page as string) || 1,
         limit: parseInt(limit as string) || 20,
+        sort: sort as string,
+        order: order as string,
       });
 
       paginatedResponse(res, employees.data, employees.total, parseInt(page as string) || 1, parseInt(limit as string) || 20, 'Employés récupérés avec succès');
@@ -74,6 +76,26 @@ export class EmployeController {
       res.status(201).json({ success: true, data: employee, message: 'Employé créé avec succès' });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  /**
+   * Update employee (partial)
+   */
+  static async update(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      const { matricule, nom_complet, poste, departement, date_embauche, date_naissance, telephone, email, adresse, salaire_base, commission_taux, actif } = req.body;
+
+      const employee = await employeService.update(parseInt(id), {
+        matricule, nom_complet, poste, departement, date_embauche, date_naissance,
+        telephone, email, adresse, salaire_base, commission_taux, actif,
+      }, req);
+
+      successResponse(res, employee, 'Employé mis à jour avec succès');
+    } catch (error: any) {
+      const status = /existe déjà|non trouvé/.test(error.message) ? 400 : 500;
+      res.status(status).json({ success: false, error: error.message });
     }
   }
 

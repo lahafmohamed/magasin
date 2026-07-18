@@ -53,10 +53,12 @@ export class EmployeService extends BaseService<EmployeRecord> {
   /**
    * Get all employees with pagination
    */
-  async getAll(options?: { search?: string; departement?: string; actif?: boolean; page?: number; limit?: number }): Promise<{ data: any[]; total: number }> {
+  async getAll(options?: { search?: string; departement?: string; actif?: boolean; page?: number; limit?: number; sort?: string; order?: string }): Promise<{ data: any[]; total: number }> {
     const page = options?.page || 1;
     const limit = options?.limit || 20;
     const offset = (page - 1) * limit;
+    const sortColumn = this.allowedSortColumns.includes(options?.sort || '') ? options!.sort : this.defaultSortColumn;
+    const sortOrder = (options?.order || '').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 
     let query = `
       SELECT ${this.selectColumns}
@@ -81,7 +83,7 @@ export class EmployeService extends BaseService<EmployeRecord> {
       params.push(`%${options.search}%`, `%${options.search}%`, `%${options.search}%`);
     }
 
-    query += ' ORDER BY e.nom_complet ASC';
+    query += ` ORDER BY e.${sortColumn} ${sortOrder}`;
     query += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
@@ -163,6 +165,76 @@ export class EmployeService extends BaseService<EmployeRecord> {
     } catch (error) {
       await client.query('ROLLBACK');
       logger.error({ err: error }, 'Error creating employee');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Update employee (partial). Only whitelisted columns are writable.
+   */
+  async update(id: number, input: Partial<CreateEmployeInput> & { actif?: boolean }, req?: any): Promise<EmployeRecord> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const { rows: existing } = await client.query('SELECT id FROM employes WHERE id = $1 FOR UPDATE', [id]);
+      if (existing.length === 0) {
+        throw new Error('Employé non trouvé');
+      }
+
+      // Matricule uniqueness (if changed)
+      if (input.matricule !== undefined) {
+        const { rows: dup } = await client.query('SELECT id FROM employes WHERE matricule = $1 AND id <> $2', [input.matricule, id]);
+        if (dup.length > 0) {
+          throw new Error(`Le matricule ${input.matricule} existe déjà`);
+        }
+      }
+
+      const editable = [
+        'matricule', 'nom_complet', 'poste', 'departement', 'date_embauche', 'date_naissance',
+        'telephone', 'email', 'adresse', 'salaire_base', 'commission_taux', 'actif',
+      ] as const;
+
+      const sets: string[] = [];
+      const params: any[] = [];
+      for (const col of editable) {
+        const value = (input as any)[col];
+        if (value !== undefined) {
+          params.push(value === '' ? null : value);
+          sets.push(`${col} = $${params.length}`);
+        }
+      }
+
+      if (sets.length === 0) {
+        const { rows: current } = await client.query('SELECT * FROM employes WHERE id = $1', [id]);
+        await client.query('COMMIT');
+        return current[0];
+      }
+
+      params.push(id);
+      const { rows } = await client.query(
+        `UPDATE employes SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+        params
+      );
+
+      await client.query('COMMIT');
+
+      await logAudit({
+        utilisateur_id: req?.user?.id,
+        action: 'update',
+        table_name: 'employes',
+        record_id: id,
+        req,
+        new_values: { ...input },
+      });
+
+      logger.info({ employeId: id }, 'Employee updated');
+      return rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      logger.error({ err: error }, 'Error updating employee');
       throw error;
     } finally {
       client.release();

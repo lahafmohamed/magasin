@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/AuthContext';
+import { api } from '../services/api';
 import { EmptyState } from '@/components/ui/empty-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
 
@@ -108,20 +109,12 @@ export default function DepensesV2() {
 
   const loadMagasins = async () => {
     try {
-      const response = await fetch('/api/caisse/magasins', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-      });
-      const data = await response.json();
-      
-      if (data.success) {
-        setMagasins(data.data);
-        if (data.data.length === 1) {
-          setSelectedMagasin(data.data[0].id);
-        } else {
-          // More than one magasin — user must pick one; stop spinner
-          setLoading(false);
-        }
+      const { data } = await api.get('/caisse/magasins');
+      setMagasins(data || []);
+      if (data && data.length === 1) {
+        setSelectedMagasin(data[0].id);
       } else {
+        // More than one magasin — user must pick one; stop spinner
         setLoading(false);
       }
     } catch (error) {
@@ -132,14 +125,8 @@ export default function DepensesV2() {
 
   const loadCategories = async () => {
     try {
-      const response = await fetch('/api/depenses/categories/list', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-      });
-      const data = await response.json();
-      
-      if (data.success) {
-        setCategories(data.data);
-      }
+      const { data } = await api.get('/depenses/categories/list');
+      setCategories(data || []);
     } catch (error) {
       console.error('Error loading categories:', error);
     }
@@ -147,14 +134,8 @@ export default function DepensesV2() {
 
   const loadSessionActive = async (magasinId: number) => {
     try {
-      const response = await fetch(`/api/caisse/session-active?magasin_id=${magasinId}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-      });
-      const data = await response.json();
-      
-      if (data.success) {
-        setSessionActive(data.data);
-      }
+      const { data } = await api.get(`/caisse/session-active?magasin_id=${magasinId}`);
+      setSessionActive(data);
     } catch (error) {
       console.error('Error loading session:', error);
     }
@@ -165,16 +146,9 @@ export default function DepensesV2() {
     
     setLoading(true);
     try {
-      const response = await fetch(
-        `/api/depenses?magasin_id=${selectedMagasin}&limit=100`,
-        { headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }}
-      );
-      const data = await response.json();
-      
-      if (data.success) {
-        setDepenses(data.data);
-        setTotalDepenses(data.data.reduce((sum: number, d: Depense) => sum + d.montant, 0));
-      }
+      const { data } = await api.get(`/depenses?magasin_id=${selectedMagasin}&limit=100`);
+      setDepenses(data || []);
+      setTotalDepenses((data || []).reduce((sum: number, d: Depense) => sum + d.montant, 0));
     } catch (error) {
       toast.error('Erreur lors du chargement des dépenses');
     } finally {
@@ -213,54 +187,42 @@ export default function DepensesV2() {
     }
 
     try {
-      const response = await fetch('/api/depenses', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        },
-        body: JSON.stringify({
-          magasin_id: selectedMagasin,
-          montant: parseFloat(formData.montant),
-          categorie_id: parseInt(formData.categorie_id),
-          methode_paiement: formData.methode_paiement,
-          description: formData.description,
-          beneficiaire_libre: formData.beneficiaire_libre || undefined,
-          date_depense: formData.date_depense
-        })
+      await api.post('/depenses', {
+        magasin_id: selectedMagasin,
+        montant: parseFloat(formData.montant),
+        categorie_id: parseInt(formData.categorie_id),
+        methode_paiement: formData.methode_paiement,
+        description: formData.description,
+        beneficiaire_libre: formData.beneficiaire_libre || undefined,
+        date_depense: formData.date_depense
       });
 
-      const data = await response.json();
-
-      if (response.ok) {
-        toast.success('Dépense créée avec succès');
-        setOpenDialog(false);
-        resetForm();
-        loadDepenses();
-        // Refresh session to update balance
-        loadSessionActive(selectedMagasin);
+      toast.success('Dépense créée avec succès');
+      setOpenDialog(false);
+      resetForm();
+      loadDepenses();
+      // Refresh session to update balance
+      loadSessionActive(selectedMagasin);
+    } catch (error: any) {
+      const data = error.response?.data;
+      if (error.response?.status === 422 && data?.code === 'CAISSE_FERMEE') {
+        toast.error(
+          <div className="flex flex-col gap-2">
+            <span>{data.error}</span>
+            <Button 
+              size="sm" 
+              variant="outline"
+              onClick={() => window.location.href = '/caisse'}
+              className="w-fit"
+            >
+              Ouvrir la caisse →
+            </Button>
+          </div>,
+          { duration: 5000 }
+        );
       } else {
-        if (response.status === 422 && data.code === 'CAISSE_FERMEE') {
-          toast.error(
-            <div className="flex flex-col gap-2">
-              <span>{data.error}</span>
-              <Button 
-                size="sm" 
-                variant="outline"
-                onClick={() => window.location.href = '/caisse'}
-                className="w-fit"
-              >
-                Ouvrir la caisse →
-              </Button>
-            </div>,
-            { duration: 5000 }
-          );
-        } else {
-          toast.error(data.error || 'Erreur lors de la création');
-        }
+        toast.error(data?.error || 'Erreur lors de la création');
       }
-    } catch (error) {
-      toast.error('Erreur réseau');
     }
   };
 
@@ -268,23 +230,14 @@ export default function DepensesV2() {
     if (!(await confirm({ title: 'Supprimer cette dépense ?', description: 'Cette action est irréversible.', confirmLabel: 'Supprimer', destructive: true }))) return;
 
     try {
-      const response = await fetch(`/api/depenses/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-      });
-
-      if (response.ok) {
-        toast.success('Dépense supprimée');
-        loadDepenses();
-        if (selectedMagasin) {
-          loadSessionActive(selectedMagasin);
-        }
-      } else {
-        const data = await response.json();
-        toast.error(data.error || 'Erreur lors de la suppression');
+      await api.delete(`/depenses/${id}`);
+      toast.success('Dépense supprimée');
+      loadDepenses();
+      if (selectedMagasin) {
+        loadSessionActive(selectedMagasin);
       }
-    } catch (error) {
-      toast.error('Erreur réseau');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Erreur lors de la suppression');
     }
   };
 

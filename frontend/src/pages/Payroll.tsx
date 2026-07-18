@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import { formatFCFA } from '../utils/format';
 
 interface PayrollRun {
@@ -75,11 +76,12 @@ export default function Payroll() {
   const [periode, setPeriode] = useState(new Date().toISOString().slice(0, 7));
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
+  const [filterStatut, setFilterStatut] = useState<'all' | PayrollRun['statut']>('all');
 
   const loadRuns = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await payrollService.getAll();
+      const data = await payrollService.getAll(1, 100);
       setRuns(Array.isArray(data) ? data : data?.data ?? []);
     } catch {
       toast.error('Erreur lors du chargement des cycles de paie');
@@ -262,51 +264,85 @@ export default function Payroll() {
         </Button>
       </div>
 
+      {/* Statut filter */}
+      {!loading && runs.length > 0 && (
+        <div className="flex gap-1 bg-muted/40 rounded-lg p-1 w-fit">
+          {(['all', 'brouillon', 'valide', 'paye', 'annule'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setFilterStatut(s)}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${filterStatut === s ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              {s === 'all' ? 'Tous' : STATUT_LABEL[s]}
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>
       ) : runs.length === 0 ? (
         <EmptyState icon={Wallet} title="Aucun cycle de paie" description="Générez votre premier cycle de paie pour une période." />
-      ) : (
-        <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-left">
-              <tr>
-                <th className="px-3 py-2">Numéro</th>
-                <th className="px-3 py-2">Période</th>
-                <th className="px-3 py-2 text-right">Bulletins</th>
-                <th className="px-3 py-2 text-right">Net</th>
-                <th className="px-3 py-2">Statut</th>
-                <th className="px-3 py-2"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {runs.map((r) => (
-                <tr key={r.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openRun(r.id)}>
-                  <td className="px-3 py-2 font-medium">{r.numero}</td>
-                  <td className="px-3 py-2">{r.periode}</td>
-                  <td className="px-3 py-2 text-right num">{r.nb_bulletins ?? '—'}</td>
-                  <td className="px-3 py-2 text-right num">{formatFCFA(Number(r.total_net))}</td>
-                  <td className="px-3 py-2"><StatutBadge statut={r.statut} /></td>
-                  <td className="px-3 py-2 text-right">
-                    {r.statut === 'brouillon' && (
-                      <Button
-                        size="icon" variant="ghost"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if (!(await confirm({ title: 'Supprimer ce cycle de paie ?', description: `Le cycle ${r.numero} (brouillon) et ses bulletins seront supprimés. Cette action est irréversible.`, confirmLabel: 'Supprimer', destructive: true }))) return;
-                          runAction(() => payrollService.remove(r.id).then(() => ({})), 'Cycle supprimé');
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      ) : (() => {
+        const filtered = filterStatut === 'all' ? runs : runs.filter((r) => r.statut === filterStatut);
+        if (filtered.length === 0) {
+          return <EmptyState icon={Wallet} title="Aucun cycle pour ce statut" />;
+        }
+        const deleteBtn = (r: PayrollRun) => r.statut === 'brouillon' && (
+          <Button
+            size="icon" variant="ghost"
+            onClick={async (e) => {
+              e.stopPropagation();
+              if (!(await confirm({ title: 'Supprimer ce cycle de paie ?', description: `Le cycle ${r.numero} (brouillon) et ses bulletins seront supprimés. Cette action est irréversible.`, confirmLabel: 'Supprimer', destructive: true }))) return;
+              runAction(() => payrollService.remove(r.id).then(() => ({})), 'Cycle supprimé');
+            }}
+          >
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </Button>
+        );
+        return (
+          <ResponsiveTable
+            cards={filtered.map((r) => (
+              <DataCard key={r.id} onClick={() => openRun(r.id)} title={r.numero} badge={<StatutBadge statut={r.statut} />}>
+                <DataCardRow label="Période" value={r.periode} />
+                <DataCardRow label="Bulletins" value={<span className="num">{r.nb_bulletins ?? '—'}</span>} />
+                <DataCardRow label="Net" value={<span className="num font-semibold">{formatFCFA(Number(r.total_net))}</span>} />
+                {r.statut === 'brouillon' && (
+                  <div className="mt-2 flex justify-end" onClick={(e) => e.stopPropagation()}>{deleteBtn(r)}</div>
+                )}
+              </DataCard>
+            ))}
+            table={
+              <div className="overflow-x-auto rounded-lg border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-left">
+                    <tr>
+                      <th className="px-3 py-2">Numéro</th>
+                      <th className="px-3 py-2">Période</th>
+                      <th className="px-3 py-2 text-right">Bulletins</th>
+                      <th className="px-3 py-2 text-right">Net</th>
+                      <th className="px-3 py-2">Statut</th>
+                      <th className="px-3 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {filtered.map((r) => (
+                      <tr key={r.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openRun(r.id)}>
+                        <td className="px-3 py-2 font-medium">{r.numero}</td>
+                        <td className="px-3 py-2">{r.periode}</td>
+                        <td className="px-3 py-2 text-right num">{r.nb_bulletins ?? '—'}</td>
+                        <td className="px-3 py-2 text-right num">{formatFCFA(Number(r.total_net))}</td>
+                        <td className="px-3 py-2"><StatutBadge statut={r.statut} /></td>
+                        <td className="px-3 py-2 text-right">{deleteBtn(r)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            }
+          />
+        );
+      })()}
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>

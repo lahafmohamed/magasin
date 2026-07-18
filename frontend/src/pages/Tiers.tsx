@@ -4,13 +4,14 @@ import { tiersService } from '../services/api';
 import { Tiers } from '../types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
-import { Plus, Search, Pencil, Trash2, Users, Truck, UserCheck, Eye, ArrowUpDown, Download } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Users, Truck, UserCheck, Eye, ArrowUpDown, ArrowUp, ArrowDown, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatFCFA } from '@/utils/format';
 import { useExportExcel } from '../hooks/useExportExcel';
@@ -81,6 +82,13 @@ export default function TiersPage() {
     else { setSort(col); setOrder('asc'); }
   };
 
+  const SortIcon = ({ col }: { col: string }) => {
+    if (sort !== col) return <ArrowUpDown className="h-3 w-3 opacity-40" />;
+    return order === 'asc'
+      ? <ArrowUp className="h-3 w-3 opacity-100" />
+      : <ArrowDown className="h-3 w-3 opacity-100" />;
+  };
+
   const openCreate = () => { setEditing(null); setFormData(blankForm); setShowForm(true); };
   const openEdit = (t: Tiers) => {
     setEditing(t);
@@ -130,20 +138,22 @@ export default function TiersPage() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><UserCheck className="h-6 w-6" /> Contacts</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{total} contacts au total</p>
         </div>
-        <Button variant="outline" onClick={() => exportToExcel(tiers, [
-          { key: 'raison_sociale', label: 'Raison sociale' },
-          { key: 'telephone', label: 'Téléphone' },
-          { key: 'email', label: 'Email' },
-          { key: 'adresse', label: 'Adresse' },
-          { key: 'solde_client', label: 'Solde client' },
-          { key: 'solde_fournisseur', label: 'Solde fournisseur' },
-        ], 'tiers')} className="gap-2">
-          <Download className="h-4 w-4" />
-          Excel
-        </Button>
-        <Button onClick={openCreate} className="gap-2 self-start sm:self-auto">
-          <Plus className="h-4 w-4" /> Nouveau contact
-        </Button>
+        <div className="flex gap-2 self-start sm:self-auto">
+          <Button variant="outline" onClick={() => exportToExcel(tiers, [
+            { key: 'raison_sociale', label: 'Raison sociale' },
+            { key: 'telephone', label: 'Téléphone' },
+            { key: 'email', label: 'Email' },
+            { key: 'adresse', label: 'Adresse' },
+            { key: 'solde_client', label: 'Solde client' },
+            { key: 'solde_fournisseur', label: 'Solde fournisseur' },
+          ], 'tiers')} className="gap-2">
+            <Download className="h-4 w-4" />
+            Excel
+          </Button>
+          <Button onClick={openCreate} className="gap-2">
+            <Plus className="h-4 w-4" /> Nouveau contact
+          </Button>
+        </div>
       </div>
 
       {/* Role tabs */}
@@ -223,16 +233,16 @@ export default function TiersPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('code')}>
-                  <span className="flex items-center gap-1">Code <ArrowUpDown className="h-3 w-3 opacity-50" /></span>
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('code')} aria-sort={sort === 'code' ? (order === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                  <span className="flex items-center gap-1">Code <SortIcon col="code" /></span>
                 </TableHead>
-                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('raison_sociale')}>
-                  <span className="flex items-center gap-1">Raison sociale <ArrowUpDown className="h-3 w-3 opacity-50" /></span>
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('raison_sociale')} aria-sort={sort === 'raison_sociale' ? (order === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                  <span className="flex items-center gap-1">Raison sociale <SortIcon col="raison_sociale" /></span>
                 </TableHead>
                 <TableHead>Contact</TableHead>
                 <TableHead>Rôles</TableHead>
-                <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort('solde_client_actuel')}>
-                  <span className="flex items-center justify-end gap-1">Solde client <ArrowUpDown className="h-3 w-3 opacity-50" /></span>
+                <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort('solde_client_actuel')} aria-sort={sort === 'solde_client_actuel' ? (order === 'asc' ? 'ascending' : 'descending') : 'none'}>
+                  <span className="flex items-center justify-end gap-1">Solde client <SortIcon col="solde_client_actuel" /></span>
                 </TableHead>
                 <TableHead className="text-right">Solde fourn.</TableHead>
                 <TableHead className="text-right font-semibold">Solde net</TableHead>
@@ -370,7 +380,7 @@ export default function TiersPage() {
             </div>
             <div>
               <Label>Notes</Label>
-              <Input value={formData.notes} onChange={e => setFormData(p => ({ ...p, notes: e.target.value }))} />
+              <Textarea value={formData.notes} onChange={e => setFormData(p => ({ ...p, notes: e.target.value }))} rows={2} />
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Annuler</Button>

@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatFCFA as formatXOF } from '../utils/format';
+import { api } from '../services/api';
 
 interface Magasin {
   id: number;
@@ -204,19 +205,11 @@ export default function CaisseV2() {
 
   const loadMagasins = async () => {
     try {
-      const response = await fetch('/api/caisse/magasins', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-      });
-      const data = await response.json();
-      
-      if (data.success) {
-        setMagasins(data.data);
-        // Auto-select if only one magasin
-        if (data.data.length === 1) {
-          setSelectedMagasin(data.data[0].id);
-        }
-      } else {
-        toast.error(data.error || 'Erreur lors du chargement des magasins');
+      const { data } = await api.get('/caisse/magasins');
+      setMagasins(data || []);
+      // Auto-select if only one magasin
+      if (data && data.length === 1) {
+        setSelectedMagasin(data[0].id);
       }
     } catch (error) {
       toast.error('Erreur lors du chargement des magasins');
@@ -226,23 +219,15 @@ export default function CaisseV2() {
   const loadSession = async (magasinId: number) => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/caisse/session-active?magasin_id=${magasinId}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-      });
-      const data = await response.json();
-      
-      if (data.success) {
-        setSession(data.data);
-        if (data.data?.id) {
-          loadMouvements(data.data.id);
-        } else {
-          setMouvements([]);
-        }
+      const { data } = await api.get(`/caisse/session-active?magasin_id=${magasinId}`);
+      setSession(data);
+      if (data?.id) {
+        loadMouvements(data.id);
       } else {
-        toast.error(data.error || 'Erreur lors du chargement de la caisse');
+        setMouvements([]);
       }
     } catch (error: any) {
-      toast.error(error.message || 'Erreur lors du chargement de la caisse');
+      toast.error(error.response?.data?.error || error.message || 'Erreur lors du chargement de la caisse');
     } finally {
       setLoading(false);
     }
@@ -250,14 +235,8 @@ export default function CaisseV2() {
 
   const loadMouvements = async (sessionId: number) => {
     try {
-      const response = await fetch(`/api/caisse/${sessionId}/mouvements`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-      });
-      const data = await response.json();
-      
-      if (data.success) {
-        setMouvements(data.data);
-      }
+      const { data } = await api.get(`/caisse/${sessionId}/mouvements`);
+      setMouvements(data || []);
     } catch (error) {
       console.error('Erreur chargement mouvements:', error);
     }
@@ -270,38 +249,25 @@ export default function CaisseV2() {
     }
 
     try {
-      const response = await fetch('/api/caisse/ouvrir', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        },
-        body: JSON.stringify({
-          magasin_id: selectedMagasin,
-          fond_initial: parseFloat(fondInitial),
-          commentaire_ouverture: commentaireOuverture
-        })
+      await api.post('/caisse/ouvrir', {
+        magasin_id: selectedMagasin,
+        fond_initial: parseFloat(fondInitial),
+        commentaire_ouverture: commentaireOuverture
       });
 
-      const data = await response.json();
-
-      if (response.ok) {
-        toast.success('Caisse ouverte avec succès');
-        setOpenDialog(false);
-        setFondInitial('');
-        setCommentaireOuverture('');
-        loadSession(selectedMagasin);
+      toast.success('Caisse ouverte avec succès');
+      setOpenDialog(false);
+      setFondInitial('');
+      setCommentaireOuverture('');
+      loadSession(selectedMagasin);
+    } catch (error: any) {
+      if (error.response?.status === 409) {
+        toast.error('Une caisse est déjà ouverte pour ce magasin');
+      } else if (error.response?.status === 403) {
+        toast.error('Accès refusé');
       } else {
-        if (response.status === 409) {
-          toast.error('Une caisse est déjà ouverte pour ce magasin');
-        } else if (response.status === 403) {
-          toast.error('Accès refusé');
-        } else {
-          toast.error(data.error || 'Erreur lors de l\'ouverture');
-        }
+        toast.error(error.response?.data?.error || error.message || 'Erreur lors de l\'ouverture');
       }
-    } catch (error) {
-      toast.error('Erreur réseau');
     }
   };
 
@@ -312,21 +278,13 @@ export default function CaisseV2() {
     dispatchClose({ type: 'previewLoading' });
     try {
       const qs = fondFinalNum !== undefined ? `?fond_final_compte=${fondFinalNum}` : '';
-      const r = await fetch(`/api/caisse/cloture-preview/${sessionId}${qs}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-      });
-      const d = await r.json();
+      const { data } = await api.get(`/caisse/cloture-preview/${sessionId}${qs}`);
       if (reqId !== previewReqId.current) return; // stale response — a newer request superseded it
-      if (d.success) {
-        dispatchClose({ type: 'previewLoaded', preview: d.data });
-      } else {
-        dispatchClose({ type: 'previewError', error: d.error || 'Erreur preview' });
-        toast.error(d.error || 'Erreur preview');
-      }
+      dispatchClose({ type: 'previewLoaded', preview: data });
     } catch (e: any) {
       if (reqId !== previewReqId.current) return; // stale response
-      dispatchClose({ type: 'previewError', error: e.message || 'Erreur preview' });
-      toast.error(e.message || 'Erreur preview');
+      dispatchClose({ type: 'previewError', error: e.response?.data?.error || e.message || 'Erreur preview' });
+      toast.error(e.response?.data?.error || e.message || 'Erreur preview');
     }
   };
 
@@ -352,11 +310,7 @@ export default function CaisseV2() {
 
   const handleCloseSession = async () => {
     if (!session?.id || !closeState.fondFinal) {
-      toast.error('Comptage final requis');
-      return;
-    }
-    if (!closeState.closurePreview?.can_close) {
-      toast.error('Mouvements orphelins — régularisez avant clôture');
+      toast.error('Veuillez saisir le fond final réel');
       return;
     }
 
@@ -368,30 +322,17 @@ export default function CaisseV2() {
     }
 
     try {
-      const response = await fetch(`/api/caisse/cloturer/${session.id}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        },
-        body: JSON.stringify({
-          fond_final_compte: fondFinalNum,
-          commentaire_cloture: closeState.commentaireCloture
-        })
+      const response = await api.post(`/caisse/cloturer/${session.id}`, {
+        fond_final_compte: fondFinalNum,
+        commentaire_cloture: closeState.commentaireCloture
       });
 
-      const data = await response.json();
-
-      if (response.ok) {
-        toast.success(data.message);
-        setCloseDialog(false);
-        dispatchClose({ type: 'reset' });
-        loadSession(selectedMagasin!);
-      } else {
-        toast.error(data.error || 'Erreur lors de la clôture');
-      }
-    } catch (error) {
-      toast.error('Erreur réseau');
+      toast.success(response.data?.message || 'Caisse clôturée avec succès');
+      setCloseDialog(false);
+      dispatchClose({ type: 'reset' });
+      loadSession(selectedMagasin!);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || 'Erreur lors de la clôture');
     }
   };
 
@@ -406,33 +347,21 @@ export default function CaisseV2() {
       return;
     }
     try {
-      const r = await fetch(`/api/caisse/${session.id}/mouvement-divers`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
-        },
-        body: JSON.stringify({
-          type: diversType,
-          categorie: diversCategorie,
-          montant: parseFloat(diversMontant),
-          methode_paiement: diversMethode,
-          libelle: diversLibelle.trim(),
-          idempotency_key: `divers-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        })
+      await api.post(`/caisse/${session.id}/mouvement-divers`, {
+        type: diversType,
+        categorie: diversCategorie,
+        montant: parseFloat(diversMontant),
+        methode_paiement: diversMethode,
+        libelle: diversLibelle.trim(),
+        idempotency_key: `divers-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       });
-      const d = await r.json();
-      if (r.ok) {
-        toast.success('Mouvement enregistré');
-        setDiversDialog(false);
-        setDiversMontant('');
-        setDiversLibelle('');
-        loadSession(selectedMagasin!);
-      } else {
-        toast.error(d.error || 'Erreur');
-      }
+      toast.success('Mouvement enregistré');
+      setDiversDialog(false);
+      setDiversMontant('');
+      setDiversLibelle('');
+      loadSession(selectedMagasin!);
     } catch (e: any) {
-      toast.error(e.message || 'Erreur réseau');
+      toast.error(e.response?.data?.error || e.message || 'Erreur réseau');
     }
   };
 

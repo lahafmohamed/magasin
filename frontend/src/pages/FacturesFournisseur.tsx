@@ -74,7 +74,15 @@ const STATUT_BADGE: Record<string, string> = {
   annulee: 'bg-muted text-muted-foreground',
 };
 
-const TABLE_HEAD = 'px-3 py-2 font-medium';
+const STATUT_LABELS: Record<string, string> = {
+  en_attente: 'En attente',
+  validee: 'Validée',
+  partiellement_payee: 'Partielle',
+  payee: 'Payée',
+  annulee: 'Annulée',
+};
+
+const TABLE_HEAD = 'px-1 py-1.5 font-medium text-xs';
 
 export default function FacturesFournisseur() {
   const [factures, setFactures] = useState<FactureFournisseur[]>([]);
@@ -501,6 +509,8 @@ export default function FacturesFournisseur() {
                     <SelectItem value="cheque">Chèque</SelectItem>
                     <SelectItem value="espece">Espèces</SelectItem>
                     <SelectItem value="carte">Carte</SelectItem>
+                    <SelectItem value="wave">Wave</SelectItem>
+                    <SelectItem value="orange_money">Orange Money</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -605,13 +615,13 @@ export default function FacturesFournisseur() {
               <EmptyState icon={FileText} title="Aucune facture fournisseur" />
             ) : (
               <div className="overflow-x-auto rounded-md border">
-                <table className="w-full text-sm">
+                <table className="w-full text-xs">
                   <thead className="bg-muted/50 text-left">
                     <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                      <SortableHeader columnKey="numero_facture_interne" sort={sort} onSort={handleSort}>N° interne</SortableHeader>
-                      <SortableHeader columnKey="fournisseur_nom" sort={sort} onSort={handleSort}>Fournisseur</SortableHeader>
-                      <SortableHeader columnKey="date_facture" sort={sort} onSort={handleSort}>Date</SortableHeader>
-                      <SortableHeader columnKey="total" sort={sort} onSort={handleSort} align="right">Total</SortableHeader>
+                      <SortableHeader columnKey="numero_facture_interne" sort={sort} onSort={handleSort} buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">N° interne</SortableHeader>
+                      <SortableHeader columnKey="fournisseur_nom" sort={sort} onSort={handleSort} buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">Fournisseur</SortableHeader>
+                      <SortableHeader columnKey="date_facture" sort={sort} onSort={handleSort} buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">Date</SortableHeader>
+                      <SortableHeader columnKey="total" sort={sort} onSort={handleSort} align="right" buttonClassName="px-1 sm:px-1.5 py-1.5 text-xs">Total</SortableHeader>
                       <th className={TABLE_HEAD}>Statut</th>
                       <th className={TABLE_HEAD}>Action</th>
                     </tr>
@@ -619,15 +629,17 @@ export default function FacturesFournisseur() {
                   <tbody className="divide-y">
                     {sortedFactures.map((facture) => (
                       <tr key={facture.id} className="hover:bg-muted/30">
-                        <td className="px-3 py-2 font-medium text-xs num">{facture.numero_facture_interne}</td>
-                        <td className="px-3 py-2">{facture.fournisseur_nom}</td>
-                        <td className="px-3 py-2 text-xs num">{new Date(facture.date_facture).toLocaleDateString('fr-FR')}</td>
-                        <td className="px-3 py-2 text-right font-medium num">{formatFCFA(facture.total)}</td>
-                        <td className="px-3 py-2">
-                          <span className={`${BADGE_BASE} ${STATUT_BADGE[facture.statut] || 'bg-muted text-muted-foreground'}`}>{facture.statut}</span>
+                        <td className="px-1 py-1.5 font-medium text-xs num">{facture.numero_facture_interne}</td>
+                        <td className="px-1 py-1.5">{facture.fournisseur_nom}</td>
+                        <td className="px-1 py-1.5 text-xs num">{new Date(facture.date_facture).toLocaleDateString('fr-FR')}</td>
+                        <td className="px-1 py-1.5 text-right font-medium num">{formatFCFA(facture.total)}</td>
+                        <td className="px-1 py-1.5">
+                          <span className={`${BADGE_BASE} ${STATUT_BADGE[facture.statut] || 'bg-muted text-muted-foreground'}`}>
+                            {STATUT_LABELS[facture.statut] || facture.statut}
+                          </span>
                         </td>
-                        <td className="px-3 py-2">
-                          <Button variant="outline" size="sm" onClick={() => handleSelectFacture(facture)}>Voir</Button>
+                        <td className="px-1 py-1.5">
+                          <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => handleSelectFacture(facture)}>Voir</Button>
                         </td>
                       </tr>
                     ))}
@@ -642,14 +654,46 @@ export default function FacturesFournisseur() {
           <div className="rounded-md border bg-card shadow-sm">
             <div className="p-5">
               <h2 className="text-lg font-semibold mb-3">{selectedFacture.numero_facture_interne}</h2>
-              <div className="mb-4 space-y-1 text-sm">
-                <p>Fournisseur: <strong>{selectedFacture.fournisseur_nom}</strong></p>
-                <p>N° facture: <strong>{selectedFacture.numero_facture_fournisseur}</strong></p>
-                <p>Date: <strong>{new Date(selectedFacture.date_facture).toLocaleDateString('fr-FR')}</strong></p>
-                {selectedFacture.date_echeance && (
-                  <p>Échéance: <strong>{new Date(selectedFacture.date_echeance).toLocaleDateString('fr-FR')}</strong></p>
-                )}
-                <p>Statut: <span className={`${BADGE_BASE} ${STATUT_BADGE[selectedFacture.statut] || 'bg-muted text-muted-foreground'}`}>{selectedFacture.statut}</span></p>
+              <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
+                <div className="space-y-1">
+                  <p className="text-muted-foreground">Fournisseur:</p>
+                  <p className="font-semibold">{selectedFacture.fournisseur_nom}</p>
+                  <p className="text-muted-foreground mt-2">N° facture:</p>
+                  <p className="font-semibold">{selectedFacture.numero_facture_fournisseur}</p>
+                </div>
+                <div className="space-y-1 text-right">
+                  <p className="text-muted-foreground">Date:</p>
+                  <p className="font-semibold">{new Date(selectedFacture.date_facture).toLocaleDateString('fr-FR')}</p>
+                  {selectedFacture.date_echeance && (
+                    <>
+                      <p className="text-muted-foreground mt-2">Échéance:</p>
+                      <p className="font-semibold">{new Date(selectedFacture.date_echeance).toLocaleDateString('fr-FR')}</p>
+                    </>
+                  )}
+                </div>
+                <div className="col-span-2 border-t pt-3 flex justify-between items-center">
+                  <span className="text-muted-foreground">Statut:</span>
+                  <span className={`${BADGE_BASE} ${STATUT_BADGE[selectedFacture.statut] || 'bg-muted text-muted-foreground'}`}>
+                    {STATUT_LABELS[selectedFacture.statut] || selectedFacture.statut}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mb-4 p-3 bg-muted/40 rounded-md border text-sm space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Total Facture:</span>
+                  <span className="font-semibold">{formatFCFA(selectedFacture.total)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Montant payé:</span>
+                  <span className="font-semibold text-success-700 dark:text-success-400">{formatFCFA(selectedFacture.montant_paye)}</span>
+                </div>
+                <div className="flex justify-between border-t pt-1.5 font-bold">
+                  <span>Reste à payer:</span>
+                  <span className={parseFloat(selectedFacture.reste_due) > 0 ? "text-danger-600 dark:text-danger-400" : "text-success-600"}>
+                    {formatFCFA(selectedFacture.reste_due)}
+                  </span>
+                </div>
               </div>
 
               <div className="overflow-x-auto rounded-md border mb-4">

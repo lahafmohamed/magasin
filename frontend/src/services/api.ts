@@ -12,7 +12,7 @@ type UpdateProduitPayload = Partial<Omit<Produit, 'id'>> & {
   fournisseur_id?: number | null;
 };
 
-const api = axios.create({
+export const api = axios.create({
   baseURL: '/api',
   // Auth is carried by the httpOnly `auth_token` cookie — send it on every request.
   withCredentials: true,
@@ -477,7 +477,7 @@ export const factureService = {
 export const paiementService = {
   create: async (factureId: number, paiement: {
     montant: number;
-    methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement';
+    methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement' | 'wave' | 'orange_money';
     date_paiement?: string;
     reference?: string;
     notes?: string;
@@ -873,13 +873,15 @@ export const generalLedgerService = {
 
 // ========== EMPLOYES ==========
 export const employeService = {
-  getAll: async (search?: string, departement?: string, actif?: boolean, page = 1, limit = 20): Promise<any> => {
+  getAll: async (search?: string, departement?: string, actif?: boolean, page = 1, limit = 20, sort?: string, order?: string): Promise<any> => {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
     if (departement) params.append('departement', departement);
     if (actif !== undefined) params.append('actif', actif.toString());
     params.append('page', page.toString());
     params.append('limit', limit.toString());
+    if (sort) params.append('sort', sort);
+    if (order) params.append('order', order);
     const { data } = await api.get(`/employes?${params}`);
     return data;
   },
@@ -903,6 +905,24 @@ export const employeService = {
     commission_taux?: number;
   }): Promise<any> => {
     const { data } = await api.post('/employes', employe);
+    return data;
+  },
+
+  update: async (id: number, employe: Partial<{
+    matricule: string;
+    nom_complet: string;
+    poste: string;
+    departement: string;
+    date_embauche: string;
+    date_naissance: string;
+    telephone: string;
+    email: string;
+    adresse: string;
+    salaire_base: number;
+    commission_taux: number;
+    actif: boolean;
+  }>): Promise<any> => {
+    const { data } = await api.put(`/employes/${id}`, employe);
     return data;
   },
 

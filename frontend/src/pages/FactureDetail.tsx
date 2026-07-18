@@ -170,7 +170,7 @@ export default function FactureDetail() {
 
   const handleAddPayment = async (paiement: {
     montant: number;
-    methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement';
+    methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement' | 'wave' | 'orange_money';
     reference?: string;
     notes?: string;
   }) => {

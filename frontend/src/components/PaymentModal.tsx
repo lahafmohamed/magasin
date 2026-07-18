@@ -14,7 +14,7 @@ interface PaymentModalProps {
   onClose: () => void;
   onSubmit: (paiement: {
     montant: number;
-    methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement';
+    methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement' | 'wave' | 'orange_money';
     reference?: string;
     notes?: string;
   }) => Promise<void>;
@@ -30,7 +30,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   total,
 }) => {
   const [montant, setMontant] = useState('');
-  const [methodePaiement, setMethodePaiement] = useState<'espece' | 'carte' | 'cheque' | 'virement'>('espece');
+  const [methodePaiement, setMethodePaiement] = useState<'espece' | 'carte' | 'cheque' | 'virement' | 'wave' | 'orange_money'>('espece');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
@@ -38,7 +38,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      setMontant(parseFloat(remainingDue as any).toFixed(2));
+      setMontant(parseFloat(remainingDue as any).toFixed(0));
       setMethodePaiement('espece');
       setReference('');
       setNotes('');
@@ -81,7 +81,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   };
 
   const handleSetFullAmount = () => {
-    setMontant(parseFloat(remainingDue as any).toFixed(2));
+    setMontant(parseFloat(remainingDue as any).toFixed(0));
   };
 
   const montantNum = parseFloat(montant);
@@ -116,9 +116,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           <div className="space-y-1.5">
             <Label>Méthode de paiement</Label>
             <div className="grid grid-cols-2 gap-2">
-              {Object.entries(METHODES_PAIEMENT).map(([key, config]) => {
-                const MethodIcon = config.Icon;
-                const active = methodePaiement === key;
+              {Object.entries(METHODES_PAIEMENT)
+                .filter(([key]) => key !== 'acompte')
+                .map(([key, config]) => {
+                  const MethodIcon = config.Icon;
+                  const active = methodePaiement === key;
                 return (
                   <Button
                     key={key}

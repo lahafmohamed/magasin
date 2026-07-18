@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Loader2, Plus, Users } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Loader2, Plus, Users, Search, Download, Eye, Pencil, Power } from 'lucide-react';
 import { employeService } from '../services/api';
 import { toast } from 'sonner';
 import { MoneyInput } from '../components/ui/money-input';
@@ -7,11 +7,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
-import { TableSkeleton } from '@/components/ui/skeleton';
+import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
+import { ListSkeleton } from '@/components/ui/skeleton';
+import { Pagination } from '@/components/ui/pagination';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { useExportExcel } from '../hooks/useExportExcel';
 import { formatFCFA } from '../utils/format';
 
 interface Employe {
@@ -41,50 +48,90 @@ interface CommissionSummary {
   commissions_payees: number;
 }
 
-type EmployeSortKey = 'matricule' | 'nom_complet' | 'poste' | 'departement' | 'commission_taux';
+const DEPARTEMENTS = ['Vente', 'Magasin', 'Administration'];
+
+type EmployeSortKey = 'matricule' | 'nom_complet' | 'departement';
+
+const blankForm = {
+  matricule: '',
+  nom_complet: '',
+  poste: '',
+  departement: '',
+  date_embauche: new Date().toISOString().split('T')[0],
+  date_naissance: '',
+  telephone: '',
+  email: '',
+  adresse: '',
+  salaire_base: '',
+  commission_taux: '0',
+  actif: true,
+};
 
 export default function Employes() {
+  const confirm = useConfirm();
+  const { exportToExcel } = useExportExcel();
+
   const [employes, setEmployes] = useState<Employe[]>([]);
-  const [selectedEmploye, setSelectedEmploye] = useState<Employe | null>(null);
-  const [commissionSummary, setCommissionSummary] = useState<CommissionSummary | null>(null);
-  const [showCreateForm, setShowCreateForm] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [filterDepartement, setFilterDepartement] = useState<string>('');
-  const [sort, setSort] = useState<SortState<EmployeSortKey> | null>(null);
+
+  // filters / paging
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [filterDepartement, setFilterDepartement] = useState('');
+  const [filterActif, setFilterActif] = useState<'all' | 'true' | 'false'>('all');
+  const [page, setPage] = useState(1);
+  const [limit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [sort, setSort] = useState<SortState<EmployeSortKey> | null>({ key: 'nom_complet', dir: 'asc' });
   const handleSort = (key: EmployeSortKey) => setSort((s) => toggleSort(s, key));
 
-  const [formData, setFormData] = useState({
-    matricule: '',
-    nom_complet: '',
-    poste: '',
-    departement: '',
-    date_embauche: new Date().toISOString().split('T')[0],
-    date_naissance: '',
-    telephone: '',
-    email: '',
-    adresse: '',
-    salaire_base: '',
-    commission_taux: '0',
-  });
+  // form (create + edit)
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Employe | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [formData, setFormData] = useState(blankForm);
+
+  // detail
+  const [detail, setDetail] = useState<Employe | null>(null);
+  const [commissionSummary, setCommissionSummary] = useState<CommissionSummary | null>(null);
 
   useEffect(() => {
-    fetchEmployes();
-  }, [filterDepartement]);
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
-  const fetchEmployes = async () => {
+  useEffect(() => { setPage(1); }, [debouncedSearch, filterDepartement, filterActif]);
+
+  const fetchEmployes = useCallback(async () => {
+    setLoading(true);
     try {
-      const data = await employeService.getAll(undefined, filterDepartement || undefined);
-      setEmployes(data.data || data);
+      const actif = filterActif === 'all' ? undefined : filterActif === 'true';
+      const res = await employeService.getAll(
+        debouncedSearch || undefined,
+        filterDepartement || undefined,
+        actif,
+        page,
+        limit,
+        sort?.key,
+        sort?.dir,
+      );
+      const rows = res?.data ?? res ?? [];
+      setEmployes(Array.isArray(rows) ? rows : []);
+      setTotal(res?.pagination?.total ?? 0);
+      setTotalPages(res?.pagination?.totalPages ?? 0);
     } catch {
       toast.error('Erreur chargement employés');
     } finally {
       setLoading(false);
     }
-  };
+  }, [debouncedSearch, filterDepartement, filterActif, page, limit, sort]);
 
-  const handleSelectEmploye = async (employe: Employe) => {
-    setSelectedEmploye(employe);
+  useEffect(() => { fetchEmployes(); }, [fetchEmployes]);
+
+  const openDetail = async (employe: Employe) => {
+    setDetail(employe);
+    setCommissionSummary(null);
     try {
       const dateDebut = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
       const dateFin = new Date().toISOString().split('T')[0];
@@ -95,95 +142,234 @@ export default function Employes() {
     }
   };
 
+  const openCreate = () => { setEditing(null); setFormData(blankForm); setShowForm(true); };
+  const openEdit = (e: Employe) => {
+    setEditing(e);
+    setFormData({
+      matricule: e.matricule,
+      nom_complet: e.nom_complet,
+      poste: e.poste || '',
+      departement: e.departement || '',
+      date_embauche: e.date_embauche ? e.date_embauche.split('T')[0] : blankForm.date_embauche,
+      date_naissance: e.date_naissance ? e.date_naissance.split('T')[0] : '',
+      telephone: e.telephone || '',
+      email: e.email || '',
+      adresse: e.adresse || '',
+      salaire_base: e.salaire_base ? String(Math.round(parseFloat(e.salaire_base))) : '',
+      commission_taux: e.commission_taux ?? '0',
+      actif: e.actif,
+    });
+    setShowForm(true);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
-
     try {
-      await employeService.create({
-        ...formData,
-        salaire_base: formData.salaire_base ? parseFloat(formData.salaire_base) : undefined,
-        commission_taux: parseFloat(formData.commission_taux),
-      });
-
-      toast.success('Employé créé');
-      setShowCreateForm(false);
-      setFormData({
-        matricule: '',
-        nom_complet: '',
-        poste: '',
-        departement: '',
-        date_embauche: new Date().toISOString().split('T')[0],
-        date_naissance: '',
-        telephone: '',
-        email: '',
-        adresse: '',
-        salaire_base: '',
-        commission_taux: '0',
-      });
+      const { actif, ...base } = formData;
+      const payload = {
+        ...base,
+        salaire_base: base.salaire_base ? parseFloat(base.salaire_base) : undefined,
+        commission_taux: parseFloat(base.commission_taux),
+      };
+      if (editing) {
+        await employeService.update(editing.id, { ...payload, actif });
+        toast.success('Employé modifié');
+      } else {
+        await employeService.create(payload);
+        toast.success('Employé créé');
+      }
+      setShowForm(false);
       fetchEmployes();
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Erreur création employé');
+      toast.error(err.response?.data?.error || 'Erreur enregistrement employé');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const sortedEmployes = useMemo(() => {
-    if (!sort) return employes;
-    const arr = [...employes];
-    arr.sort((a, b) => {
-      let cmp: number;
-      if (sort.key === 'commission_taux') {
-        cmp = (parseFloat(a.commission_taux) || 0) - (parseFloat(b.commission_taux) || 0);
-      } else {
-        const av = (a[sort.key] || '').toString().toLowerCase();
-        const bv = (b[sort.key] || '').toString().toLowerCase();
-        cmp = av < bv ? -1 : av > bv ? 1 : 0;
-      }
-      return sort.dir === 'asc' ? cmp : -cmp;
-    });
-    return arr;
-  }, [employes, sort]);
+  const toggleActif = async (e: Employe) => {
+    const next = !e.actif;
+    if (!(await confirm({
+      title: next ? 'Réactiver cet employé ?' : 'Désactiver cet employé ?',
+      description: `${e.nom_complet} sera marqué ${next ? 'actif' : 'inactif'}.`,
+      confirmLabel: next ? 'Réactiver' : 'Désactiver',
+      destructive: !next,
+    }))) return;
+    try {
+      await employeService.update(e.id, { actif: next });
+      toast.success(next ? 'Employé réactivé' : 'Employé désactivé');
+      fetchEmployes();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Action impossible');
+    }
+  };
 
-  if (loading) {
+  const StatutBadge = ({ actif }: { actif: boolean }) => (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+      actif ? 'bg-success-100 dark:bg-success-500/20 text-success-700 dark:text-success-200' : 'bg-muted text-muted-foreground'
+    }`}>
+      {actif ? 'Actif' : 'Inactif'}
+    </span>
+  );
+
+  const RowActions = ({ e, size = 'sm' }: { e: Employe; size?: 'sm' | 'xs' }) => {
+    const cls = size === 'sm' ? 'h-8 w-8' : 'h-7 w-7';
+    const icon = size === 'sm' ? 'h-4 w-4' : 'h-3.5 w-3.5';
     return (
-      <div className="container mx-auto p-6">
-        <TableSkeleton rows={10} columns={7} />
+      <div className="flex justify-end gap-1">
+        <Button variant="ghost" size="icon" className={cls} onClick={() => openDetail(e)} aria-label="Voir cet employé">
+          <Eye className={icon} />
+        </Button>
+        <Button variant="ghost" size="icon" className={cls} onClick={() => openEdit(e)} aria-label="Modifier cet employé">
+          <Pencil className={icon} />
+        </Button>
+        <Button variant="ghost" size="icon" className={cls} onClick={() => toggleActif(e)} aria-label={e.actif ? 'Désactiver' : 'Réactiver'}>
+          <Power className={`${icon} ${e.actif ? 'text-success-600' : 'text-muted-foreground'}`} />
+        </Button>
       </div>
     );
-  }
+  };
 
   return (
-    <div className="container mx-auto p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Gestion des employés</h1>
-        <div className="flex gap-2">
-          <Select
-            value={filterDepartement === '' ? '__all' : filterDepartement}
-            onValueChange={(v) => setFilterDepartement(v === '__all' ? '' : v)}
-          >
-            <SelectTrigger className="h-9 w-auto" aria-label="Filtrer par département">
-              <SelectValue placeholder="Tous les départements" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all">Tous les départements</SelectItem>
-              <SelectItem value="Vente">Vente</SelectItem>
-              <SelectItem value="Magasin">Magasin</SelectItem>
-              <SelectItem value="Administration">Administration</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
-            <Plus className="h-4 w-4" />
-            Nouvel employé
+    <div className="container mx-auto px-4 py-6 max-w-7xl">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Users className="h-6 w-6" /> Employés</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">{total} employé{total > 1 ? 's' : ''} au total</p>
+        </div>
+        <div className="flex gap-2 self-start sm:self-auto">
+          <Button variant="outline" className="gap-2" onClick={() => exportToExcel(employes, [
+            { key: 'matricule', label: 'Matricule' },
+            { key: 'nom_complet', label: 'Nom complet' },
+            { key: 'poste', label: 'Poste' },
+            { key: 'departement', label: 'Département' },
+            { key: 'telephone', label: 'Téléphone' },
+            { key: 'email', label: 'Email' },
+            { key: 'salaire_base', label: 'Salaire de base' },
+            { key: 'commission_taux', label: 'Taux commission' },
+          ], 'employes')}>
+            <Download className="h-4 w-4" /> Excel
+          </Button>
+          <Button onClick={openCreate} className="gap-1.5">
+            <Plus className="h-4 w-4" /> Nouvel employé
           </Button>
         </div>
       </div>
 
-      <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
+      <Card>
+        <CardContent className="p-0">
+          {/* Filters */}
+          <div className="p-4 border-b flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                placeholder="Nom, matricule, poste..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <Select value={filterDepartement === '' ? '__all' : filterDepartement} onValueChange={(v) => setFilterDepartement(v === '__all' ? '' : v)}>
+              <SelectTrigger className="h-9 w-full sm:w-44" aria-label="Filtrer par département">
+                <SelectValue placeholder="Tous les départements" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all">Tous les départements</SelectItem>
+                {DEPARTEMENTS.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={filterActif} onValueChange={(v) => setFilterActif(v as any)}>
+              <SelectTrigger className="h-9 w-full sm:w-36" aria-label="Filtrer par statut">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous</SelectItem>
+                <SelectItem value="true">Actifs</SelectItem>
+                <SelectItem value="false">Inactifs</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <ResponsiveTable
+            cards={
+              loading ? (
+                <ListSkeleton items={6} />
+              ) : employes.length === 0 ? (
+                <EmptyState icon={Users} title="Aucun employé" />
+              ) : (
+                employes.map((e) => (
+                  <DataCard
+                    key={e.id}
+                    onClick={() => openDetail(e)}
+                    title={<span>{e.nom_complet}</span>}
+                    badge={<StatutBadge actif={e.actif} />}
+                  >
+                    <DataCardRow label="Matricule" value={<span className="font-mono text-xs">{e.matricule}</span>} />
+                    <DataCardRow label="Poste" value={e.poste || '—'} />
+                    <DataCardRow label="Département" value={e.departement || '—'} />
+                    <DataCardRow label="Commission" value={<span className="num">{e.commission_taux}%</span>} />
+                    <div className="mt-2" onClick={(ev) => ev.stopPropagation()}>
+                      <RowActions e={e} />
+                    </div>
+                  </DataCard>
+                ))
+              )
+            }
+            table={
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <SortableHeader columnKey="matricule" sort={sort} onSort={handleSort}>Matricule</SortableHeader>
+                      <SortableHeader columnKey="nom_complet" sort={sort} onSort={handleSort}>Nom</SortableHeader>
+                      <TableHead>Poste</TableHead>
+                      <SortableHeader columnKey="departement" sort={sort} onSort={handleSort}>Dépt.</SortableHeader>
+                      <TableHead className="text-right">Commission</TableHead>
+                      <TableHead>Statut</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {loading ? (
+                      <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Chargement...</TableCell></TableRow>
+                    ) : employes.length === 0 ? (
+                      <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Aucun employé</TableCell></TableRow>
+                    ) : employes.map((e) => (
+                      <TableRow key={e.id} className="hover:bg-muted/30 cursor-pointer" onClick={() => openDetail(e)}>
+                        <TableCell className="font-mono text-xs num">{e.matricule}</TableCell>
+                        <TableCell className="font-medium">{e.nom_complet}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{e.poste || '—'}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs py-0">{e.departement || '—'}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right text-xs num">{e.commission_taux}%</TableCell>
+                        <TableCell><StatutBadge actif={e.actif} /></TableCell>
+                        <TableCell className="text-right" onClick={(ev) => ev.stopPropagation()}>
+                          <RowActions e={e} size="xs" />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            }
+          />
+
+          {totalPages > 1 && (
+            <div className="p-4 border-t">
+              <Pagination page={page} totalPages={totalPages} total={total} limit={limit} onPageChange={setPage} />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Create / Edit dialog */}
+      <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Nouvel employé</DialogTitle>
+            <DialogTitle>{editing ? 'Modifier l’employé' : 'Nouvel employé'}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -202,17 +388,15 @@ export default function Employes() {
               <div className="space-y-1.5">
                 <Label htmlFor="emp-dept">Département</Label>
                 <Select
-                  value={formData.departement === '' ? '__all' : formData.departement}
-                  onValueChange={(v) => setFormData({ ...formData, departement: v === '__all' ? '' : v })}
+                  value={formData.departement === '' ? '__none' : formData.departement}
+                  onValueChange={(v) => setFormData({ ...formData, departement: v === '__none' ? '' : v })}
                 >
                   <SelectTrigger id="emp-dept" className="h-9">
                     <SelectValue placeholder="Sélectionner…" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__all">Sélectionner…</SelectItem>
-                    <SelectItem value="Vente">Vente</SelectItem>
-                    <SelectItem value="Magasin">Magasin</SelectItem>
-                    <SelectItem value="Administration">Administration</SelectItem>
+                    <SelectItem value="__none">Sélectionner…</SelectItem>
+                    {DEPARTEMENTS.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -247,92 +431,47 @@ export default function Employes() {
               <Textarea id="emp-adresse" value={formData.adresse} onChange={(e) => setFormData({ ...formData, adresse: e.target.value })} />
             </div>
 
+            {editing && (
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={formData.actif} onChange={(e) => setFormData({ ...formData, actif: e.target.checked })} className="rounded" />
+                <span className="text-sm">Employé actif</span>
+              </label>
+            )}
+
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setShowCreateForm(false)}>Annuler</Button>
+              <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>Annuler</Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Création…
-                  </>
-                ) : 'Créer'}
+                {submitting ? (<><Loader2 className="h-4 w-4 animate-spin" /> Enregistrement…</>) : editing ? 'Modifier' : 'Créer'}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="rounded-md border bg-card shadow-sm">
-          <div className="p-5">
-            <h2 className="text-lg font-semibold mb-3">Employés</h2>
-            {employes.length === 0 ? (
-              <EmptyState icon={Users} title="Aucun employé" />
-            ) : (
-              <div className="overflow-x-auto rounded-md border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 text-left">
-                    <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                      <SortableHeader columnKey="matricule" sort={sort} onSort={handleSort}>Matricule</SortableHeader>
-                      <SortableHeader columnKey="nom_complet" sort={sort} onSort={handleSort}>Nom</SortableHeader>
-                      <SortableHeader columnKey="poste" sort={sort} onSort={handleSort}>Poste</SortableHeader>
-                      <SortableHeader columnKey="departement" sort={sort} onSort={handleSort}>Dépt.</SortableHeader>
-                      <SortableHeader columnKey="commission_taux" sort={sort} onSort={handleSort} align="right">Commission</SortableHeader>
-                      <th className="px-3 py-2 font-medium">Statut</th>
-                      <th className="px-3 py-2 font-medium">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {sortedEmployes.map((employe) => (
-                      <tr key={employe.id} className={`hover:bg-muted/30 ${selectedEmploye?.id === employe.id ? 'bg-primary/10' : ''}`}>
-                        <td className="px-3 py-2 font-medium text-xs num">{employe.matricule}</td>
-                        <td className="px-3 py-2">{employe.nom_complet}</td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">{employe.poste || '—'}</td>
-                        <td className="px-3 py-2">
-                          <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs">
-                            {employe.departement || '—'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-xs num">{employe.commission_taux}%</td>
-                        <td className="px-3 py-2">
-                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                            employe.actif ? 'bg-success-100 text-success-700' : 'bg-muted text-muted-foreground'
-                          }`}>
-                            {employe.actif ? 'Actif' : 'Inactif'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <Button variant="outline" size="sm" onClick={() => handleSelectEmploye(employe)}>
-                            Détails
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {selectedEmploye && (
-          <div className="rounded-md border bg-card shadow-sm">
-            <div className="p-5">
-              <h2 className="text-lg font-semibold mb-3">{selectedEmploye.nom_complet}</h2>
-              <div className="mb-4 space-y-1 text-sm">
-                <p>Matricule: <strong>{selectedEmploye.matricule}</strong></p>
-                <p>Poste: <strong>{selectedEmploye.poste || '—'}</strong></p>
-                <p>Département: <strong>{selectedEmploye.departement || '—'}</strong></p>
-                <p>Date d'embauche: <strong>{new Date(selectedEmploye.date_embauche).toLocaleDateString('fr-FR')}</strong></p>
-                {selectedEmploye.telephone && <p>Téléphone: <strong>{selectedEmploye.telephone}</strong></p>}
-                {selectedEmploye.email && <p>Email: <strong>{selectedEmploye.email}</strong></p>}
-                {selectedEmploye.salaire_base && <p>Salaire de base: <strong className="num">{formatFCFA(selectedEmploye.salaire_base)}</strong></p>}
-                <p>Taux commission: <strong className="num">{selectedEmploye.commission_taux}%</strong></p>
+      {/* Detail dialog */}
+      <Dialog open={!!detail} onOpenChange={(o) => { if (!o) { setDetail(null); setCommissionSummary(null); } }}>
+        <DialogContent className="sm:max-w-lg">
+          {detail && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  {detail.nom_complet} <StatutBadge actif={detail.actif} />
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-1 text-sm">
+                <p>Matricule: <strong>{detail.matricule}</strong></p>
+                <p>Poste: <strong>{detail.poste || '—'}</strong></p>
+                <p>Département: <strong>{detail.departement || '—'}</strong></p>
+                <p>Date d'embauche: <strong>{new Date(detail.date_embauche).toLocaleDateString('fr-FR')}</strong></p>
+                {detail.telephone && <p>Téléphone: <strong>{detail.telephone}</strong></p>}
+                {detail.email && <p>Email: <strong>{detail.email}</strong></p>}
+                {detail.salaire_base && <p>Salaire de base: <strong className="num">{formatFCFA(detail.salaire_base)}</strong></p>}
+                <p>Taux commission: <strong className="num">{detail.commission_taux}%</strong></p>
               </div>
 
               {commissionSummary && (
-                <div className="mt-4">
-                  <h3 className="font-semibold mb-2">Résumé des commissions (année en cours)</h3>
+                <div className="mt-2">
+                  <h3 className="font-semibold mb-2 text-sm">Commissions (année en cours)</h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="rounded-md border bg-muted/30 p-4">
                       <div className="text-xs text-muted-foreground uppercase tracking-wide">Total ventes</div>
@@ -347,10 +486,16 @@ export default function Employes() {
                   </div>
                 </div>
               )}
-            </div>
-          </div>
-        )}
-      </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { const e = detail; setDetail(null); setCommissionSummary(null); if (e) openEdit(e); }}>
+                  <Pencil className="mr-1 h-4 w-4" /> Modifier
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

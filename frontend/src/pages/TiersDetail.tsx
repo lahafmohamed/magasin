@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { tiersService, acompteService, acompteFournisseurService, crmService } from '../services/api';
+import { tiersService, acompteService, acompteFournisseurService, crmService, api } from '../services/api';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -58,16 +58,12 @@ export default function TiersDetail() {
   const [tacheForm, setTacheForm] = useState({ titre: '', description: '', priorite: 'normale', date_echeance: '' });
 
   useEffect(() => {
-    fetch('/api/caisse/magasins', {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` }
-    })
-      .then(r => r.json())
-      .then(d => {
-        if (d.success) {
-          setMagasinsList(d.data);
-          if (d.data.length === 1) {
-            setAcompteForm(p => ({ ...p, magasin_id: String(d.data[0].id) }));
-          }
+    api.get('/caisse/magasins')
+      .then(response => {
+        const data = response.data;
+        setMagasinsList(data || []);
+        if (data && data.length === 1) {
+          setAcompteForm(p => ({ ...p, magasin_id: String(data[0].id) }));
         }
       })
       .catch(() => {});
@@ -93,12 +89,12 @@ export default function TiersDetail() {
 
   const loadAcomptes = async () => {
     try {
-      const [cli, fou] = await Promise.all([
-        fetch(`/api/tiers/${tiersId}/acomptes-client/disponibles`, { headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` } }).then(r => r.json()).catch(() => ({ data: [] })),
-        fetch(`/api/tiers/${tiersId}/acomptes-fournisseur/disponibles`, { headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` } }).then(r => r.json()).catch(() => ({ data: [] })),
+      const [cliRes, fouRes] = await Promise.all([
+        api.get(`/tiers/${tiersId}/acomptes-client/disponibles`).catch(() => ({ data: [] })),
+        api.get(`/tiers/${tiersId}/acomptes-fournisseur/disponibles`).catch(() => ({ data: [] })),
       ]);
-      setAcomptesClient(cli?.data || []);
-      setAcomptesFourn(fou?.data || []);
+      setAcomptesClient(cliRes.data || []);
+      setAcomptesFourn(fouRes.data || []);
     } catch { /* silent */ }
   };
 

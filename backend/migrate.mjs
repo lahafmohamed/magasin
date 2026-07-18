@@ -104,15 +104,24 @@ async function run() {
 
     for (const file of pending) {
       const sql = fs.readFileSync(path.join(DB_DIR, file), 'utf-8');
+      const isConcurrent = /create\s+index\s+concurrently/i.test(sql) || /drop\s+index\s+concurrently/i.test(sql);
       process.stdout.write(`▶️  ${file} ... `);
       try {
-        await client.query('BEGIN');
+        if (!isConcurrent) {
+          await client.query('BEGIN');
+        }
         await client.query(sql);
-        await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file]);
-        await client.query('COMMIT');
+        if (!isConcurrent) {
+          await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file]);
+          await client.query('COMMIT');
+        } else {
+          await client.query('INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT DO NOTHING', [file]);
+        }
         console.log('done');
       } catch (err) {
-        await client.query('ROLLBACK');
+        if (!isConcurrent) {
+          await client.query('ROLLBACK');
+        }
         console.error(`\n❌ ${file} failed: ${err.message}`);
         console.error('Stopped. Fix the migration and re-run.');
         process.exit(1);

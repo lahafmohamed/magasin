@@ -330,8 +330,8 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
       // Insert invoice
       const { rows: invoiceResult } = await client.query(
         `INSERT INTO factures_fournisseur
-         (tiers_id, commande_id, reception_id, numero_facture_fournisseur, numero_facture_interne, date_facture, date_echeance, condition_paiement, sous_total, tva, total, notes, cree_par)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $11, $12)
+         (tiers_id, commande_id, reception_id, numero_facture_fournisseur, numero_facture_interne, date_facture, date_echeance, condition_paiement, sous_total, tva, total, reste_due, notes, cree_par)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, $10, $10, $11, $12)
          RETURNING id`,
         [tiers_id_fourn, commande_id, reception_id || null, numero_facture_fournisseur, numeroFactureInterne, date_facture, date_echeance || null, condition_paiement || null, sousTotal, total, notes || null, cree_par || null]
       );
@@ -438,7 +438,7 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
       // Update the invoice balance and status.
       const newMontantPaye = montantPaye + montant;
       const newReste = total - newMontantPaye;
-      const newStatut = newReste <= 0.01 ? 'payee' : newMontantPaye > 0 ? 'partielle' : 'en_attente';
+      const newStatut = newReste <= 0.01 ? 'payee' : newMontantPaye > 0 ? 'partiellement_payee' : 'en_attente';
       await client.query(
         `UPDATE factures_fournisseur
          SET montant_paye = $1, reste_due = $2, statut = $3

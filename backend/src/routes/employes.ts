@@ -13,6 +13,7 @@ router.get('/', hrAccess, EmployeController.getAll);
 router.get('/stats', hrAccess, EmployeController.getStats);
 router.get('/:id', hrAccess, EmployeController.getById);
 router.post('/', hrAccess, EmployeController.create);
+router.put('/:id', hrAccess, EmployeController.update);
 router.post('/:id/commission', hrAccess, EmployeController.recordCommission);
 router.get('/:id/commissions', hrAccess, EmployeController.getCommissions);
 router.get('/:id/commission-summary', hrAccess, EmployeController.getCommissionSummary);
