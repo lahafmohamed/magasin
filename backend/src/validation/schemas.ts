@@ -405,6 +405,200 @@ export const companySettingsSchema = z.object({
   taux_conversion: z.coerce.number().positive('Taux de conversion doit être positif').max(999999).optional(),
 });
 
+// ============================================
+// CRM schemas (crm_interactions / crm_taches, migration 068)
+// ============================================
+export const createCrmInteractionSchema = z.object({
+  tiers_id: z.coerce.number().int().positive('Tiers requis'),
+  type: z.string().min(1, 'Type requis').max(50),
+  sujet: z.string().min(1, 'Sujet requis').max(200),
+  description: z.string().max(5000).optional().or(z.literal('')),
+  date_interaction: z.string().max(40).optional().or(z.literal('')),
+  date_rappel: z.string().max(40).nullable().optional().or(z.literal('')),
+  priorite: z.string().max(20).optional(),
+  statut: z.string().max(20).optional(),
+});
+
+export const updateCrmInteractionSchema = createCrmInteractionSchema
+  .omit({ tiers_id: true })
+  .partial();
+
+export const createCrmTacheSchema = z.object({
+  tiers_id: z.coerce.number().int().positive().nullable().optional(),
+  titre: z.string().min(1, 'Titre requis').max(200),
+  description: z.string().max(5000).optional().or(z.literal('')),
+  priorite: z.string().max(20).optional(),
+  date_echeance: z.string().max(40).nullable().optional().or(z.literal('')),
+  assigne_a: z.coerce.number().int().positive().nullable().optional(),
+});
+
+export const updateCrmTacheStatutSchema = z.object({
+  statut: z.string().min(1, 'Statut requis').max(20),
+});
+
+// ============================================
+// Acompte schemas (client + fournisseur)
+// ============================================
+export const applyAcompteSchema = z.object({
+  facture_id: z.coerce.number().int().positive('Facture ID requis'),
+  montant: z.coerce.number().positive('Montant doit être positif'),
+  idempotency_key: z.string().max(255).optional(),
+});
+
+export const refundAcompteSchema = z.object({
+  montant: z.coerce.number().positive('Montant doit être positif'),
+  methode_paiement: z.enum([
+    'espece', 'carte', 'cheque', 'virement',
+    'mobile_money', 'orange_money', 'mtn_money', 'wave',
+  ]),
+  session_caisse_id: z.coerce.number().int().positive().optional(),
+  notes: z.string().max(1000).optional().or(z.literal('')),
+  idempotency_key: z.string().max(255).optional(),
+});
+
+// ============================================
+// Caisse magasin schemas
+// ============================================
+export const ouvrirSessionCaisseSchema = z.object({
+  magasin_id: z.coerce.number().int().positive('Magasin ID requis'),
+  fond_initial: z.coerce.number().nonnegative('Fond initial doit être positif ou nul'),
+  commentaire_ouverture: z.string().max(2000).optional().or(z.literal('')),
+});
+
+export const cloturerSessionCaisseSchema = z.object({
+  fond_final_compte: z.coerce.number().nonnegative('Fond final compté doit être positif ou nul'),
+  commentaire_cloture: z.string().max(2000).optional().or(z.literal('')),
+});
+
+export const createMouvementDiversSchema = z.object({
+  type: z.enum(['encaissement', 'decaissement']),
+  categorie: z.enum(['apport', 'retrait_banque', 'autre_entree', 'autre_sortie']),
+  montant: z.coerce.number().positive('Montant doit être positif'),
+  methode_paiement: z.enum([
+    'espece', 'carte', 'cheque', 'virement',
+    'mobile_money', 'orange_money', 'mtn_money', 'wave',
+  ]),
+  libelle: z.string().trim().min(3, 'Libellé (motif) obligatoire (au moins 3 caractères)').max(500),
+  idempotency_key: z.string().max(255).optional(),
+});
+
+// ============================================
+// POS schemas
+// ============================================
+export const openPosSessionSchema = z.object({
+  solde_ouverture: z.coerce.number().nonnegative("Solde d'ouverture doit être positif ou nul").optional(),
+  location_id: z.coerce.number().int().positive('Location ID invalide').optional(),
+});
+
+export const posQuickSaleLigneSchema = z.object({
+  produit_id: z.coerce.number().int().positive('Produit ID requis'),
+  quantite: z.coerce.number().positive('Quantité doit être positive'),
+  // Le prix est ignoré côté serveur (prix catalogue autoritaire), accepté pour compat
+  prix_unitaire: z.coerce.number().nonnegative().optional(),
+});
+
+export const posQuickSaleSchema = z.object({
+  sessionId: z.coerce.number().int().positive('Session ID requis'),
+  items: z.array(posQuickSaleLigneSchema).min(1, 'Au moins un article requis'),
+  client_id: z.coerce.number().int().positive().nullable().optional(),
+  methode_paiement: z.enum([
+    'espece', 'carte', 'cheque', 'virement',
+    'mobile_money', 'orange_money', 'mtn_money', 'wave',
+  ]).optional(),
+});
+
+// ============================================
+// Dépenses (V2) schemas
+// ============================================
+export const createDepenseSchema = z.object({
+  magasin_id: z.coerce.number().int().positive('Magasin ID requis'),
+  categorie_id: z.coerce.number().int().positive('Catégorie requise'),
+  montant: z.coerce.number().positive('Montant doit être positif'),
+  methode_paiement: z.enum(['espece', 'carte', 'cheque', 'virement', 'mobile_money']),
+  date_depense: z.string().max(40).optional().or(z.literal('')),
+  description: z.string().min(1, 'Description requise').max(2000),
+  beneficiaire_libre: z.string().max(255).optional().or(z.literal('')),
+  fournisseur_id: z.coerce.number().int().positive().nullable().optional(),
+  justificatif_url: z.string().max(500).optional().or(z.literal('')),
+});
+
+export const updateDepenseSchema = createDepenseSchema.omit({ magasin_id: true }).partial();
+
+// ============================================
+// General ledger (manual entry) schemas
+// ============================================
+export const manualEntryLigneSchema = z.object({
+  compte_id: z.coerce.number().int().positive('Compte requis'),
+  debit: z.coerce.number().nonnegative('Débit invalide'),
+  credit: z.coerce.number().nonnegative('Crédit invalide'),
+  description: z.string().max(500).optional().or(z.literal('')),
+});
+
+export const createManualEntrySchema = z.object({
+  numero_piece: z.string().min(1, 'Numéro de pièce requis').max(50),
+  journal: z.string().min(1, 'Journal requis').max(20),
+  date_ecriture: z.string().min(1, "Date d'écriture requise"),
+  lignes: z.array(manualEntryLigneSchema).min(1, 'Au moins une ligne requise'),
+});
+
+// ============================================
+// Comptabilité (pièce comptable) schemas
+// ============================================
+export const pieceLigneSchema = z.object({
+  compte_numero: z.string().min(1, 'Numéro de compte requis').max(20),
+  debit: z.coerce.number().nonnegative('Débit invalide'),
+  credit: z.coerce.number().nonnegative('Crédit invalide'),
+  tiers_id: z.coerce.number().int().positive().nullable().optional(),
+});
+
+export const enregistrerPieceSchema = z.object({
+  journal: z.string().min(1).max(20).optional(),
+  date_ecriture: z.string().min(1, "Date d'écriture requise"),
+  libelle: z.string().min(1, 'Libellé requis').max(500),
+  lignes: z.array(pieceLigneSchema).min(2, 'Une pièce doit contenir au moins 2 lignes'),
+  reference_type: z.string().max(50).optional().or(z.literal('')),
+  reference_id: z.coerce.number().int().positive().optional(),
+});
+
+// ============================================
+// Employé schemas
+// ============================================
+export const createEmployeSchema = z.object({
+  utilisateur_id: z.coerce.number().int().positive().optional(),
+  matricule: z.string().min(1, 'Matricule requis').max(50),
+  nom_complet: z.string().min(1, 'Nom complet requis').max(255),
+  poste: z.string().max(100).optional().or(z.literal('')),
+  departement: z.string().max(100).optional().or(z.literal('')),
+  date_embauche: z.string().min(1, "Date d'embauche requise"),
+  date_naissance: z.string().max(40).optional().or(z.literal('')),
+  telephone: z.string().max(20).optional().or(z.literal('')),
+  email: z.string().email('Email invalide').max(255).optional().or(z.literal('')),
+  adresse: z.string().max(1000).optional().or(z.literal('')),
+  salaire_base: z.coerce.number().nonnegative('Salaire invalide').optional(),
+  commission_taux: z.coerce.number().nonnegative('Taux de commission invalide').max(100, 'Taux de commission max 100%').optional(),
+});
+
+export const updateEmployeSchema = createEmployeSchema
+  .omit({ utilisateur_id: true })
+  .partial()
+  .extend({ actif: z.boolean().optional() });
+
+export const recordEmployeCommissionSchema = z.object({
+  facture_id: z.coerce.number().int().positive('Facture ID requis'),
+  montant_vente: z.coerce.number().positive('Montant de vente doit être positif'),
+});
+
+export const recordEmployeShiftSchema = z.object({
+  employe_id: z.coerce.number().int().positive('Employé requis'),
+  date_shift: z.string().min(1, 'Date du shift requise'),
+  heure_prevue_debut: z.string().max(20).optional().or(z.literal('')),
+  heure_prevue_fin: z.string().max(20).optional().or(z.literal('')),
+  heure_debut: z.string().max(20).optional().or(z.literal('')),
+  heure_fin: z.string().max(20).optional().or(z.literal('')),
+  statut: z.enum(['prevu', 'en_cours', 'termine', 'absent']).optional().or(z.literal('')),
+  notes: z.string().max(2000).optional().or(z.literal('')),
+});
+
 // Lot/batch (migration 015) and serial-number (migration 016) tracking schemas
 // were removed with the batch/serial module (no routes/UI ever wired). The
 // backing tables are dropped in migration 085.

@@ -48,7 +48,8 @@ router.get('/:id/acomptes-fournisseur/disponibles', async (req, res) => {
     );
     res.json({ success: true, data: rows });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('GET /api/tiers/:id/acomptes-fournisseur/disponibles error:', err);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
@@ -67,7 +68,8 @@ router.get('/:id/acomptes-client/disponibles', async (req, res) => {
     );
     res.json({ success: true, data: rows });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('GET /api/tiers/:id/acomptes-client/disponibles error:', err);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 

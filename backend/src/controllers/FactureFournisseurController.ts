@@ -21,7 +21,8 @@ export class FactureFournisseurController {
 
       paginatedResponse(res, invoices.data, invoices.total, parseInt(page as string) || 1, parseInt(limit as string) || 20, 'Factures fournisseur récupérées avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('FactureFournisseurController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -29,7 +30,8 @@ export class FactureFournisseurController {
     try {
       successResponse(res, await factureFournisseurService.getMatchConfig(), 'Configuration rapprochement');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('FactureFournisseurController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -42,7 +44,8 @@ export class FactureFournisseurController {
       });
       successResponse(res, data, 'Configuration rapprochement mise à jour');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('FactureFournisseurController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -61,7 +64,8 @@ export class FactureFournisseurController {
 
       successResponse(res, invoice, 'Facture fournisseur récupérée avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('FactureFournisseurController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -122,7 +126,8 @@ export class FactureFournisseurController {
 
       successResponse(res, null, 'Paiement enregistré avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('FactureFournisseurController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -134,7 +139,8 @@ export class FactureFournisseurController {
       const invoices = await factureFournisseurService.getPayableInvoices();
       successResponse(res, invoices, 'Factures payables récupérées avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('FactureFournisseurController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -146,7 +152,8 @@ export class FactureFournisseurController {
       const stats = await factureFournisseurService.getStats();
       successResponse(res, stats, 'Statistiques récupérées avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('FactureFournisseurController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

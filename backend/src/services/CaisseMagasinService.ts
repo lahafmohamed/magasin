@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { businessError } from '../utils/errors';
 import { checkPeriodIsOpen } from './PeriodService';
 
 export interface CreateSessionInput {
@@ -384,10 +385,10 @@ export class CaisseMagasinService {
     input: CreateMouvementInput
   ): Promise<any> {
     if (!input.montant || input.montant <= 0) {
-      throw new Error('Montant doit être > 0');
+      throw businessError(400, 'Montant doit être > 0');
     }
     if (!input.methode_paiement) {
-      throw new Error('methode_paiement obligatoire');
+      throw businessError(400, 'methode_paiement obligatoire');
     }
 
     // Idempotency short-circuit
@@ -406,19 +407,19 @@ export class CaisseMagasinService {
     );
 
     if (sessionRows.length === 0) {
-      throw new Error('Session de caisse non trouvée');
+      throw businessError(404, 'Session de caisse non trouvée');
     }
 
     const session = sessionRows[0];
     if (session.statut !== 'ouverte') {
-      throw new Error('Caisse fermée — ouvrez la caisse du magasin avant d\'enregistrer cette transaction.');
+      throw businessError(409, 'Caisse fermée — ouvrez la caisse du magasin avant d\'enregistrer cette transaction.');
     }
 
     // Source-link enforcement at app layer (DB CHECK is the backstop)
     const dversCategories = ['apport', 'retrait_banque', 'autre_entree', 'autre_sortie'];
     if (input.reference_type == null || input.reference_id == null) {
       if (!dversCategories.includes(input.categorie)) {
-        throw new Error(`Mouvement caisse sans source: categorie '${input.categorie}' exige reference_type+reference_id`);
+        throw businessError(400, `Mouvement caisse sans source: categorie '${input.categorie}' exige reference_type+reference_id`);
       }
     }
 

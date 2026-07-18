@@ -34,7 +34,7 @@ export class CaisseMagasinController {
       });
     } catch (error: any) {
       console.error('Erreur GET /api/caisse/session-active:', error);
-      res.status(500).json({ error: error.message || 'Erreur serveur' });
+      res.status(500).json({ error: 'Erreur serveur' });
     }
   }
 

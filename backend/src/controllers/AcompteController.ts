@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import pool from '../db/connection';
 import { caisseMagasinService } from '../services/CaisseMagasinService';
 import { ClientAllocationService } from '../services/ClientAllocationService';
+import { checkPeriodIsOpen } from '../services/PeriodService';
+import { businessStatusOf } from '../utils/errors';
 import { AuthRequest } from '../middleware/auth';
 import { logger } from '../utils/logger';
 
@@ -24,6 +26,9 @@ export class AcompteController {
       }
 
       await client.query('BEGIN');
+
+      // Postings happen at CURRENT_TIMESTAMP — reject if that period is closed
+      await checkPeriodIsOpen(new Date(), client);
 
       if (idempotency_key) {
         const { rows: dup } = await client.query(
@@ -134,8 +139,9 @@ export class AcompteController {
       });
     } catch (err: any) {
       await client.query('ROLLBACK');
-      logger.error({ err: err?.message }, 'Erreur POST /api/acomptes/:id/apply');
-      res.status(500).json({ error: err?.message || 'Erreur serveur' });
+      logger.error({ err }, 'Erreur POST /api/acomptes/:id/apply');
+      const status = businessStatusOf(err);
+      res.status(status ?? 500).json({ error: status ? err.message : 'Erreur serveur' });
     } finally {
       client.release();
     }
@@ -163,6 +169,9 @@ export class AcompteController {
       }
 
       await client.query('BEGIN');
+
+      // Postings happen at CURRENT_TIMESTAMP — reject if that period is closed
+      await checkPeriodIsOpen(new Date(), client);
 
       const { rows: acRows } = await client.query(
         `SELECT * FROM acomptes_clients WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
@@ -256,8 +265,9 @@ export class AcompteController {
       });
     } catch (err: any) {
       await client.query('ROLLBACK');
-      logger.error({ err: err?.message }, 'Erreur POST /api/acomptes/:id/refund');
-      res.status(500).json({ error: err?.message || 'Erreur serveur' });
+      logger.error({ err }, 'Erreur POST /api/acomptes/:id/refund');
+      const status = businessStatusOf(err);
+      res.status(status ?? 500).json({ error: status ? err.message : 'Erreur serveur' });
     } finally {
       client.release();
     }
@@ -279,7 +289,8 @@ export class AcompteController {
       );
       res.json({ data: rows });
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Erreur serveur' });
+      logger.error({ err }, 'Erreur lecture acompte');
+      res.status(500).json({ error: 'Erreur serveur' });
     }
   }
 
@@ -300,6 +311,9 @@ export class AcompteController {
       }
 
       await client.query('BEGIN');
+
+      // Postings happen at CURRENT_TIMESTAMP — reject if that period is closed
+      await checkPeriodIsOpen(new Date(), client);
 
       if (idempotency_key) {
         const { rows: dup } = await client.query(
@@ -405,8 +419,9 @@ export class AcompteController {
       });
     } catch (err: any) {
       await client.query('ROLLBACK');
-      logger.error({ err: err?.message }, 'Erreur POST /api/acomptes-fournisseur/:id/apply');
-      res.status(500).json({ error: err?.message || 'Erreur serveur' });
+      logger.error({ err }, 'Erreur POST /api/acomptes-fournisseur/:id/apply');
+      const status = businessStatusOf(err);
+      res.status(status ?? 500).json({ error: status ? err.message : 'Erreur serveur' });
     } finally {
       client.release();
     }
@@ -433,6 +448,9 @@ export class AcompteController {
       }
 
       await client.query('BEGIN');
+
+      // Postings happen at CURRENT_TIMESTAMP — reject if that period is closed
+      await checkPeriodIsOpen(new Date(), client);
 
       const { rows: acRows } = await client.query(
         `SELECT * FROM acomptes_fournisseur WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
@@ -523,8 +541,9 @@ export class AcompteController {
       });
     } catch (err: any) {
       await client.query('ROLLBACK');
-      logger.error({ err: err?.message }, 'Erreur POST /api/acomptes-fournisseur/:id/refund');
-      res.status(500).json({ error: err?.message || 'Erreur serveur' });
+      logger.error({ err }, 'Erreur POST /api/acomptes-fournisseur/:id/refund');
+      const status = businessStatusOf(err);
+      res.status(status ?? 500).json({ error: status ? err.message : 'Erreur serveur' });
     } finally {
       client.release();
     }
@@ -546,7 +565,8 @@ export class AcompteController {
       );
       res.json({ data: rows });
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Erreur serveur' });
+      logger.error({ err }, 'Erreur lecture acompte');
+      res.status(500).json({ error: 'Erreur serveur' });
     }
   }
 
@@ -577,7 +597,8 @@ export class AcompteController {
       );
       res.json({ data: { ...rows[0], applications: apps } });
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Erreur serveur' });
+      logger.error({ err }, 'Erreur lecture acompte');
+      res.status(500).json({ error: 'Erreur serveur' });
     }
   }
 
@@ -608,7 +629,8 @@ export class AcompteController {
       );
       res.json({ data: { ...rows[0], applications: apps } });
     } catch (err: any) {
-      res.status(500).json({ error: err?.message || 'Erreur serveur' });
+      logger.error({ err }, 'Erreur lecture acompte');
+      res.status(500).json({ error: 'Erreur serveur' });
     }
   }
 }

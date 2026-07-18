@@ -9,7 +9,8 @@ export class UserLocationAssignmentController {
       const users = await userLocationAssignmentService.getUsers();
       successResponse(res, users, 'Utilisateurs recuperes avec succes');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('UserLocationAssignmentController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -18,7 +19,8 @@ export class UserLocationAssignmentController {
       const locations = await userLocationAssignmentService.getLocations();
       successResponse(res, locations, 'Locations recuperees avec succes');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('UserLocationAssignmentController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -38,7 +40,8 @@ export class UserLocationAssignmentController {
 
       successResponse(res, userAssignments, 'Affectations recuperees avec succes');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('UserLocationAssignmentController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 

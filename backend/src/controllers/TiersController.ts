@@ -22,7 +22,8 @@ export class TiersController {
       });
       res.json({ success: true, ...result });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -33,7 +34,8 @@ export class TiersController {
       if (!tiers) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
       res.json({ success: true, data: tiers });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -45,7 +47,8 @@ export class TiersController {
       if (err.message?.includes('au moins un rôle')) {
         res.status(422).json({ success: false, error: err.message });
       } else {
-        res.status(500).json({ success: false, error: err.message });
+        console.error('TiersController.create:', err);
+        res.status(500).json({ success: false, error: 'Erreur serveur' });
       }
     }
   }
@@ -57,7 +60,8 @@ export class TiersController {
       if (!tiers) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
       res.json({ success: true, data: tiers });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -68,7 +72,8 @@ export class TiersController {
       if (!ok) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
       res.json({ success: true, message: 'Tiers supprimé' });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -79,7 +84,8 @@ export class TiersController {
       const results = await tiersService.search(q as string, role as any);
       res.json({ success: true, data: results });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -91,7 +97,8 @@ export class TiersController {
       if (!compte) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
       res.json({ success: true, data: compte });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -103,7 +110,8 @@ export class TiersController {
       if (!releve) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
       res.json({ success: true, data: releve });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -117,7 +125,12 @@ export class TiersController {
       res.setHeader('Content-Disposition', `attachment; filename="releve-client-${id}.pdf"`);
       res.send(buffer);
     } catch (err: any) {
-      res.status(err.statusCode || 500).json({ success: false, error: err.message });
+      if (err.statusCode) {
+        res.status(err.statusCode).json({ success: false, error: err.message });
+        return;
+      }
+      console.error('TiersController.getRelevePDF:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -132,7 +145,8 @@ export class TiersController {
       if (!tiers) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
       res.json({ success: true, data: tiers });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -274,7 +288,8 @@ export class TiersController {
       res.status(201).json({ success: true, data: { ...acompte, mouvement_caisse_id: mouvement?.id || null } });
     } catch (err: any) {
       await client.query('ROLLBACK');
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController acompte:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     } finally {
       client.release();
     }
@@ -417,7 +432,8 @@ export class TiersController {
       res.status(201).json({ success: true, data: { ...acompte, mouvement_caisse_id: mouvement?.id || null } });
     } catch (err: any) {
       await client.query('ROLLBACK');
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController acompte:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     } finally {
       client.release();
     }
@@ -434,6 +450,11 @@ export class TiersController {
       res.status(201).json({ success: true, data: result });
     } catch (err: any) {
       const status = err.message?.includes('période') || err.message?.includes('rôle') || err.message?.includes('supérieur') ? 422 : 500;
+      if (status === 500) {
+        console.error('TiersController.createCompensation:', err);
+        res.status(500).json({ success: false, error: 'Erreur serveur' });
+        return;
+      }
       res.status(status).json({ success: false, error: err.message });
     }
   }
@@ -444,7 +465,8 @@ export class TiersController {
       const data = await CompensationService.getForTiers(tiersId);
       res.json({ success: true, data });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -454,7 +476,8 @@ export class TiersController {
       const result = await TiersAllocationService.recomputeClientAllocations(tiersId);
       res.json({ success: true, data: result });
     } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
+      console.error('TiersController:', err);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

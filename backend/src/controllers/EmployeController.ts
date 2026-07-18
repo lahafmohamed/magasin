@@ -22,7 +22,8 @@ export class EmployeController {
 
       paginatedResponse(res, employees.data, employees.total, parseInt(page as string) || 1, parseInt(limit as string) || 20, 'Employés récupérés avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('EmployeController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -41,7 +42,8 @@ export class EmployeController {
 
       successResponse(res, employee, 'Employé récupéré avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('EmployeController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -75,7 +77,8 @@ export class EmployeController {
 
       res.status(201).json({ success: true, data: employee, message: 'Employé créé avec succès' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('EmployeController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -116,7 +119,8 @@ export class EmployeController {
 
       successResponse(res, null, 'Commission enregistrée avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('EmployeController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -136,7 +140,8 @@ export class EmployeController {
 
       successResponse(res, commissions, 'Commissions récupérées avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('EmployeController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -156,7 +161,8 @@ export class EmployeController {
       const summary = await employeService.getCommissionSummary(parseInt(id), date_debut as string, date_fin as string);
       successResponse(res, summary, 'Résumé des commissions récupéré avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('EmployeController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -185,7 +191,8 @@ export class EmployeController {
 
       successResponse(res, null, 'Shift enregistré avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('EmployeController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -197,7 +204,8 @@ export class EmployeController {
       const stats = await employeService.getStats();
       successResponse(res, stats, 'Statistiques employés récupérées avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('EmployeController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

@@ -17,7 +17,8 @@ export class StockLocationController {
 
       successResponse(res, locations, 'Locations récupérées avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockLocationController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -36,7 +37,8 @@ export class StockLocationController {
 
       successResponse(res, location, 'Location récupérée avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockLocationController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -63,7 +65,8 @@ export class StockLocationController {
 
       res.status(201).json({ success: true, data: location, message: 'Location créée avec succès' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockLocationController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -82,7 +85,8 @@ export class StockLocationController {
       }
       res.json({ success: true, data: updated, message: 'Location mise à jour' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockLocationController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -102,7 +106,8 @@ export class StockLocationController {
       }
       res.json({ success: true, message: 'Location désactivée' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockLocationController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -116,7 +121,8 @@ export class StockLocationController {
 
       successResponse(res, stockLevels, 'Niveaux de stock récupérés avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockLocationController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -135,7 +141,8 @@ export class StockLocationController {
 
       successResponse(res, products, 'Produits récupérés avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockLocationController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

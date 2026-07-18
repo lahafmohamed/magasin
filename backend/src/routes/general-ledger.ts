@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { GeneralLedgerController } from '../controllers/GeneralLedgerController';
 import { authenticate, authorize } from '../middleware/auth';
+import { validateBody } from '../middleware/validation';
+import { createManualEntrySchema } from '../validation/schemas';
 import { GeneralLedgerService } from '../services/GeneralLedgerService';
 import { PDFService } from '../services/PDFService';
 
@@ -15,7 +17,7 @@ router.get('/chart-of-accounts', GeneralLedgerController.getChartOfAccounts);
 router.get('/trial-balance', GeneralLedgerController.getTrialBalance);
 router.get('/account/:id/ledger', GeneralLedgerController.getAccountLedger);
 router.get('/document/:pieceType/:pieceId', GeneralLedgerController.getByDocument);
-router.post('/manual-entry', GeneralLedgerController.createManualEntry);
+router.post('/manual-entry', validateBody(createManualEntrySchema), GeneralLedgerController.createManualEntry);
 router.get('/stats', GeneralLedgerController.getStats);
 router.get('/journal-breakdown', GeneralLedgerController.getJournalBreakdown);
 
@@ -34,7 +36,8 @@ router.get('/export', async (req, res) => {
     });
     res.json({ success: true, data: result.data });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Erreur GET /api/general-ledger/export:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
@@ -78,7 +81,8 @@ router.get('/export-pdf', async (req, res) => {
     doc.pipe(res);
     doc.end();
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Erreur GET /api/general-ledger/export-pdf:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
@@ -95,7 +99,8 @@ router.get('/income-statement/export-pdf', async (req, res) => {
     res.setHeader('Content-Disposition', 'inline; filename="compte_de_resultat.pdf"');
     res.send(buffer);
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Erreur GET /api/general-ledger/income-statement/export-pdf:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
@@ -112,7 +117,8 @@ router.get('/balance-sheet/export-pdf', async (req, res) => {
     res.setHeader('Content-Disposition', 'inline; filename="bilan.pdf"');
     res.send(buffer);
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Erreur GET /api/general-ledger/balance-sheet/export-pdf:', error);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 

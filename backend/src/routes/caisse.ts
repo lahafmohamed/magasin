@@ -2,6 +2,12 @@ import { Router } from 'express';
 import { CaisseMagasinController } from '../controllers/CaisseMagasinController';
 import pool from '../db/connection';
 import { authenticate, authorize } from '../middleware/auth';
+import { validateBody } from '../middleware/validation';
+import {
+  ouvrirSessionCaisseSchema,
+  cloturerSessionCaisseSchema,
+  createMouvementDiversSchema,
+} from '../validation/schemas';
 
 const router = Router();
 
@@ -15,10 +21,10 @@ router.get('/magasins', CaisseMagasinController.getMagasins);
 router.get('/session-active', CaisseMagasinController.getSessionActive);
 
 // Open new session
-router.post('/ouvrir', authorize(['admin', 'manager', 'caissier', 'magasin_staff']), CaisseMagasinController.ouvrirSession);
+router.post('/ouvrir', authorize(['admin', 'manager', 'caissier', 'magasin_staff']), validateBody(ouvrirSessionCaisseSchema), CaisseMagasinController.ouvrirSession);
 
 // Close session
-router.post('/cloturer/:session_id', authorize(['admin', 'manager', 'caissier', 'magasin_staff']), CaisseMagasinController.cloturerSession);
+router.post('/cloturer/:session_id', authorize(['admin', 'manager', 'caissier', 'magasin_staff']), validateBody(cloturerSessionCaisseSchema), CaisseMagasinController.cloturerSession);
 
 // Get session details with movements
 router.get('/session/:session_id', CaisseMagasinController.getSessionDetail);
@@ -36,6 +42,7 @@ router.get('/cloture-preview/:session_id', CaisseMagasinController.getCloturePre
 router.post(
   '/:session_id/mouvement-divers',
   authorize(['admin', 'manager', 'caissier', 'magasin_staff']),
+  validateBody(createMouvementDiversSchema),
   CaisseMagasinController.recordMouvementDivers
 );
 
@@ -88,7 +95,8 @@ router.get('/audit', authorize(['admin', 'manager']), async (req, res) => {
       orphans_total: orphCount[0]?.n || 0,
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Erreur GET /api/caisse/audit:', err);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 

@@ -42,7 +42,8 @@ export class ProduitController {
         try {
           await getDefaultMagasinLocationId();
         } catch (err: any) {
-          res.status(500).json({ success: false, error: err.message });
+          loggerError('GET /api/produits/ventes (magasin par défaut)', err);
+          res.status(500).json({ success: false, error: 'Erreur serveur' });
           return;
         }
       }

@@ -21,7 +21,8 @@ export class GeneralLedgerController {
 
       paginatedResponse(res, entries.data, entries.total, parseInt(page as string) || 1, parseInt(limit as string) || 50, 'Écritures comptables récupérées avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('GeneralLedgerController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -34,7 +35,8 @@ export class GeneralLedgerController {
       const accounts = await generalLedgerService.getChartOfAccounts(actif_only !== 'false');
       successResponse(res, accounts, 'Plan comptable récupéré avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('GeneralLedgerController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -53,7 +55,8 @@ export class GeneralLedgerController {
       const balance = await generalLedgerService.getTrialBalance(date_debut as string, date_fin as string);
       successResponse(res, balance, 'Balance comptable récupérée avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('GeneralLedgerController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -73,7 +76,8 @@ export class GeneralLedgerController {
       const ledger = await generalLedgerService.getAccountLedger(parseInt(id), date_debut as string, date_fin as string);
       successResponse(res, ledger, 'Grand livre du compte récupéré avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('GeneralLedgerController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -86,7 +90,8 @@ export class GeneralLedgerController {
       const entries = await generalLedgerService.getByDocument(pieceType, parseInt(pieceId));
       successResponse(res, entries, 'Écritures par document récupérées avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('GeneralLedgerController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -112,7 +117,8 @@ export class GeneralLedgerController {
 
       res.status(201).json({ success: true, message: 'Écriture comptable créée avec succès' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('GeneralLedgerController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -125,7 +131,8 @@ export class GeneralLedgerController {
       const stats = await generalLedgerService.getStats(date_debut as string, date_fin as string);
       successResponse(res, stats, 'Statistiques comptables récupérées avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('GeneralLedgerController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -144,7 +151,8 @@ export class GeneralLedgerController {
       const breakdown = await generalLedgerService.getJournalBreakdown(date_debut as string, date_fin as string);
       successResponse(res, breakdown, 'Répartition par journal récupérée avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('GeneralLedgerController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

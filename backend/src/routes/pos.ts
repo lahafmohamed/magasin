@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { POSController } from '../controllers/POSController';
 import { authenticate, authorize } from '../middleware/auth';
+import { validateBody } from '../middleware/validation';
+import { openPosSessionSchema, posQuickSaleSchema } from '../validation/schemas';
 
 const router = Router();
 
@@ -10,7 +12,7 @@ router.use(authenticate);
 const posRoles = authorize('admin', 'manager', 'magasin_staff', 'caissier');
 
 // Session management
-router.post('/open', posRoles, POSController.openSession);
+router.post('/open', posRoles, validateBody(openPosSessionSchema), POSController.openSession);
 router.get('/session', POSController.getCurrentSession);
 router.post('/:sessionId/close', posRoles, POSController.closeSession);
 router.get('/:sessionId/summary', POSController.getSessionSummary);
@@ -19,6 +21,6 @@ router.get('/:sessionId/summary', POSController.getSessionSummary);
 router.get('/scan', POSController.scanBarcode);
 
 // Quick sale
-router.post('/sale', posRoles, POSController.processQuickSale);
+router.post('/sale', posRoles, validateBody(posQuickSaleSchema), POSController.processQuickSale);
 
 export default router;

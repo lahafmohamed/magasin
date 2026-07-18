@@ -21,7 +21,8 @@ export class BonLivraisonController {
       );
       res.json({ success: true, data: result.data, pagination: result.pagination });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('BonLivraisonController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -34,7 +35,8 @@ export class BonLivraisonController {
       }
       res.json({ success: true, data: bl });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('BonLivraisonController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -75,7 +77,12 @@ export class BonLivraisonController {
         msg.includes('doit') ||
         msg.includes('Impossible');
 
-      res.status(isBusinessError ? 400 : 500).json({ success: false, error: msg });
+      if (!isBusinessError) {
+        console.error('BonLivraisonController.create:', error);
+        res.status(500).json({ success: false, error: 'Erreur serveur' });
+        return;
+      }
+      res.status(400).json({ success: false, error: msg });
     }
   }
 
@@ -84,7 +91,8 @@ export class BonLivraisonController {
       const result = await blService.update(parseInt(req.params.id), req.body, req);
       res.json({ success: true, data: result });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('BonLivraisonController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -118,7 +126,8 @@ export class BonLivraisonController {
       await blService.delete(parseInt(req.params.id), req);
       res.json({ success: true, message: 'Bon de livraison supprimé' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('BonLivraisonController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -127,7 +136,8 @@ export class BonLivraisonController {
       const stats = await blService.getStats();
       res.json({ success: true, data: stats });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('BonLivraisonController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -140,7 +150,8 @@ export class BonLivraisonController {
       res.setHeader('Content-Disposition', `attachment; filename="bl-${bl?.numero_bl || id}.pdf"`);
       res.send(buffer);
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('BonLivraisonController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

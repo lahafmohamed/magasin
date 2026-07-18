@@ -179,7 +179,7 @@ export class DemandeController {
             paginatedResponse(res, rows, total, filters.page, filters.limit, 'Demandes récupérées avec succès');
         } catch (error: any) {
             console.error('[DemandeController.getAll] Error:', error);
-            res.status(500).json({ success: false, error: error.message });
+            res.status(500).json({ success: false, error: 'Erreur serveur' });
         }
     }
 
@@ -231,7 +231,8 @@ export class DemandeController {
 
             successResponse(res, demande, 'Demande récupérée avec succès');
         } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
+            console.error('[DemandeController] Error:', error);
+            res.status(500).json({ success: false, error: 'Erreur serveur' });
         }
     }
 
@@ -511,7 +512,8 @@ export class DemandeController {
 
             successResponse(res, stock, 'Stock dépôt récupéré avec succès');
         } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
+            console.error('[DemandeController] Error:', error);
+            res.status(500).json({ success: false, error: 'Erreur serveur' });
         }
     }
 }

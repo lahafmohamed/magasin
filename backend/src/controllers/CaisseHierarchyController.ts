@@ -11,7 +11,8 @@ export class CaisseHierarchyController {
       const caisses = await caisseService.getAll();
       res.json({ success: true, data: caisses });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -24,7 +25,8 @@ export class CaisseHierarchyController {
       }
       res.json({ success: true, data: caisse });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -33,7 +35,8 @@ export class CaisseHierarchyController {
       const caisse = await caisseService.getCaissePrincipale();
       res.json({ success: true, data: caisse });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -42,7 +45,8 @@ export class CaisseHierarchyController {
       const caisses = await caisseService.getMagasinCaisses();
       res.json({ success: true, data: caisses });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -58,7 +62,8 @@ export class CaisseHierarchyController {
       const result = await caisseService.create({ code, nom, type, location_id, caisse_parent_id }, req);
       res.status(201).json({ success: true, data: result });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -67,7 +72,8 @@ export class CaisseHierarchyController {
       const result = await caisseService.update(parseInt(req.params.id), req.body, req);
       res.json({ success: true, data: result });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -76,7 +82,8 @@ export class CaisseHierarchyController {
       await caisseService.deactivate(parseInt(req.params.id), req);
       res.json({ success: true, message: 'Caisse désactivée' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -100,7 +107,8 @@ export class CaisseHierarchyController {
 
       res.json({ success: true, data: result });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -115,7 +123,8 @@ export class CaisseHierarchyController {
       );
       res.json({ success: true, data: result.data, pagination: result.pagination });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -124,7 +133,8 @@ export class CaisseHierarchyController {
       const report = await caisseService.getConsolidatedReport();
       res.json({ success: true, data: report });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -137,7 +147,8 @@ export class CaisseHierarchyController {
       }
       res.json({ success: true, data: balance });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CaisseHierarchyController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

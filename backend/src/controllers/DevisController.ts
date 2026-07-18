@@ -21,7 +21,8 @@ export class DevisController {
       );
       res.json({ success: true, data: result.data, pagination: result.pagination });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('DevisController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -34,7 +35,8 @@ export class DevisController {
       }
       res.json({ success: true, data: devis });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('DevisController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -77,6 +79,10 @@ export class DevisController {
       if (Array.isArray(error?.offending_lines)) {
         payload.offending_lines = error.offending_lines;
       }
+      if (status === 500) {
+        console.error('DevisController:', error);
+        payload.error = 'Erreur serveur';
+      }
       res.status(status).json(payload);
     }
   }
@@ -100,6 +106,10 @@ export class DevisController {
       if (Array.isArray(error?.offending_lines)) {
         payload.offending_lines = error.offending_lines;
       }
+      if (status === 500) {
+        console.error('DevisController:', error);
+        payload.error = 'Erreur serveur';
+      }
       res.status(status).json(payload);
     }
   }
@@ -115,6 +125,11 @@ export class DevisController {
       res.json({ success: true, message: 'Statut mis à jour' });
     } catch (error: any) {
       const status = typeof error?.statusCode === 'number' ? error.statusCode : 500;
+      if (status === 500) {
+        console.error('DevisController.updateStatut:', error);
+        res.status(500).json({ success: false, error: 'Erreur serveur' });
+        return;
+      }
       res.status(status).json({ success: false, error: error.message, code: error?.code });
     }
   }
@@ -131,7 +146,12 @@ export class DevisController {
         msg.includes('Impossible de convertir') ||
         msg.includes('must be accepted');
 
-      res.status(isBusinessError ? 400 : 500).json({ success: false, error: msg });
+      if (!isBusinessError) {
+        console.error('DevisController.convertToFacture:', error);
+        res.status(500).json({ success: false, error: 'Erreur serveur' });
+        return;
+      }
+      res.status(400).json({ success: false, error: msg });
     }
   }
 
@@ -140,7 +160,8 @@ export class DevisController {
       await devisService.delete(parseInt(req.params.id), req);
       res.json({ success: true, message: 'Devis supprimé' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('DevisController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -149,7 +170,8 @@ export class DevisController {
       const stats = await devisService.getStats();
       res.json({ success: true, data: stats });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('DevisController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -162,7 +184,8 @@ export class DevisController {
       res.setHeader('Content-Disposition', `attachment; filename="devis-${devis?.numero_devis || id}.pdf"`);
       res.send(buffer);
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('DevisController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

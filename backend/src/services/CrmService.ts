@@ -111,15 +111,18 @@ export class CrmService {
     return rows[0];
   }
 
-  async updateInteraction(id: number, input: Partial<CreateInteractionInput>): Promise<any> {
+  async updateInteraction(id: number, input: Partial<CreateInteractionInput> & { statut?: string }): Promise<any> {
+    // Column identifiers must never come from the caller — whitelist only.
+    const editable = ['type', 'sujet', 'description', 'date_interaction', 'date_rappel', 'priorite', 'statut'] as const;
+
     const fields: string[] = [];
     const params: any[] = [];
-    let paramIndex = 1;
 
-    for (const [key, value] of Object.entries(input)) {
+    for (const col of editable) {
+      const value = (input as Record<string, unknown>)[col];
       if (value !== undefined) {
-        fields.push(`${key} = $${paramIndex++}`);
         params.push(value);
+        fields.push(`${col} = $${params.length}`);
       }
     }
 
@@ -127,7 +130,7 @@ export class CrmService {
 
     params.push(id);
     const { rows } = await pool.query(
-      `UPDATE crm_interactions SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      `UPDATE crm_interactions SET ${fields.join(', ')} WHERE id = $${params.length} RETURNING *`,
       params
     );
     return rows[0];

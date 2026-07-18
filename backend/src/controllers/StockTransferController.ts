@@ -20,7 +20,8 @@ export class StockTransferController {
 
       paginatedResponse(res, transfers.data, transfers.total, parseInt(page as string) || 1, parseInt(limit as string) || 20, 'Transferts récupérés avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockTransferController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -39,7 +40,8 @@ export class StockTransferController {
 
       successResponse(res, transfer, 'Transfert récupéré avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockTransferController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -66,7 +68,8 @@ export class StockTransferController {
 
       res.status(201).json({ success: true, data: transfer, message: 'Transfert créé avec succès' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockTransferController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -81,7 +84,8 @@ export class StockTransferController {
 
       successResponse(res, null, 'Transfert complété avec succès');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockTransferController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -94,7 +98,8 @@ export class StockTransferController {
       }
       successResponse(res, null, 'Transfert annulé');
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('StockTransferController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

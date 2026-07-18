@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import pool from '../db/connection';
+import { businessStatusOf } from '../utils/errors';
 import { Paiement, PaiementWithFacture } from '../models/Paiement';
 import { parsePagination } from '../utils/pagination';
 import { logger } from '../utils/logger';
@@ -268,8 +269,9 @@ export class PaiementController {
 
     } catch (error: any) {
       await client.query('ROLLBACK');
-      logger.error({ err: error?.message || error }, 'Erreur POST /api/factures/:factureId/paiements');
-      res.status(500).json({ error: error?.message || 'Erreur serveur' });
+      logger.error({ err: error }, 'Erreur POST /api/factures/:factureId/paiements');
+      const status = businessStatusOf(error);
+      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
     } finally {
       client.release();
     }
@@ -448,12 +450,13 @@ export class PaiementController {
         date_paiement?: string;
       } = req.body;
 
-      // Check if payment exists and get client info
+      // Check if payment exists and get client info (lock the row)
       const { rows: existingPayment } = await client.query(
         `SELECT p.*, f.tiers_id
          FROM paiements p
          JOIN factures f ON f.id = p.facture_id
-         WHERE p.id = $1`,
+         WHERE p.id = $1
+         FOR UPDATE OF p`,
         [id]
       );
 
@@ -470,6 +473,47 @@ export class PaiementController {
         await client.query('ROLLBACK');
         res.status(400).json({ error: 'Le montant doit être supérieur à 0' });
         return;
+      }
+
+      const changesFinancials =
+        montant !== undefined || methode_paiement !== undefined || date_paiement !== undefined;
+
+      if (changesFinancials) {
+        // An acompte-application line mirrors an acompte_applications ledger row;
+        // editing its amount would desynchronize the acompte balance.
+        if (payment.source === 'acompte_application') {
+          await client.query('ROLLBACK');
+          res.status(409).json({ error: 'Paiement issu d\'un acompte — modifiez l\'acompte, pas ce paiement' });
+          return;
+        }
+        // A caisse-linked payment already produced a till movement at the original
+        // amount; supprimer puis recréer keeps the till consistent.
+        if (payment.mouvement_caisse_id) {
+          await client.query('ROLLBACK');
+          res.status(409).json({ error: 'Paiement lié à un mouvement de caisse — supprimez puis recréez le paiement' });
+          return;
+        }
+
+        // Closed accounting periods are immutable (original date and, if moved, the new one)
+        await checkPeriodIsOpen(new Date(payment.date_paiement), client);
+        if (date_paiement) {
+          await checkPeriodIsOpen(new Date(date_paiement), client);
+        }
+
+        // New amount must not exceed the facture's remaining due (old amount released)
+        if (montant !== undefined) {
+          const { rows: factureRows } = await client.query(
+            `SELECT GREATEST(total - montant_paye, 0) AS remaining
+             FROM factures WHERE id = $1 FOR UPDATE`,
+            [payment.facture_id]
+          );
+          const available = parseFloat(factureRows[0].remaining) + parseFloat(payment.montant);
+          if (Number(montant) > available + 0.005) {
+            await client.query('ROLLBACK');
+            res.status(422).json({ error: `Montant (${montant}) dépasse le reste dû (${available})` });
+            return;
+          }
+        }
       }
 
       // Update payment
@@ -490,10 +534,11 @@ export class PaiementController {
 
       res.json({ message: 'Paiement mis à jour et allocation FIFO recalculée' });
 
-    } catch (error) {
+    } catch (error: any) {
       await client.query('ROLLBACK');
       logger.error({ err: error }, 'Erreur PUT /api/paiements/:id');
-      res.status(500).json({ error: 'Erreur serveur' });
+      const status = businessStatusOf(error);
+      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
     } finally {
       client.release();
     }
@@ -514,7 +559,8 @@ export class PaiementController {
         `SELECT p.*, f.tiers_id
          FROM paiements p
          JOIN factures f ON f.id = p.facture_id
-         WHERE p.id = $1`,
+         WHERE p.id = $1
+         FOR UPDATE OF p`,
         [id]
       );
 
@@ -526,8 +572,50 @@ export class PaiementController {
 
       const payment = existingPayment[0];
 
-      // Customer ledger: reversal debit entry for payment deletion
+      // acompte_applications.paiement_id is ON DELETE SET NULL: deleting this row
+      // would leave the acompte consumed while the facture becomes unpaid.
+      if (payment.source === 'acompte_application') {
+        await client.query('ROLLBACK');
+        res.status(409).json({ error: 'Paiement issu d\'un acompte — annulez l\'application d\'acompte, pas ce paiement' });
+        return;
+      }
+
+      // Closed accounting periods are immutable
+      await checkPeriodIsOpen(new Date(payment.date_paiement), client);
+
       const authReqDel = req as AuthRequest;
+
+      // Reverse the till movement so the caisse balance stays true. Only an
+      // open session can absorb the reversal — a closed one has been counted.
+      if (payment.mouvement_caisse_id) {
+        const { rows: mvtRows } = await client.query(
+          `SELECT m.session_caisse_id, s.statut AS session_statut
+           FROM mouvements_caisse m
+           JOIN sessions_caisse s ON s.id = m.session_caisse_id
+           WHERE m.id = $1`,
+          [payment.mouvement_caisse_id]
+        );
+        if (mvtRows.length > 0) {
+          if (mvtRows[0].session_statut !== 'ouverte') {
+            await client.query('ROLLBACK');
+            res.status(409).json({ error: 'Paiement lié à une session de caisse fermée — suppression impossible' });
+            return;
+          }
+          await caisseMagasinService.enregistrerMouvement(client, {
+            session_caisse_id: mvtRows[0].session_caisse_id,
+            type: 'decaissement',
+            categorie: 'remboursement_client',
+            montant: parseFloat(payment.montant),
+            methode_paiement: payment.methode_paiement,
+            reference_type: 'paiement',
+            reference_id: payment.id,
+            libelle: `Annulation paiement PAI-${payment.id} (facture #${payment.facture_id})`,
+            user_id: authReqDel.user?.id || undefined,
+          });
+        }
+      }
+
+      // Customer ledger: reversal debit entry for payment deletion
       await client.query(
         `INSERT INTO compte_client_lignes
            (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
@@ -554,10 +642,11 @@ export class PaiementController {
 
       res.json({ message: 'Paiement supprimé et allocation FIFO recalculée' });
 
-    } catch (error) {
+    } catch (error: any) {
       await client.query('ROLLBACK');
       logger.error({ err: error }, 'Erreur DELETE /api/paiements/:id');
-      res.status(500).json({ error: 'Erreur serveur' });
+      const status = businessStatusOf(error);
+      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
     } finally {
       client.release();
     }

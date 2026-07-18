@@ -75,7 +75,8 @@ router.get('/', async (req: Request, res: Response) => {
       }
     });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('GET /api/clients error:', err);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
@@ -138,7 +139,8 @@ router.get('/:id', async (req: Request, res: Response) => {
     }
     res.json({ success: true, data: rows[0] });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('GET /api/clients/:id error:', err);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
@@ -157,7 +159,8 @@ router.get('/:id/historique', async (req: Request, res: Response) => {
     );
     res.json({ success: true, data: rows });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('GET /api/clients/:id/historique error:', err);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
@@ -184,7 +187,8 @@ router.post('/', authorize('admin', 'manager'), validateBody(createClientSchema)
 
     res.status(201).json({ success: true, data: client, message: 'Client créé' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('POST /api/clients error:', err);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
@@ -236,7 +240,8 @@ router.put('/:id', authorize('admin', 'manager'), validateBody(updateClientSchem
 
     res.json({ success: true, data: client, message: 'Client modifié' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('PUT /api/clients/:id error:', err);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 
@@ -275,7 +280,8 @@ router.delete('/:id', authorize('admin', 'manager'), async (req: Request, res: R
 
     res.json({ success: true, message: 'Client supprimé' });
   } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('DELETE /api/clients/:id error:', err);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });
 

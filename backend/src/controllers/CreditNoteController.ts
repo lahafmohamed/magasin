@@ -21,7 +21,8 @@ export class CreditNoteController {
       );
       res.json({ success: true, data: result.data, pagination: result.pagination });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CreditNoteController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -34,7 +35,8 @@ export class CreditNoteController {
       }
       res.json({ success: true, data: avoir });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CreditNoteController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -50,7 +52,8 @@ export class CreditNoteController {
       const result = await creditNoteService.createFromRetour(retour_id, req.user!.id, req);
       res.status(201).json({ success: true, data: result });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CreditNoteController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -105,7 +108,8 @@ export class CreditNoteController {
       await creditNoteService.updateStatut(parseInt(req.params.id), statut, req);
       res.json({ success: true, message: 'Statut mis à jour' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CreditNoteController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -114,7 +118,8 @@ export class CreditNoteController {
       await creditNoteService.delete(parseInt(req.params.id), req);
       res.json({ success: true, message: 'Avoir supprimé' });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CreditNoteController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -147,7 +152,8 @@ export class CreditNoteController {
       res.setHeader('Content-Disposition', `attachment; filename="avoir-${avoir?.numero_avoir || id}.pdf"`);
       res.send(buffer);
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message });
+      console.error('CreditNoteController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

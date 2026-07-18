@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
+import { validateBody } from '../middleware/validation';
+import { enregistrerPieceSchema } from '../validation/schemas';
 import { comptabiliteService } from '../services/ComptabiliteService';
 
 const router = Router();
@@ -47,7 +49,7 @@ router.get('/ecritures', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/ecritures', async (req: Request, res: Response) => {
+router.post('/ecritures', validateBody(enregistrerPieceSchema), async (req: Request, res: Response) => {
   try {
     const result = await comptabiliteService.enregistrerPiece({
       ...req.body,

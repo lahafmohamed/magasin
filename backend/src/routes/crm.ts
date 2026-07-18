@@ -1,5 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
+import { validateBody } from '../middleware/validation';
+import {
+  createCrmInteractionSchema,
+  updateCrmInteractionSchema,
+  createCrmTacheSchema,
+  updateCrmTacheStatutSchema,
+} from '../validation/schemas';
 import { crmService } from '../services/CrmService';
 
 const router = Router();
@@ -35,7 +42,7 @@ router.get('/interactions/:tiersId', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/interactions', canWrite, async (req: Request, res: Response) => {
+router.post('/interactions', canWrite, validateBody(createCrmInteractionSchema), async (req: Request, res: Response) => {
   try {
     const interaction = await crmService.createInteraction({
       ...req.body,
@@ -48,7 +55,7 @@ router.post('/interactions', canWrite, async (req: Request, res: Response) => {
   }
 });
 
-router.put('/interactions/:id', canWrite, async (req: Request, res: Response) => {
+router.put('/interactions/:id', canWrite, validateBody(updateCrmInteractionSchema), async (req: Request, res: Response) => {
   try {
     const interaction = await crmService.updateInteraction(parseInt(req.params.id), req.body);
     if (!interaction) {
@@ -90,7 +97,7 @@ router.get('/taches', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/taches', canWrite, async (req: Request, res: Response) => {
+router.post('/taches', canWrite, validateBody(createCrmTacheSchema), async (req: Request, res: Response) => {
   try {
     const tache = await crmService.createTache({
       ...req.body,
@@ -103,7 +110,7 @@ router.post('/taches', canWrite, async (req: Request, res: Response) => {
   }
 });
 
-router.patch('/taches/:id/statut', canWrite, async (req: Request, res: Response) => {
+router.patch('/taches/:id/statut', canWrite, validateBody(updateCrmTacheStatutSchema), async (req: Request, res: Response) => {
   try {
     const tache = await crmService.updateTacheStatut(parseInt(req.params.id), req.body.statut);
     if (!tache) {

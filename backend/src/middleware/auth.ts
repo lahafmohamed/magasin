@@ -87,33 +87,38 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       return;
     }
 
-    // Check if session is revoked
+    // Fail closed: a valid JWT is not enough — an active, unrevoked,
+    // unexpired session row must exist for this exact token.
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const { rows } = await pool.query(
-      'SELECT id, revoked_at, expires_at FROM user_sessions WHERE token_hash = $1 AND is_active = true',
+      'SELECT id, revoked_at, expires_at, is_active FROM user_sessions WHERE token_hash = $1',
       [tokenHash]
     );
 
-    if (rows.length > 0) {
-      const session = rows[0];
-      
-      // Check if session is revoked
-      if (session.revoked_at) {
-        res.status(401).json({
-          success: false,
-          error: 'Session révoquée, veuillez vous reconnecter',
-        });
-        return;
-      }
+    if (rows.length === 0) {
+      res.status(401).json({
+        success: false,
+        error: 'Session invalide, veuillez vous reconnecter',
+      });
+      return;
+    }
 
-      // Check if session is expired
-      if (new Date(session.expires_at) < new Date()) {
-        res.status(401).json({
-          success: false,
-          error: 'Session expirée, veuillez vous reconnecter',
-        });
-        return;
-      }
+    const session = rows[0];
+
+    if (session.revoked_at || !session.is_active) {
+      res.status(401).json({
+        success: false,
+        error: 'Session révoquée, veuillez vous reconnecter',
+      });
+      return;
+    }
+
+    if (new Date(session.expires_at) < new Date()) {
+      res.status(401).json({
+        success: false,
+        error: 'Session expirée, veuillez vous reconnecter',
+      });
+      return;
     }
 
     req.user = decoded;
@@ -178,16 +183,13 @@ export const generateToken = async (user: { id: number; username: string; role: 
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
 
-  try {
-    await pool.query(
-      `INSERT INTO user_sessions (utilisateur_id, token_hash, expires_at, ip_address, user_agent)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [user.id, tokenHash, expiresAt, req?.ip, req?.headers?.['user-agent']]
-    );
-  } catch (error) {
-    // Log error but don't fail authentication
-    console.error('Failed to store session:', error);
-  }
+  // Session row is mandatory: authenticate() fails closed without it, so a
+  // failed INSERT must fail the login rather than mint an unusable token.
+  await pool.query(
+    `INSERT INTO user_sessions (utilisateur_id, token_hash, expires_at, ip_address, user_agent)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [user.id, tokenHash, expiresAt, req?.ip, req?.headers?.['user-agent']]
+  );
 
   return token;
 };

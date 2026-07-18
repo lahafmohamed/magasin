@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { DepenseControllerV2 } from '../controllers/DepenseControllerV2';
 import { authenticate, authorize } from '../middleware/auth';
+import { validateBody } from '../middleware/validation';
+import { createDepenseSchema, updateDepenseSchema } from '../validation/schemas';
 
 const router = Router();
 
@@ -13,10 +15,10 @@ router.get('/', DepenseControllerV2.getAll);
 router.get('/:id', DepenseControllerV2.getById);
 
 // POST /api/depenses - Create expense (admin, manager, caissier, magasin_staff)
-router.post('/', authorize(['admin', 'manager', 'caissier', 'magasin_staff']), DepenseControllerV2.create);
+router.post('/', authorize(['admin', 'manager', 'caissier', 'magasin_staff']), validateBody(createDepenseSchema), DepenseControllerV2.create);
 
 // PUT /api/depenses/:id - Update expense (admin, manager, caissier, magasin_staff - own magasin only)
-router.put('/:id', authorize(['admin', 'manager', 'caissier', 'magasin_staff']), DepenseControllerV2.update);
+router.put('/:id', authorize(['admin', 'manager', 'caissier', 'magasin_staff']), validateBody(updateDepenseSchema), DepenseControllerV2.update);
 
 // DELETE /api/depenses/:id - Delete expense (admin, manager, caissier, magasin_staff - own magasin only)
 router.delete('/:id', authorize(['admin', 'manager', 'caissier', 'magasin_staff']), DepenseControllerV2.delete);
