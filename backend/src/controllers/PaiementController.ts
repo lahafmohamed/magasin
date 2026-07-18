@@ -1,31 +1,22 @@
 import { Request, Response } from 'express';
 import pool from '../db/connection';
 import { businessStatusOf } from '../utils/errors';
-import { Paiement, PaiementWithFacture } from '../models/Paiement';
 import { parsePagination } from '../utils/pagination';
 import { logger } from '../utils/logger';
-import { ClientAllocationService } from '../services/ClientAllocationService';
-import { checkPeriodIsOpen } from '../services/PeriodService';
-import { caisseMagasinService } from '../services/CaisseMagasinService';
+import { paiementService } from '../services/PaiementService';
 import { AuthRequest } from '../middleware/auth';
 
+/**
+ * Thin HTTP layer over PaiementService: parse the request, call the service,
+ * map business errors (statusCode) to their HTTP status — everything else is
+ * a generic 500.
+ */
 export class PaiementController {
 
   /**
-   * Record a new payment on a facture.
-   *
-   * Flow:
-   *  1. Idempotency check (idempotency_key short-circuit).
-   *  2. Auto-apply available acomptes FIFO to outstanding balance.
-   *     Each application creates a paiements row (source='acompte_application')
-   *     and an acompte_applications ledger row. NO caisse movement (no cash today).
-   *  3. Remainder (montant - applied) recorded as direct paiement (source='direct')
-   *     and a single mouvement_caisse line.
-   *  4. Caisse error = rollback. No swallow.
+   * Record a new payment on a facture (acomptes FIFO d'abord, reste en direct).
    */
   static async create(req: Request, res: Response): Promise<void> {
-    const client = await pool.connect();
-
     try {
       // Support both /factures/:factureId/paiements and standalone /paiements (facture_id in body)
       const factureId = req.params.factureId ?? (req.body.facture_id != null ? String(req.body.facture_id) : undefined);
@@ -33,247 +24,30 @@ export class PaiementController {
         res.status(400).json({ error: 'facture_id requis' });
         return;
       }
-      const {
-        montant,
-        methode_paiement,
-        date_paiement,
-        reference,
-        notes,
-        session_caisse_id,
-        idempotency_key,
-        skip_acompte_application,
-      }: {
-        montant: number;
-        methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement' | 'mobile_money' | 'orange_money' | 'mtn_money' | 'wave';
-        date_paiement?: string;
-        reference?: string;
-        notes?: string;
-        session_caisse_id?: number;
-        idempotency_key?: string;
-        skip_acompte_application?: boolean;
-      } = req.body;
 
-      const VALID_METHODS = ['espece', 'carte', 'cheque', 'virement', 'mobile_money', 'orange_money', 'mtn_money', 'wave'];
-
-      if (!montant || Number(montant) <= 0) {
-        res.status(400).json({ error: 'Le montant doit être supérieur à 0' });
-        return;
-      }
-      if (!methode_paiement || !VALID_METHODS.includes(methode_paiement)) {
-        res.status(400).json({ error: 'Méthode de paiement invalide' });
-        return;
-      }
-
-      const authReq = req as AuthRequest;
-      const userId = authReq.user?.id || null;
-      const datePaiement = date_paiement || new Date().toISOString();
-
-      await client.query('BEGIN');
-
-      // Reject postings into a closed accounting period
-      await checkPeriodIsOpen(new Date(datePaiement), client);
-
-      // Idempotency
-      if (idempotency_key) {
-        const { rows: dup } = await client.query(
-          'SELECT * FROM paiements WHERE idempotency_key = $1',
-          [idempotency_key]
-        );
-        if (dup.length > 0) {
-          await client.query('COMMIT');
-          res.status(200).json({ idempotent: true, ...dup[0] });
-          return;
-        }
-      }
-
-      // Lock facture row to serialize concurrent payments
-      const { rows: factureRows } = await client.query(
-        `SELECT id, tiers_id, statut, location_id, total, montant_paye,
-                GREATEST(total - montant_paye, 0) AS remaining
-         FROM factures WHERE id = $1 FOR UPDATE`,
-        [factureId]
-      );
-
-      if (factureRows.length === 0) {
-        await client.query('ROLLBACK');
-        res.status(404).json({ error: 'Facture non trouvée' });
-        return;
-      }
-
-      const facture = factureRows[0];
-      if (facture.statut === 'annulee') {
-        await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Impossible d\'ajouter un paiement sur une facture annulée' });
-        return;
-      }
-
-      const clientId = facture.tiers_id;
-      const locationId = facture.location_id;
-      const remainingDue = parseFloat(facture.remaining);
-      const montantNum = Number(montant);
-
-      if (montantNum > remainingDue + 0.005) {
-        await client.query('ROLLBACK');
-        res.status(422).json({ error: `Montant (${montantNum}) dépasse le reste dû (${remainingDue})` });
-        return;
-      }
-
-      // Resolve magasin / session for caisse
-      let effectiveMagasinId: number | null = null;
-      if (locationId) {
-        const { rows: magRows } = await client.query(
-          'SELECT id FROM magasins WHERE location_id = $1 LIMIT 1',
-          [locationId]
-        );
-        if (magRows.length > 0) effectiveMagasinId = magRows[0].id;
-      }
-
-      let effectiveSessionCaisseId: number | null = session_caisse_id || null;
-      if (!effectiveSessionCaisseId && effectiveMagasinId) {
-        const { rows: sessRows } = await client.query(
-          'SELECT id FROM sessions_caisse WHERE magasin_id = $1 AND statut = $2 LIMIT 1',
-          [effectiveMagasinId, 'ouverte']
-        );
-        if (sessRows.length > 0) effectiveSessionCaisseId = sessRows[0].id;
-      }
-
-      if (methode_paiement === 'espece' && !effectiveSessionCaisseId) {
-        await client.query('ROLLBACK');
-        res.status(409).json({ error: 'Aucune session caisse ouverte — impossible de recevoir des espèces' });
-        return;
-      }
-
-      // ── Step 1: auto-apply available acomptes FIFO ──
-      let appliedFromAcomptes = 0;
-      const applications: any[] = [];
-
-      if (!skip_acompte_application) {
-        const { rows: acomptes } = await client.query(
-          `SELECT id, montant_restant
-           FROM acomptes_clients
-           WHERE tiers_id = $1
-             AND statut IN ('disponible','partiellement_utilise')
-             AND COALESCE(deleted_at, NULL) IS NULL
-             AND montant_restant > 0
-           ORDER BY date_acompte ASC, id ASC
-           FOR UPDATE`,
-          [clientId]
-        );
-
-        let remainingNeeded = remainingDue; // apply up to invoice balance, not just payload montant
-        for (const ac of acomptes) {
-          if (remainingNeeded <= 0) break;
-          const acRestant = parseFloat(ac.montant_restant);
-          const toApply = Math.min(acRestant, remainingNeeded);
-          if (toApply <= 0) continue;
-
-          // Create paiement row for this application
-          const { rows: payRows } = await client.query(
-            `INSERT INTO paiements (
-              facture_id, montant, methode_paiement, date_paiement,
-              reference, notes, session_caisse_id, magasin_id, source, cree_par
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'acompte_application',$9)
-            RETURNING id`,
-            [factureId, toApply, methode_paiement, datePaiement,
-              `ACO-APP-${ac.id}`, `Application acompte #${ac.id}`,
-              null, effectiveMagasinId, userId]
-          );
-
-          await client.query(
-            `INSERT INTO acompte_applications (acompte_id, facture_id, paiement_id, montant, cree_par)
-             VALUES ($1,$2,$3,$4,$5)`,
-            [ac.id, factureId, payRows[0].id, toApply, userId]
-          );
-
-          // Ledger: credit (client paid via acompte balance)
-          await client.query(
-            `INSERT INTO compte_client_lignes
-               (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
-             VALUES ($1, 'paiement', $2, $3, 0, $4, $5, $6)`,
-            [clientId, payRows[0].id, `PAI-${payRows[0].id}`, toApply,
-              `Application acompte #${ac.id} sur facture #${factureId}`, userId]
-          );
-
-          applications.push({ acompte_id: ac.id, paiement_id: payRows[0].id, montant: toApply });
-          appliedFromAcomptes += toApply;
-          remainingNeeded -= toApply;
-        }
-      }
-
-      // ── Step 2: direct payment for remainder ──
-      const directMontant = Math.max(0, montantNum - appliedFromAcomptes);
-      let directPaiementId: number | null = null;
-
-      if (directMontant > 0) {
-        const { rows: payRows } = await client.query(
-          `INSERT INTO paiements (
-            facture_id, montant, methode_paiement, date_paiement,
-            reference, notes, session_caisse_id, magasin_id, source,
-            idempotency_key, cree_par
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'direct',$9,$10)
-          RETURNING id, date_paiement`,
-          [factureId, directMontant, methode_paiement, datePaiement,
-            reference || null, notes || null,
-            effectiveSessionCaisseId, effectiveMagasinId,
-            idempotency_key || null, userId]
-        );
-        directPaiementId = payRows[0].id;
-
-        // Caisse movement (any tracked method when session known). FAIL tx if fails.
-        if (effectiveSessionCaisseId) {
-          const mouvement = await caisseMagasinService.enregistrerMouvement(client, {
-            session_caisse_id: effectiveSessionCaisseId,
-            type: 'encaissement',
-            categorie: 'paiement_client',
-            montant: directMontant,
-            methode_paiement,
-            reference_type: 'paiement',
-            reference_id: directPaiementId!,
-            libelle: `Paiement facture #${factureId}`,
-            user_id: userId || undefined,
-            idempotency_key: idempotency_key ? `${idempotency_key}:mvt` : undefined,
-          });
-
-          await client.query(
-            'UPDATE paiements SET mouvement_caisse_id = $1 WHERE id = $2',
-            [mouvement.id, directPaiementId]
-          );
-        }
-
-        // Ledger
-        await client.query(
-          `INSERT INTO compte_client_lignes
-             (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
-           VALUES ($1, 'paiement', $2, $3, 0, $4, $5, $6)`,
-          [clientId, directPaiementId, `PAI-${directPaiementId}`, directMontant, notes || null, userId]
-        );
-      }
-
-      await ClientAllocationService.recomputeClientAllocations(clientId, { transaction: client });
-
-      await client.query('COMMIT');
-
-      res.status(201).json({
-        facture_id: parseInt(factureId),
-        montant_recu: montantNum,
-        applique_depuis_acomptes: appliedFromAcomptes,
-        applications,
-        direct_paiement_id: directPaiementId,
-        direct_montant: directMontant,
-        methode_paiement,
-        session_caisse_id: effectiveSessionCaisseId,
-        message: appliedFromAcomptes > 0
-          ? `Acomptes appliqués (${appliedFromAcomptes}), reste encaissé: ${directMontant}`
-          : 'Paiement enregistré',
+      const userId = (req as AuthRequest).user?.id || null;
+      const result = await paiementService.create({
+        factureId: Number(factureId),
+        montant: req.body.montant,
+        methode_paiement: req.body.methode_paiement,
+        date_paiement: req.body.date_paiement,
+        reference: req.body.reference,
+        notes: req.body.notes,
+        session_caisse_id: req.body.session_caisse_id,
+        idempotency_key: req.body.idempotency_key,
+        skip_acompte_application: req.body.skip_acompte_application,
+        userId,
       });
 
+      if (result.idempotent) {
+        res.status(200).json({ idempotent: true, ...result.existing });
+        return;
+      }
+      res.status(201).json(result);
     } catch (error: any) {
-      await client.query('ROLLBACK');
       logger.error({ err: error }, 'Erreur POST /api/factures/:factureId/paiements');
       const status = businessStatusOf(error);
       res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
-    } finally {
-      client.release();
     }
   }
 
@@ -381,7 +155,7 @@ export class PaiementController {
         }
       });
     } catch (error) {
-      console.error('Erreur GET /api/paiements:', error);
+      logger.error({ err: error }, 'Erreur GET /api/paiements');
       res.status(500).json({ error: 'Erreur serveur' });
     }
   }
@@ -427,7 +201,7 @@ export class PaiementController {
         moyenne: moyenne[0]
       });
     } catch (error) {
-      console.error('Erreur GET /api/paiements/stats:', error);
+      logger.error({ err: error }, 'Erreur GET /api/paiements/stats');
       res.status(500).json({ error: 'Erreur serveur' });
     }
   }
@@ -436,111 +210,19 @@ export class PaiementController {
    * Update a payment (triggers FIFO reallocation)
    */
   static async update(req: Request, res: Response): Promise<void> {
-    const client = await pool.connect();
-
     try {
-      await client.query('BEGIN');
-
-      const { id } = req.params;
-      const { montant, methode_paiement, reference, notes, date_paiement }: {
-        montant?: number;
-        methode_paiement?: 'espece' | 'carte' | 'cheque' | 'virement' | 'mobile_money' | 'orange_money' | 'mtn_money' | 'wave';
-        reference?: string;
-        notes?: string;
-        date_paiement?: string;
-      } = req.body;
-
-      // Check if payment exists and get client info (lock the row)
-      const { rows: existingPayment } = await client.query(
-        `SELECT p.*, f.tiers_id
-         FROM paiements p
-         JOIN factures f ON f.id = p.facture_id
-         WHERE p.id = $1
-         FOR UPDATE OF p`,
-        [id]
-      );
-
-      if (existingPayment.length === 0) {
-        await client.query('ROLLBACK');
-        res.status(404).json({ error: 'Paiement non trouvé' });
-        return;
-      }
-
-      const payment = existingPayment[0];
-
-      // Validate amount if provided
-      if (montant !== undefined && montant <= 0) {
-        await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Le montant doit être supérieur à 0' });
-        return;
-      }
-
-      const changesFinancials =
-        montant !== undefined || methode_paiement !== undefined || date_paiement !== undefined;
-
-      if (changesFinancials) {
-        // An acompte-application line mirrors an acompte_applications ledger row;
-        // editing its amount would desynchronize the acompte balance.
-        if (payment.source === 'acompte_application') {
-          await client.query('ROLLBACK');
-          res.status(409).json({ error: 'Paiement issu d\'un acompte — modifiez l\'acompte, pas ce paiement' });
-          return;
-        }
-        // A caisse-linked payment already produced a till movement at the original
-        // amount; supprimer puis recréer keeps the till consistent.
-        if (payment.mouvement_caisse_id) {
-          await client.query('ROLLBACK');
-          res.status(409).json({ error: 'Paiement lié à un mouvement de caisse — supprimez puis recréez le paiement' });
-          return;
-        }
-
-        // Closed accounting periods are immutable (original date and, if moved, the new one)
-        await checkPeriodIsOpen(new Date(payment.date_paiement), client);
-        if (date_paiement) {
-          await checkPeriodIsOpen(new Date(date_paiement), client);
-        }
-
-        // New amount must not exceed the facture's remaining due (old amount released)
-        if (montant !== undefined) {
-          const { rows: factureRows } = await client.query(
-            `SELECT GREATEST(total - montant_paye, 0) AS remaining
-             FROM factures WHERE id = $1 FOR UPDATE`,
-            [payment.facture_id]
-          );
-          const available = parseFloat(factureRows[0].remaining) + parseFloat(payment.montant);
-          if (Number(montant) > available + 0.005) {
-            await client.query('ROLLBACK');
-            res.status(422).json({ error: `Montant (${montant}) dépasse le reste dû (${available})` });
-            return;
-          }
-        }
-      }
-
-      // Update payment
-      await client.query(
-        `UPDATE paiements SET
-          montant = COALESCE($1, montant),
-          methode_paiement = COALESCE($2, methode_paiement),
-          reference = COALESCE($3, reference),
-          notes = COALESCE($4, notes),
-          date_paiement = COALESCE($5, date_paiement)
-         WHERE id = $6`,
-        [montant, methode_paiement, reference, notes, date_paiement, id]
-      );
-
-      await ClientAllocationService.recomputeClientAllocations(payment.tiers_id, { transaction: client });
-
-      await client.query('COMMIT');
-
+      await paiementService.update(Number(req.params.id), {
+        montant: req.body.montant,
+        methode_paiement: req.body.methode_paiement,
+        reference: req.body.reference,
+        notes: req.body.notes,
+        date_paiement: req.body.date_paiement,
+      });
       res.json({ message: 'Paiement mis à jour et allocation FIFO recalculée' });
-
     } catch (error: any) {
-      await client.query('ROLLBACK');
       logger.error({ err: error }, 'Erreur PUT /api/paiements/:id');
       const status = businessStatusOf(error);
       res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
-    } finally {
-      client.release();
     }
   }
 
@@ -548,107 +230,14 @@ export class PaiementController {
    * Delete a payment (triggers FIFO reallocation)
    */
   static async delete(req: Request, res: Response): Promise<void> {
-    const client = await pool.connect();
-
     try {
-      await client.query('BEGIN');
-
-      const { id } = req.params;
-
-      const { rows: existingPayment } = await client.query(
-        `SELECT p.*, f.tiers_id
-         FROM paiements p
-         JOIN factures f ON f.id = p.facture_id
-         WHERE p.id = $1
-         FOR UPDATE OF p`,
-        [id]
-      );
-
-      if (existingPayment.length === 0) {
-        await client.query('ROLLBACK');
-        res.status(404).json({ error: 'Paiement non trouvé' });
-        return;
-      }
-
-      const payment = existingPayment[0];
-
-      // acompte_applications.paiement_id is ON DELETE SET NULL: deleting this row
-      // would leave the acompte consumed while the facture becomes unpaid.
-      if (payment.source === 'acompte_application') {
-        await client.query('ROLLBACK');
-        res.status(409).json({ error: 'Paiement issu d\'un acompte — annulez l\'application d\'acompte, pas ce paiement' });
-        return;
-      }
-
-      // Closed accounting periods are immutable
-      await checkPeriodIsOpen(new Date(payment.date_paiement), client);
-
-      const authReqDel = req as AuthRequest;
-
-      // Reverse the till movement so the caisse balance stays true. Only an
-      // open session can absorb the reversal — a closed one has been counted.
-      if (payment.mouvement_caisse_id) {
-        const { rows: mvtRows } = await client.query(
-          `SELECT m.session_caisse_id, s.statut AS session_statut
-           FROM mouvements_caisse m
-           JOIN sessions_caisse s ON s.id = m.session_caisse_id
-           WHERE m.id = $1`,
-          [payment.mouvement_caisse_id]
-        );
-        if (mvtRows.length > 0) {
-          if (mvtRows[0].session_statut !== 'ouverte') {
-            await client.query('ROLLBACK');
-            res.status(409).json({ error: 'Paiement lié à une session de caisse fermée — suppression impossible' });
-            return;
-          }
-          await caisseMagasinService.enregistrerMouvement(client, {
-            session_caisse_id: mvtRows[0].session_caisse_id,
-            type: 'decaissement',
-            categorie: 'remboursement_client',
-            montant: parseFloat(payment.montant),
-            methode_paiement: payment.methode_paiement,
-            reference_type: 'paiement',
-            reference_id: payment.id,
-            libelle: `Annulation paiement PAI-${payment.id} (facture #${payment.facture_id})`,
-            user_id: authReqDel.user?.id || undefined,
-          });
-        }
-      }
-
-      // Customer ledger: reversal debit entry for payment deletion
-      await client.query(
-        `INSERT INTO compte_client_lignes
-           (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
-         VALUES ($1, 'ajustement', $2, $3, $4, 0, $5, $6)`,
-        [
-          payment.tiers_id,
-          payment.id,
-          `ANNUL-PAI-${payment.id}`,
-          payment.montant,
-          `Annulation paiement PAI-${payment.id}`,
-          authReqDel.user?.id || null,
-        ]
-      );
-
-      // Delete payment
-      const { rowCount } = await client.query(
-        'DELETE FROM paiements WHERE id = $1',
-        [id]
-      );
-
-      await ClientAllocationService.recomputeClientAllocations(payment.tiers_id, { transaction: client });
-
-      await client.query('COMMIT');
-
+      const userId = (req as AuthRequest).user?.id || null;
+      await paiementService.delete(Number(req.params.id), userId);
       res.json({ message: 'Paiement supprimé et allocation FIFO recalculée' });
-
     } catch (error: any) {
-      await client.query('ROLLBACK');
       logger.error({ err: error }, 'Erreur DELETE /api/paiements/:id');
       const status = businessStatusOf(error);
       res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
-    } finally {
-      client.release();
     }
   }
 }
