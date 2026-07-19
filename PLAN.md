@@ -9,6 +9,8 @@ Source: 5-track read-only audit (backend quality, frontend UI/UX, security/valid
 
 ## P0 — Fix first (money integrity + prod breakage)
 
+> **✅ ALL P0s FIXED 2026-07-19** — commits `88100a0` (P0-2..P0-5 security), `70e88b1` (migration 089: P0-6/P0-7 + P1 DB constraints/indexes), `703a2b4` (P0-1 costed stock-in + latent reception-CMP double-count bug), `dbeff9f` (P0-8 CI postgres + **bonus P0 found**: migration 070 was baselined-but-never-executed on the live DB, so every `user_id` audit insert failed silently — audit trail was dead; fixed by `090`). 252 backend tests green on dev DB and on a from-scratch CI database.
+
 | # | Problem | Evidence | Fix | Effort |
 |---|---|---|---|---|
 | P0-1 | **Stock transfers destroy inventory value.** Transfer into a location with no existing `stock_par_location` row inserts it with `cmp` DEFAULT 0 → trigger `076` sets `valeur_stock = 0`. Source loses `qty × cmp`, destination gains **zero**. Company-wide valuation shrinks on every such transfer. Returns restock has the same hole. | `StockTransferService.ts:233-242`, `DemandeService.ts:650-658`, `ReturnService.ts:248-251`, `ProduitService.ts:215`, `StockLocationService.ts:254` | One shared "costed stock-in" primitive used by **every** inflow: lock spl row, `new_cmp = (old_qty*old_cmp + qty*unit_cost)/(old_qty+qty)`, write `quantite`+`cmp` (076 derives value). Cost source: transfers → source-location cmp read in same tx; returns → `document_lignes.prix_achat_unitaire` (added `061`) fallback current cmp; init/adjust → `produits.prix_achat`. | M |
