@@ -1196,6 +1196,24 @@ export const caisseService = {
     return data?.data || data || [];
   },
 
+  /** Sessions de caisse clôturées/ouvertes, paginées ({ data, pagination } après intercepteur). */
+  getHistorique: async (params: {
+    magasin_id?: number;
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+  } = {}): Promise<any> => {
+    const q: Record<string, string> = {};
+    if (params.magasin_id) q.magasin_id = String(params.magasin_id);
+    if (params.from) q.from = params.from;
+    if (params.to) q.to = params.to;
+    if (params.page) q.page = String(params.page);
+    if (params.limit) q.limit = String(params.limit);
+    const res = await api.get('/caisse/historique', { params: q });
+    return res.data;
+  },
+
   getAudit: async (params: {
     orphans_only?: boolean;
     source_kind?: string;
@@ -1493,6 +1511,23 @@ export const comptabiliteService = {
     const params = classe ? `?classe=${classe}` : '';
     const { data } = await api.get(`/comptabilite/plan-comptable${params}`);
     return data?.data || data;
+  },
+
+  /**
+   * Saisie d'une pièce comptable manuelle. Le backend (enregistrerPieceSchema)
+   * exige: date_ecriture, libelle, lignes >= 2 { compte_numero, debit, credit };
+   * il rejette 400 (déséquilibre, compte inconnu) ou période clôturée.
+   */
+  enregistrerPiece: async (payload: {
+    journal?: string;
+    date_ecriture: string;
+    libelle: string;
+    lignes: { compte_numero: string; debit: number; credit: number; tiers_id?: number | null }[];
+    reference_type?: string;
+    reference_id?: number;
+  }): Promise<any> => {
+    const { data } = await api.post('/comptabilite/ecritures', payload);
+    return data;
   },
 
   getEcritures: async (params: {

@@ -7,7 +7,10 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { BookOpen, Search, FileText, Scale, Calendar, FileDown } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { MoneyInput } from '@/components/ui/money-input';
+import { BookOpen, Search, FileText, Scale, Calendar, FileDown, Plus, Trash2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
@@ -15,6 +18,19 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/ui/page-header';
 
 type Tab = 'journal' | 'grand-livre' | 'balance' | 'plan';
+
+type PieceLigne = { compte_numero: string; debit: string; credit: string };
+
+/** Date du jour en LOCAL (YYYY-MM-DD) — toISOString() décalerait vers UTC. */
+const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const emptyLignes = (): PieceLigne[] => [
+  { compte_numero: '', debit: '', credit: '' },
+  { compte_numero: '', debit: '', credit: '' },
+];
 
 export default function ComptabilitePage() {
   const [tab, setTab] = useState<Tab>('journal');
@@ -41,6 +57,15 @@ export default function ComptabilitePage() {
   // Plan comptable
   const [planData, setPlanData] = useState<any[]>([]);
   const [planClasse, setPlanClasse] = useState<number | undefined>();
+
+  // Nouvelle écriture (saisie de pièce comptable)
+  const [pieceOpen, setPieceOpen] = useState(false);
+  const [pieceJournal, setPieceJournal] = useState('OD');
+  const [pieceDate, setPieceDate] = useState(todayLocal);
+  const [pieceLibelle, setPieceLibelle] = useState('');
+  const [pieceLignes, setPieceLignes] = useState<PieceLigne[]>(emptyLignes);
+  const [saving, setSaving] = useState(false);
+  const [comptes, setComptes] = useState<any[]>([]);
 
   const loadJournal = async () => {
     setLoading(true); setError(null);
@@ -118,10 +143,82 @@ export default function ComptabilitePage() {
     catch { toast.error('Erreur lors de la génération du compte de résultat'); }
   };
 
+  // ===== Nouvelle écriture =====
+  const openPieceDialog = () => {
+    setPieceOpen(true);
+    if (comptes.length === 0) {
+      comptabiliteService.getPlanComptable()
+        .then(data => setComptes(data || []))
+        .catch(() => toast.error('Erreur chargement du plan comptable'));
+    }
+  };
+
+  const resetPiece = () => {
+    setPieceJournal('OD');
+    setPieceDate(todayLocal());
+    setPieceLibelle('');
+    setPieceLignes(emptyLignes());
+  };
+
+  const updateLigne = (idx: number, patch: Partial<PieceLigne>) => {
+    setPieceLignes(ls => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+  };
+
+  const num = (v: string) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+  const totalDebit = pieceLignes.reduce((s, l) => s + num(l.debit), 0);
+  const totalCredit = pieceLignes.reduce((s, l) => s + num(l.credit), 0);
+  const ecart = totalDebit - totalCredit;
+  const equilibre = Math.abs(ecart) < 0.005;
+  const lignesValides = pieceLignes.every(
+    l => l.compte_numero && (num(l.debit) > 0) !== (num(l.credit) > 0)
+  );
+  const canSubmit = !!pieceLibelle.trim() && !!pieceDate && pieceLignes.length >= 2
+    && lignesValides && equilibre && !saving;
+
+  const submitPiece = async () => {
+    if (!canSubmit) return;
+    setSaving(true);
+    try {
+      const res = await comptabiliteService.enregistrerPiece({
+        journal: pieceJournal,
+        date_ecriture: pieceDate,
+        libelle: pieceLibelle.trim(),
+        lignes: pieceLignes.map(l => ({
+          compte_numero: l.compte_numero,
+          debit: num(l.debit),
+          credit: num(l.credit),
+        })),
+      });
+      const numero = res?.data?.numero_piece;
+      toast.success(numero ? `Écriture ${numero} enregistrée` : 'Écriture enregistrée');
+      setPieceOpen(false);
+      resetPiece();
+      // Le journal actif se recharge tout de suite ; sinon l'effet [tab] le rechargera.
+      if (tab === 'journal') loadJournal();
+    } catch (e: any) {
+      let msg: string = e?.response?.data?.error || e?.message || "Erreur lors de l'enregistrement de l'écriture";
+      // Erreur FK brute (compte absent du plan comptable) → message lisible.
+      if (/violates|constraint/i.test(msg)) msg = 'Compte inconnu ou données invalides';
+      toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="p-3 sm:p-6 w-full max-w-full">
       <div className="mx-auto space-y-4">
-        <PageHeader title="Comptabilité" icon={BookOpen} description="OHADA / SYSCOHADA" className="mb-4" />
+        <PageHeader
+          title="Comptabilité"
+          icon={BookOpen}
+          description="OHADA / SYSCOHADA"
+          className="mb-4"
+          actions={
+            <Button onClick={openPieceDialog} className="gap-1">
+              <Plus className="h-4 w-4" /> Nouvelle écriture
+            </Button>
+          }
+        />
 
         <Tabs value={tab} onValueChange={v => setTab(v as Tab)} className="space-y-4">
         {/* Tabs */}
@@ -398,6 +495,119 @@ export default function ComptabilitePage() {
             </TabsContent>
           </>
         </Tabs>
+
+        {/* Dialog nouvelle écriture */}
+        <Dialog open={pieceOpen} onOpenChange={o => { if (!saving) setPieceOpen(o); }}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Nouvelle écriture comptable</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Journal</Label>
+                  <Select value={pieceJournal} onValueChange={setPieceJournal}>
+                    <SelectTrigger aria-label="Journal">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="VE">VE — Ventes</SelectItem>
+                      <SelectItem value="AC">AC — Achats</SelectItem>
+                      <SelectItem value="TRESORERIE">TRESORERIE — Trésorerie / Caisse</SelectItem>
+                      <SelectItem value="OD">OD — Opérations diverses</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="piece-date">Date</Label>
+                  <Input id="piece-date" type="date" value={pieceDate} onChange={e => setPieceDate(e.target.value)} />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="piece-libelle">Libellé *</Label>
+                <Input
+                  id="piece-libelle"
+                  value={pieceLibelle}
+                  maxLength={500}
+                  placeholder="Libellé de l'écriture"
+                  onChange={e => setPieceLibelle(e.target.value)}
+                />
+              </div>
+
+              {/* Lignes */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Lignes</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => setPieceLignes(ls => [...ls, { compte_numero: '', debit: '', credit: '' }])}
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Ajouter une ligne
+                  </Button>
+                </div>
+                <div className="hidden sm:grid grid-cols-[1fr_9rem_9rem_2rem] gap-2 px-0.5 text-xs text-muted-foreground">
+                  <span>Compte</span><span>Débit</span><span>Crédit</span><span />
+                </div>
+                {pieceLignes.map((l, i) => (
+                  <div key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_9rem_9rem_2rem] gap-2 items-center">
+                    <Select value={l.compte_numero} onValueChange={v => updateLigne(i, { compte_numero: v })}>
+                      <SelectTrigger aria-label={`Compte ligne ${i + 1}`}>
+                        <SelectValue placeholder="Compte..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {comptes.map((c: any) => (
+                          <SelectItem key={c.numero} value={String(c.numero)}>
+                            {c.numero} — {c.intitule}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <MoneyInput value={l.debit} onChange={raw => updateLigne(i, { debit: raw })} aria-label={`Débit ligne ${i + 1}`} />
+                    <MoneyInput value={l.credit} onChange={raw => updateLigne(i, { credit: raw })} aria-label={`Crédit ligne ${i + 1}`} />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 justify-self-end sm:justify-self-auto text-muted-foreground hover:text-destructive"
+                      disabled={pieceLignes.length <= 2}
+                      onClick={() => setPieceLignes(ls => ls.filter((_, j) => j !== i))}
+                      title="Supprimer la ligne"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Totaux */}
+              <div className="rounded-md border bg-muted/40 p-3 text-sm space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Total débit</span>
+                  <span className="font-mono">{formatCurrency(totalDebit)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Total crédit</span>
+                  <span className="font-mono">{formatCurrency(totalCredit)}</span>
+                </div>
+                <div className="flex justify-between font-semibold">
+                  <span>Écart</span>
+                  <span className={`font-mono ${equilibre ? '' : 'text-destructive'}`}>{formatCurrency(ecart)}</span>
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPieceOpen(false)} disabled={saving}>
+                Annuler
+              </Button>
+              <Button onClick={submitPiece} disabled={!canSubmit} className="gap-1">
+                {saving && <Loader2 className="h-4 w-4 animate-spin" />} Enregistrer
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

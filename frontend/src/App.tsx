@@ -49,6 +49,7 @@ const NouvelAvoir = lazy(() => import('./pages/NouvelAvoir'));
 const AvoirDetail = lazy(() => import('./pages/AvoirDetail'));
 const Caisse = lazy(() => import('./pages/CaisseV2'));
 const CaisseAudit = lazy(() => import('./pages/CaisseAudit'));
+const CaisseHistorique = lazy(() => import('./pages/CaisseHistorique'));
 const Depenses = lazy(() => import('./pages/DepensesV2'));
 const ChangePassword = lazy(() => import('./pages/ChangePassword'));
 const TiersPage = lazy(() => import('./pages/Tiers'));
@@ -281,6 +282,11 @@ function AppWithShortcuts() {
         <Route path="/caisse/audit" element={
           <ProtectedRoute requiredRoles={['admin', 'manager']}>
             <Layout><CaisseAudit /></Layout>
+          </ProtectedRoute>
+        } />
+        <Route path="/caisse/historique" element={
+          <ProtectedRoute requiredRoles={['admin', 'manager']}>
+            <Layout><CaisseHistorique /></Layout>
           </ProtectedRoute>
         } />
         <Route path="/depenses" element={

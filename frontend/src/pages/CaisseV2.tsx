@@ -597,9 +597,9 @@ export default function CaisseV2() {
                 <Eye className="h-4 w-4 mr-2" />
                 Voir tout
               </Button>
-              <Button 
-                variant="outline" 
-                onClick={() => navigate('/caisse/audit')}
+              <Button
+                variant="outline"
+                onClick={() => navigate('/caisse/historique')}
               >
                 <History className="h-4 w-4 mr-2" />
                 Historique
