@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { BaseService } from './BaseService';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { costedStockIn } from './StockCostingService';
 
 export interface TransferLigneInput {
   produit_id: number;
@@ -208,40 +209,36 @@ export class StockTransferService extends BaseService<TransferRecord> {
 
       // Update stock: decrease from source, increase at destination
       for (const ligne of lignesRows) {
-        // Capture stock before for movement records, locking the source row
+        // Capture stock + cmp before for movement/costing, locking the source row
         const { rows: srcBefore } = await client.query(
-          `SELECT COALESCE(quantite, 0) as quantite FROM stock_par_location
+          `SELECT COALESCE(quantite, 0) as quantite, COALESCE(cmp, 0) as cmp FROM stock_par_location
            WHERE produit_id = $1 AND location_id = $2 FOR UPDATE`,
           [ligne.produit_id, transfer.location_source_id]
         );
         const srcAvant = srcBefore.length > 0 ? parseInt(srcBefore[0].quantite) : 0;
+        const srcCmp = srcBefore.length > 0 ? Number(srcBefore[0].cmp) : 0;
 
         // Re-validate availability at completion time (stock may have changed since create)
         if (ligne.quantite_demandee > srcAvant) {
           throw new Error(`Stock insuffisant pour le produit ${ligne.produit_id}: disponible ${srcAvant}, demandé ${ligne.quantite_demandee}`);
         }
 
-        const { rows: dstBefore } = await client.query(
-          `SELECT COALESCE(quantite, 0) as quantite FROM stock_par_location
-           WHERE produit_id = $1 AND location_id = $2`,
-          [ligne.produit_id, transfer.location_destination_id]
-        );
-        const dstAvant = dstBefore.length > 0 ? parseInt(dstBefore[0].quantite) : 0;
-
-        // Decrease source
+        // Decrease source (removal at cmp: cmp unchanged, 076 keeps valeur_stock in sync)
         await client.query(
           'UPDATE stock_par_location SET quantite = quantite - $1 WHERE produit_id = $2 AND location_id = $3',
           [ligne.quantite_demandee, ligne.produit_id, transfer.location_source_id]
         );
 
-        // Increase destination (or insert if doesn't exist)
-        await client.query(
-          `INSERT INTO stock_par_location (produit_id, location_id, quantite)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (produit_id, location_id)
-           DO UPDATE SET quantite = stock_par_location.quantite + $3`,
-          [ligne.produit_id, transfer.location_destination_id, ligne.quantite_demandee]
-        );
+        // Increase destination at the SOURCE location's unit cost so the
+        // transferred value arrives with the goods (was: bare upsert leaving
+        // cmp=0 on new rows -> transferred value vanished).
+        const dstIn = await costedStockIn(client, {
+          produitId: ligne.produit_id,
+          locationId: transfer.location_destination_id,
+          quantite: ligne.quantite_demandee,
+          unitCost: srcCmp > 0 ? srcCmp : null,
+        });
+        const dstAvant = dstIn.stockAvant;
 
         // Stock movement records (one out, one in)
         const ref = `Transfert TRF-${transferId}`;

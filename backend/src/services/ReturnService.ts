@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { checkPeriodIsOpen } from './PeriodService';
+import { costedStockIn } from './StockCostingService';
 
 export interface ReturnLigneInput {
   facture_id: number;
@@ -244,13 +245,34 @@ export class ReturnService {
           [ligne.produit_id, locationId]
         );
         const stockAvant = stockBefore.length > 0 ? parseInt(stockBefore[0].quantite) : 0;
-        await client.query(
-          `INSERT INTO stock_par_location (produit_id, location_id, quantite)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (produit_id, location_id)
-           DO UPDATE SET quantite = stock_par_location.quantite + $3`,
-          [ligne.produit_id, locationId, qty]
-        );
+        if (direction === 1) {
+          // Restock at the sale-time unit cost when the facture line recorded
+          // it (061), else the location's current cmp (costed stock-in).
+          const { rows: costRows } = await client.query(
+            `SELECT prix_achat_unitaire FROM document_lignes
+             WHERE document_type = 'facture' AND document_id = $1 AND produit_id = $2
+               AND prix_achat_unitaire IS NOT NULL AND prix_achat_unitaire > 0
+             LIMIT 1`,
+            [ligne.facture_id, ligne.produit_id]
+          );
+          const saleCost = costRows.length > 0 ? Number(costRows[0].prix_achat_unitaire) : null;
+          await costedStockIn(client, {
+            produitId: ligne.produit_id,
+            locationId,
+            quantite: ligne.quantite,
+            unitCost: saleCost,
+          });
+        } else {
+          // Cancel-of-approved: removal at cmp — plain decrement keeps cmp,
+          // 076 keeps valeur_stock in sync.
+          await client.query(
+            `INSERT INTO stock_par_location (produit_id, location_id, quantite)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (produit_id, location_id)
+             DO UPDATE SET quantite = stock_par_location.quantite + $3`,
+            [ligne.produit_id, locationId, qty]
+          );
+        }
         await client.query(
           `INSERT INTO mouvements_stock
              (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)

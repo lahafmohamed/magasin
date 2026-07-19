@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { BaseService } from './BaseService';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { costedStockIn } from './StockCostingService';
 
 export interface StockLocationRecord {
   id: number;
@@ -248,8 +249,19 @@ export class StockLocationService extends BaseService<StockLocationRecord> {
 
   /**
    * Adjust stock for a product at a location by a (signed) delta — additive, not absolute.
+   * Positive deltas go through the costed stock-in (current cmp, else produits.prix_achat)
+   * so a fresh row is never valued at cmp=0; negative deltas are a removal at cmp.
    */
   async adjustStock(productId: number, locationId: number, delta: number): Promise<void> {
+    if (delta > 0) {
+      await costedStockIn(pool, {
+        produitId: productId,
+        locationId,
+        quantite: delta,
+        unitCost: null,
+      });
+      return;
+    }
     await pool.query(
       `INSERT INTO stock_par_location (produit_id, location_id, quantite)
        VALUES ($1, $2, $3)

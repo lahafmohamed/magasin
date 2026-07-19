@@ -3,6 +3,7 @@ import { BaseService } from './BaseService';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { checkPeriodIsOpen } from './PeriodService';
+import { costedStockIn } from './StockCostingService';
 
 export interface ReceptionLigneInput {
   produit_id: number;
@@ -216,24 +217,17 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
           [receptionId, ligne.produit_id, ligne.quantite_commandee, ligne.quantite_recue, ligne.cout_unitaire, totalLigne, ecart, ligne.notes || null]
         );
 
-        // Update product stock with received quantity
+        // Update product stock with received quantity: single costed stock-in
+        // recomputes the weighted-average CMP from the pre-inflow row.
+        // (The previous split upsert-then-recompute read quantite AFTER the
+        // increment, double-counting the received qty in the denominator.)
         if (ligne.quantite_recue > 0) {
-          // Capture stock before update for movement record
-          const { rows: stockBefore } = await client.query(
-            `SELECT COALESCE(quantite, 0) as quantite
-             FROM stock_par_location
-             WHERE produit_id = $1 AND location_id = $2`,
-            [ligne.produit_id, effectiveLocationId]
-          );
-          const stockAvant = stockBefore.length > 0 ? parseInt(stockBefore[0].quantite) : 0;
-
-          await client.query(
-            `INSERT INTO stock_par_location (produit_id, location_id, quantite)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (produit_id, location_id)
-             DO UPDATE SET quantite = stock_par_location.quantite + $3`,
-            [ligne.produit_id, effectiveLocationId, ligne.quantite_recue]
-          );
+          const stockIn = await costedStockIn(client, {
+            produitId: ligne.produit_id,
+            locationId: effectiveLocationId,
+            quantite: ligne.quantite_recue,
+            unitCost: ligne.cout_unitaire > 0 ? ligne.cout_unitaire : null,
+          });
 
           await client.query(
             `INSERT INTO mouvements_stock
@@ -242,40 +236,20 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
             [
               ligne.produit_id,
               ligne.quantite_recue,
-              stockAvant,
-              stockAvant + ligne.quantite_recue,
+              stockIn.stockAvant,
+              stockIn.stockApres,
               `Réception — ${numeroReception}`,
               numeroReception,
               effectiveLocationId,
             ]
           );
-        }
 
-        // Calcul du Coût Moyen Pondéré (CMP)
-        if (ligne.cout_unitaire > 0 && ligne.quantite_recue > 0) {
-          const { rows: stockRow } = await client.query(
-            `SELECT quantite, valeur_stock, cmp FROM stock_par_location
-             WHERE produit_id = $1 AND location_id = $2`,
-            [ligne.produit_id, effectiveLocationId]
-          );
-
-          const qteExistante = stockRow.length > 0 ? Number(stockRow[0].quantite) : 0;
-          const valeurExistante = stockRow.length > 0 ? Number(stockRow[0].valeur_stock) : 0;
-          const nouvelleQuantite = qteExistante + ligne.quantite_recue;
-          const nouvelleValeur = valeurExistante + (ligne.quantite_recue * ligne.cout_unitaire);
-          const nouveauCmp = nouvelleQuantite > 0 ? Math.round(nouvelleValeur / nouvelleQuantite * 100) / 100 : ligne.cout_unitaire;
-
-          await client.query(
-            `UPDATE stock_par_location
-             SET valeur_stock = $1, cmp = $2
-             WHERE produit_id = $3 AND location_id = $4`,
-            [nouvelleValeur, nouveauCmp, ligne.produit_id, effectiveLocationId]
-          );
-
-          await client.query(
-            'UPDATE produits SET prix_achat = $1 WHERE id = $2',
-            [nouveauCmp, ligne.produit_id]
-          );
+          if (ligne.cout_unitaire > 0) {
+            await client.query(
+              'UPDATE produits SET prix_achat = $1 WHERE id = $2',
+              [stockIn.cmpApres, ligne.produit_id]
+            );
+          }
         }
       }
 

@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { costedStockIn } from './StockCostingService';
 
 // ============================================
 // TYPES
@@ -622,13 +623,14 @@ export class DemandeService {
             for (const ligne of effectiveLines) {
                 // Check stock availability with FOR UPDATE lock
                 const { rows: stockRows } = await client.query(
-                    `SELECT quantite FROM stock_par_location 
+                    `SELECT quantite, COALESCE(cmp, 0) AS cmp FROM stock_par_location
                      WHERE produit_id = $1 AND location_id = $2
                      FOR UPDATE`,
                     [ligne.produit_id, demande.depot_id]
                 );
 
                 const available = stockRows.length > 0 ? parseInt(stockRows[0].quantite, 10) : 0;
+                const depotCmp = stockRows.length > 0 ? Number(stockRows[0].cmp) : 0;
 
                 if (available < ligne.quantite) {
                     throw new Error(
@@ -653,14 +655,14 @@ export class DemandeService {
                     [ligne.quantite, ligne.produit_id, demande.depot_id]
                 );
 
-                // Increment magasin stock (upsert)
-                await client.query(
-                    `INSERT INTO stock_par_location (produit_id, location_id, quantite)
-                     VALUES ($1, $2, $3)
-                     ON CONFLICT (produit_id, location_id)
-                     DO UPDATE SET quantite = stock_par_location.quantite + $3, updated_at = CURRENT_TIMESTAMP`,
-                    [ligne.produit_id, demande.magasin_id, ligne.quantite]
-                );
+                // Increment magasin stock at the depot's unit cost so the
+                // transferred value arrives with the goods (costed stock-in).
+                await costedStockIn(client, {
+                    produitId: ligne.produit_id,
+                    locationId: demande.magasin_id,
+                    quantite: ligne.quantite,
+                    unitCost: depotCmp > 0 ? depotCmp : null,
+                });
 
                 // Update demande line with delivered quantity
                 await client.query(

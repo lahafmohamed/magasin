@@ -1,5 +1,6 @@
 import pool from '../db/connection';
 import { BaseService, PaginatedResult, PaginationParams } from './BaseService';
+import { costedStockIn } from './StockCostingService';
 
 export interface ProduitRecord {
   id: number;
@@ -211,13 +212,14 @@ export class ProduitService extends BaseService<ProduitRecord> {
       const createdProduct = insertRows[0];
 
       if (effectiveLocationId && requestedInitialStock > 0) {
-        await client.query(
-          `INSERT INTO stock_par_location (produit_id, location_id, quantite)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (produit_id, location_id)
-           DO UPDATE SET quantite = stock_par_location.quantite + EXCLUDED.quantite, updated_at = CURRENT_TIMESTAMP`,
-          [createdProduct.id, effectiveLocationId, requestedInitialStock]
-        );
+        // Costed stock-in: initial stock valued at the product's purchase price
+        // (was: bare upsert leaving cmp=0 -> stock valued at zero until first reception).
+        await costedStockIn(client, {
+          produitId: createdProduct.id,
+          locationId: effectiveLocationId,
+          quantite: requestedInitialStock,
+          unitCost: input.prix_achat != null && input.prix_achat > 0 ? input.prix_achat : null,
+        });
       }
 
       const { rows: finalRows } = await client.query('SELECT * FROM produits WHERE id = $1', [createdProduct.id]);
