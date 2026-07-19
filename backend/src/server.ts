@@ -49,6 +49,10 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Behind the production reverse proxy (nginx): trust the first X-Forwarded-For hop
+// so express-rate-limit and req.ip see the real client IP, not the proxy's.
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 
@@ -69,7 +73,9 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Stricter rate limit for auth endpoints
+// Stricter rate limit for credential endpoints only (login/register).
+// Must NOT cover the rest of /api/auth: the SPA calls GET /me on every load,
+// so a blanket limiter locks users out after a few page refreshes.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10, // limit auth attempts to 10 per 15 minutes
@@ -91,7 +97,9 @@ app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
 
 // Routes API
-app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth', authRoutes);
 app.use('/api/produits', produitsRoutes);
 app.use('/api/tiers', tiersRoutes);
 app.use('/api/clients', clientsRoutes);

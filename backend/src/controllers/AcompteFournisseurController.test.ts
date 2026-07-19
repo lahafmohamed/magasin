@@ -44,7 +44,8 @@ describe('Acomptes Fournisseur API (Integration)', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .send({ montant: 0, methode_paiement: 'virement' });
       expect(res.status).toBe(400);
-      expect(res.body.error).toMatch(/Montant/);
+      // Zod validateBody rejects before the controller
+      expect(res.body.details.map((d: any) => d.field)).toContain('montant');
     });
 
     it('rejects invalid methode_paiement', async () => {
@@ -53,7 +54,7 @@ describe('Acomptes Fournisseur API (Integration)', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .send({ montant: 1000, methode_paiement: 'bitcoin' });
       expect(res.status).toBe(400);
-      expect(res.body.error).toMatch(/methode_paiement/);
+      expect(res.body.details.map((d: any) => d.field)).toContain('methode_paiement');
     });
 
     it('rejects unknown tiers', async () => {

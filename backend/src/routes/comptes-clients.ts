@@ -5,7 +5,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { TiersController } from '../controllers/TiersController';
 import pool from '../db/connection';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authorize } from '../middleware/auth';
+import { validateBody } from '../middleware/validation';
+import { recordAcompteSchema } from '../validation/schemas';
 
 const router = Router();
 
@@ -19,10 +21,15 @@ const deprecated = (_req: Request, res: Response, next: NextFunction) => {
 router.use(deprecated);
 
 // POST /api/comptes/:clientId/acomptes → POST /api/tiers/:id/acomptes-client
-router.post('/:clientId/acomptes', (req: Request, res: Response) => {
-  req.params.id = req.params.clientId;
-  TiersController.recordAcompteClient(req, res);
-});
+router.post(
+  '/:clientId/acomptes',
+  authorize(['admin', 'manager', 'magasin_staff', 'caissier']),
+  validateBody(recordAcompteSchema),
+  (req: Request, res: Response) => {
+    req.params.id = req.params.clientId;
+    TiersController.recordAcompteClient(req, res);
+  }
+);
 
 // GET /api/comptes/:clientId/acomptes/disponibles → query tiers-based table
 router.get('/:clientId/acomptes/disponibles', async (req, res) => {

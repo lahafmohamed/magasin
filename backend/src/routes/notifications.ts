@@ -21,19 +21,18 @@ router.get('/stream', async (req: Request, res: Response) => {
     res.status(401).json({ success: false, error: 'Token invalide' });
     return;
   }
-  // Enforce session revocation/expiry like `authenticate` does
+  // Enforce session revocation/expiry like `authenticate` does — fail closed:
+  // a token without a live session row (revoked, expired, or never issued) is rejected.
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const { rows } = await pool.query(
       'SELECT revoked_at, expires_at FROM user_sessions WHERE token_hash = $1 AND is_active = true',
       [tokenHash]
     );
-    if (rows.length > 0) {
-      const session = rows[0];
-      if (session.revoked_at || new Date(session.expires_at) < new Date()) {
-        res.status(401).json({ success: false, error: 'Session révoquée ou expirée' });
-        return;
-      }
+    const session = rows[0];
+    if (!session || session.revoked_at || new Date(session.expires_at) < new Date()) {
+      res.status(401).json({ success: false, error: 'Session révoquée ou expirée' });
+      return;
     }
   } catch {
     res.status(401).json({ success: false, error: 'Token invalide' });

@@ -456,6 +456,20 @@ export const refundAcompteSchema = z.object({
   idempotency_key: z.string().max(255).optional(),
 });
 
+// POST /tiers/:id/acomptes-client + /tiers/:id/acomptes-fournisseur
+export const recordAcompteSchema = z.object({
+  montant: z.coerce.number().positive('Montant doit être positif'),
+  methode_paiement: z.enum([
+    'espece', 'carte', 'cheque', 'virement',
+    'mobile_money', 'orange_money', 'mtn_money', 'wave',
+  ]),
+  notes: z.string().max(1000).optional().or(z.literal('')),
+  magasin_id: z.coerce.number().int().positive().optional(),
+  reference_number: z.string().max(100).optional().or(z.literal('')),
+  session_caisse_id: z.coerce.number().int().positive().optional(),
+  idempotency_key: z.string().max(255).optional(),
+});
+
 // ============================================
 // Caisse magasin schemas
 // ============================================

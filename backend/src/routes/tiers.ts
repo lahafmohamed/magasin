@@ -3,7 +3,7 @@ import { TiersController } from '../controllers/TiersController';
 import pool from '../db/connection';
 import { authenticate, authorize } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
-import { createTiersSchema, updateTiersSchema, createCompensationSchema } from '../validation/schemas';
+import { createTiersSchema, updateTiersSchema, createCompensationSchema, recordAcompteSchema } from '../validation/schemas';
 
 const router = Router();
 router.use(authenticate);
@@ -29,8 +29,8 @@ router.get('/:id/releve-detaille', TiersController.getReleveDetaille);
 router.get('/:id/releve-detaille/pdf', TiersController.getRelevePDF);
 
 // Acomptes
-router.post('/:id/acomptes-client', TiersController.recordAcompteClient);
-router.post('/:id/acomptes-fournisseur', authorize(['admin', 'manager']), TiersController.recordAcompteFournisseur);
+router.post('/:id/acomptes-client', authorize(['admin', 'manager', 'magasin_staff', 'caissier']), validateBody(recordAcompteSchema), TiersController.recordAcompteClient);
+router.post('/:id/acomptes-fournisseur', authorize(['admin', 'manager']), validateBody(recordAcompteSchema), TiersController.recordAcompteFournisseur);
 
 // List available acomptes (montant_restant > 0)
 router.get('/:id/acomptes-fournisseur/disponibles', async (req, res) => {
