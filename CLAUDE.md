@@ -78,7 +78,7 @@ node migrate.mjs --dry-run       # preview
 node migrate.mjs --baseline      # mark existing as applied without running
 node seed-data.mjs               # / seed-hitek-demo.mjs, seed-clients-excel.mjs, ...
 ```
-> `migrate.mjs` is now a real ordered, transactional runner with a `schema_migrations` tracking table. The legacy ad-hoc setup/fix `.mjs` scripts (`setup-db.mjs`, `run-migrations.mjs`, `fix-*.mjs`, ...) are **superseded** — prefer `migrate.mjs`. Highest migration is `088`.
+> `migrate.mjs` is now a real ordered, transactional runner with a `schema_migrations` tracking table. The legacy ad-hoc setup/fix `.mjs` scripts (`setup-db.mjs`, `run-migrations.mjs`, `fix-*.mjs`, ...) are **superseded** — prefer `migrate.mjs`. Highest migration is `089` (schema-integrity: financial FKs → RESTRICT, `commissions_ventes` recreated, ledger/money CHECKs, hot indexes, pg_trgm tracked).
 
 **Frontend** (`cd frontend`)
 ```bash
@@ -130,7 +130,7 @@ Legend: ✅ Complete · 🟡 Partial · 🟥 Stub/Dead · ➖ Missing. Full evid
 - **Transactions:** multi-step writes use `pool.connect()` + `BEGIN/COMMIT/ROLLBACK`; lock contended rows with `SELECT ... FOR UPDATE`. Follow `FactureService`/`StockTransferService`/`ReturnService.updateStatut`.
 - **Numbering:** use `NumberingService` (atomic `nextval()`); don't call `nextval()` inline.
 - **Money:** stored `NUMERIC(15,2)`; round to 2 decimals; prefer SQL-side aggregation over JS float accumulation.
-- **Migrations:** add a new `NNN_*.sql` (next number after `088`) and apply with `migrate.mjs`. Don't add new ad-hoc `.mjs` fix scripts.
+- **Migrations:** add a new `NNN_*.sql` (next number after `089`) and apply with `migrate.mjs`. Don't add new ad-hoc `.mjs` fix scripts.
 - **Periods:** financial writes should call `PeriodService.checkPeriodIsOpen` for a friendly app-layer error, but the hard guarantee is the DB trigger from `075` on `ecritures_comptables` — closed periods are rejected on **every** posting path (see Known Issues).
 - **Frontend:** functional components + hooks; data fetched per-page via `useState`/`useEffect` through `services/api.ts`; no global store (Context for auth/theme only). UI from `components/ui` (shadcn-style). Toasts via `sonner` (`toast.error('Erreur ...')`). Permission-gate UI with `usePermission`/`<RequirePermission>` — treat client gating as advisory; **enforce on the server**.
 - **Audit:** mutations log via `AuditService`/`audit` middleware (writes are fire-and-forget / non-fatal).
