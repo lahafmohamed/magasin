@@ -440,7 +440,7 @@ export class FactureService {
       // Audit log inside transaction so it's atomic with the business event
       await client.query(
         `INSERT INTO audit_log
-           (utilisateur_id, action, table_name, record_id, ip_address, user_agent, new_values)
+           (user_id, action, table_name, record_id, ip_address, user_agent, new_values)
          VALUES ($1, 'create', 'factures', $2, $3, $4, $5)`,
         [
           cree_par || null,

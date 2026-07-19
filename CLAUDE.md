@@ -78,7 +78,7 @@ node migrate.mjs --dry-run       # preview
 node migrate.mjs --baseline      # mark existing as applied without running
 node seed-data.mjs               # / seed-hitek-demo.mjs, seed-clients-excel.mjs, ...
 ```
-> `migrate.mjs` is now a real ordered, transactional runner with a `schema_migrations` tracking table. The legacy ad-hoc setup/fix `.mjs` scripts (`setup-db.mjs`, `run-migrations.mjs`, `fix-*.mjs`, ...) are **superseded** — prefer `migrate.mjs`. Highest migration is `089` (schema-integrity: financial FKs → RESTRICT, `commissions_ventes` recreated, ledger/money CHECKs, hot indexes, pg_trgm tracked).
+> `migrate.mjs` is now a real ordered, transactional runner with a `schema_migrations` tracking table. The legacy ad-hoc setup/fix `.mjs` scripts (`setup-db.mjs`, `run-migrations.mjs`, `fix-*.mjs`, ...) are **superseded** — prefer `migrate.mjs`. Highest migration is `090`. `089` = schema-integrity (financial FKs → RESTRICT, `commissions_ventes` recreated, ledger/money CHECKs, hot indexes, pg_trgm tracked); `090` = re-applies 070's audit_log reconcile (the live DB had been **baselined without executing it** — audit inserts write `user_id` and were failing silently against the legacy `utilisateur_id` column; beware other baselined-but-never-run migrations).
 
 **Frontend** (`cd frontend`)
 ```bash
@@ -96,7 +96,7 @@ pm2 start ecosystem.config.js   # backend only (app "hitektest-api", dist/server
 ```
 > `ecosystem.config.js` now reads `JWT_SECRET`/`DB_*` from env (no committed secrets). Frontend static-serving is undocumented.
 
-**CI:** `.github/workflows/ci.yml` runs on push/PR to `main`. **Backend:** `npm ci` → `tsc --noEmit` → `npm run lint` → `npm test` (no build step). **Frontend:** `npm ci` → `tsc -b` → `npm run lint` → `npm test` → `npm run build` (FE lint + tests now run in CI).
+**CI:** `.github/workflows/ci.yml` runs on push/PR to `main`. **Backend:** postgres:18 service + `scripts/ci-db-setup.mjs` (loads `src/db/ci-baseline.sql` schema dump + `ci-ref-data.sql` + admin user + `migrate.mjs --baseline`), then `npm ci` → `tsc --noEmit` → lint → **full integration test suite against the service DB** → build. **Regenerate `ci-baseline.sql` (pg_dump --schema-only) after adding a migration.** **Frontend:** `npm ci` → `tsc -b` → lint → test → build.
 
 ## Module Status
 
