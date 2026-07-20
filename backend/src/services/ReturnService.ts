@@ -3,6 +3,7 @@ import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { checkPeriodIsOpen } from './PeriodService';
 import { costedStockIn } from './StockCostingService';
+import { businessError } from '../utils/errors';
 
 export interface ReturnLigneInput {
   facture_id: number;
@@ -37,7 +38,7 @@ export class ReturnService {
       const client_id = input.tiers_id ?? input.client_id;
 
       if (!lignes || lignes.length === 0) {
-        throw new Error('Le retour doit contenir au moins un produit');
+        throw businessError(400, 'Le retour doit contenir au moins un produit');
       }
 
       // Verify invoice and quantities
@@ -49,7 +50,7 @@ export class ReturnService {
         );
 
         if (factureRows.length === 0) {
-          throw new Error(`Facture ${ligne.facture_id} non trouvée ou ne appartient pas à ce client`);
+          throw businessError(404, `Facture ${ligne.facture_id} non trouvée ou n'appartient pas à ce client`);
         }
 
         // Check quantity doesn't exceed what was invoiced
@@ -71,7 +72,7 @@ export class ReturnService {
         const totalReturned = parseFloat(returnedRows[0].total_retour);
         const maxReturnable = totalInvoiced - totalReturned;
         if (ligne.quantite > maxReturnable) {
-          throw new Error(
+          throw businessError(400,
             `Quantité excessive pour le produit ${ligne.produit_id} (facturé: ${totalInvoiced}, déjà retourné: ${totalReturned}, disponible: ${maxReturnable})`
           );
         }
@@ -305,7 +306,7 @@ export class ReturnService {
   async updateStatut(id: number, statut: string, userId?: number, req?: any): Promise<boolean> {
     const ALLOWED = ['en_attente', 'traite', 'annule'];
     if (!ALLOWED.includes(statut)) {
-      throw new Error(`Statut de retour invalide: '${statut}'`);
+      throw businessError(400, `Statut de retour invalide: '${statut}'`);
     }
 
     const client = await pool.connect();
@@ -335,7 +336,7 @@ export class ReturnService {
         annule: [],
       };
       if (!legal[previousStatut]?.includes(statut)) {
-        throw new Error(`Transition de retour interdite: '${previousStatut}' -> '${statut}'`);
+        throw businessError(409, `Transition de retour interdite: '${previousStatut}' -> '${statut}'`);
       }
 
       // Approval restocks; the return becomes an accounting/inventory event.

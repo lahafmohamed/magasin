@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { consoleError } from '../utils/logError';
 import { receptionService } from '../services/ReceptionService';
 import { AuthRequest } from '../middleware/auth';
+import { businessStatusOf } from '../utils/errors';
 
 export class ReceptionController {
 
@@ -58,7 +59,9 @@ export class ReceptionController {
       });
       res.status(201).json({ success: true, data: result, message: 'Réception créée et stock mis à jour' });
     } catch (error: any) {
-      res.status(400).json({ success: false, error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) consoleError('POST /api/receptions', error);
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 

@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { caisseMagasinService } from './CaisseMagasinService';
 import { generateDocumentNumber } from './NumberingService';
 import { checkPeriodIsOpen } from './PeriodService';
+import { businessError } from '../utils/errors';
 
 export class POSService {
   /**
@@ -32,7 +33,7 @@ export class POSService {
     );
 
     if (rows.length === 0) {
-      throw new Error('Aucune location principale active configuree');
+      throw businessError(400, 'Aucune location principale active configuree');
     }
 
     return rows[0].id;
@@ -136,31 +137,31 @@ export class POSService {
       );
 
       if (sessionRows.length === 0) {
-        throw new Error('Session POS introuvable');
+        throw businessError(404, 'Session POS introuvable');
       }
 
       if (sessionRows[0].statut !== 'ouverte') {
-        throw new Error('La session POS est fermee');
+        throw businessError(409, 'La session POS est fermee');
       }
 
       const sessionLocationId = sessionRows[0].location_id || await this.getPrincipalLocationId(client);
 
       if (!items || items.length === 0) {
-        throw new Error('Aucun article dans la vente');
+        throw businessError(400, 'Aucun article dans la vente');
       }
 
       // SECURITY: never trust client-supplied prices. Resolve the authoritative
       // sale price (prix_vente) from the product catalogue and overwrite each line.
       for (const item of items) {
         if (!item.quantite || item.quantite <= 0) {
-          throw new Error(`Quantité invalide pour le produit ${item.produit_id}`);
+          throw businessError(400, `Quantité invalide pour le produit ${item.produit_id}`);
         }
         const { rows: prixRows } = await client.query(
           'SELECT prix_vente FROM produits WHERE id = $1 AND deleted_at IS NULL',
           [item.produit_id]
         );
         if (prixRows.length === 0) {
-          throw new Error(`Produit ${item.produit_id} introuvable`);
+          throw businessError(404, `Produit ${item.produit_id} introuvable`);
         }
         item.prix_unitaire = parseFloat(prixRows[0].prix_vente);
       }
@@ -231,7 +232,7 @@ export class POSService {
 
         const currentStock = productRows.length > 0 ? parseInt(productRows[0].quantite, 10) : 0;
         if (currentStock < item.quantite) {
-          throw new Error(`Stock insuffisant pour le produit ${item.produit_id}`);
+          throw businessError(409, `Stock insuffisant pour le produit ${item.produit_id}`);
         }
 
         await client.query(
@@ -323,7 +324,7 @@ export class POSService {
     );
 
     if (rows.length === 0) {
-      throw new Error('Client passager non trouvé');
+      throw businessError(404, 'Client passager non trouvé');
     }
 
     return rows[0].id;
@@ -354,7 +355,7 @@ export class POSService {
     );
 
     if (sessionRows.length === 0) {
-      throw new Error('Session non trouvée');
+      throw businessError(404, 'Session non trouvée');
     }
 
     const session = sessionRows[0];

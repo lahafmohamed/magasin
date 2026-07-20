@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { posService } from '../services/POSService';
 import { AuthRequest } from '../middleware/auth';
+import { businessStatusOf } from '../utils/errors';
 
 export class POSController {
   /**
@@ -14,8 +15,9 @@ export class POSController {
       const session = await posService.openSession(authReq.user!.id, solde_ouverture || 0, location_id);
       res.status(201).json({ success: true, data: session });
     } catch (error: any) {
-      console.error('Erreur POST /api/pos/open:', error);
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur POST /api/pos/open:', error);
+      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -88,8 +90,9 @@ export class POSController {
         message: 'Vente traitée avec succès'
       });
     } catch (error: any) {
-      console.error('Erreur POST /api/pos/sale:', error);
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur POST /api/pos/sale:', error);
+      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -114,7 +117,9 @@ export class POSController {
         res.status(404).json({ error: error.message });
         return;
       }
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur POS session:', error);
+      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -139,7 +144,9 @@ export class POSController {
         res.status(404).json({ error: error.message });
         return;
       }
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur POS session:', error);
+      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
     }
   }
 }

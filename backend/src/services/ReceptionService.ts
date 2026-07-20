@@ -4,6 +4,7 @@ import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { checkPeriodIsOpen } from './PeriodService';
 import { costedStockIn } from './StockCostingService';
+import { businessError } from '../utils/errors';
 
 export interface ReceptionLigneInput {
   produit_id: number;
@@ -44,7 +45,7 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
     );
 
     if (rows.length === 0) {
-      throw new Error('Aucune location principale active configuree');
+      throw businessError(400, 'Aucune location principale active configuree');
     }
 
     return rows[0].id;
@@ -141,7 +142,7 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
       const effectiveLocationId = input.location_id || await this.getPrincipalLocationId(client);
 
       if (!lignes || lignes.length === 0) {
-        throw new Error('La réception doit contenir au moins un produit');
+        throw businessError(400, 'La réception doit contenir au moins un produit');
       }
 
       // --- 3-way match control: block over-receipt beyond what was ordered. ---
@@ -167,13 +168,12 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
         const ordered = orderedMap.get(produitId) || 0;
         const already = receivedMap.get(produitId) || 0;
         if (already + incoming > ordered) {
-          const err: any = new Error(
+          throw businessError(
+            422,
             `Réception excessive pour le produit ${produitId}: commandé ${ordered}, déjà reçu ${already}, ` +
-            `réception en cours ${incoming} (max autorisé ${Math.max(0, ordered - already)}).`
+            `réception en cours ${incoming} (max autorisé ${Math.max(0, ordered - already)}).`,
+            'OVER_RECEIPT'
           );
-          err.statusCode = 422;
-          err.code = 'OVER_RECEIPT';
-          throw err;
         }
       }
 
