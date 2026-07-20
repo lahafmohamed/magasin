@@ -98,6 +98,15 @@ export class ComptabiliteService {
       }
 
       await client.query('COMMIT');
+
+      await logAudit({
+        utilisateur_id: cree_par ?? null,
+        action: 'create',
+        table_name: 'ecritures_comptables',
+        record_id: seqRows[0].num,
+        new_values: { numero_piece: numeroPiece, journal, libelle, lignes: lignes.length },
+      });
+
       return { id: seqRows[0].num, numero_piece: numeroPiece };
     } catch (error) {
       await client.query('ROLLBACK');

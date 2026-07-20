@@ -211,13 +211,14 @@ export class PaiementController {
    */
   static async update(req: Request, res: Response): Promise<void> {
     try {
+      const userId = (req as AuthRequest).user?.id || null;
       await paiementService.update(Number(req.params.id), {
         montant: req.body.montant,
         methode_paiement: req.body.methode_paiement,
         reference: req.body.reference,
         notes: req.body.notes,
         date_paiement: req.body.date_paiement,
-      });
+      }, userId);
       res.json({ message: 'Paiement mis à jour et allocation FIFO recalculée' });
     } catch (error: any) {
       logger.error({ err: error }, 'Erreur PUT /api/paiements/:id');

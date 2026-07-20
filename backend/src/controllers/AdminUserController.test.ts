@@ -25,6 +25,7 @@ describe('Admin user security (Integration)', () => {
   afterAll(async () => {
     try {
       if (createdUserId) {
+        await pool.query("DELETE FROM audit_log WHERE table_name = 'utilisateurs' AND record_id = $1", [createdUserId]);
         await pool.query('DELETE FROM user_sessions WHERE utilisateur_id = $1', [createdUserId]);
         await pool.query('DELETE FROM user_location_roles WHERE utilisateur_id = $1', [createdUserId]);
         await pool.query('DELETE FROM utilisateurs WHERE id = $1', [createdUserId]);
@@ -76,5 +77,15 @@ describe('Admin user security (Integration)', () => {
     // the previously-valid token is now rejected
     const me = await request(app).get('/api/auth/me').set(auth(userToken));
     expect(me.status).toBe(401);
+  });
+
+  it('records the deactivation in the audit trail', async () => {
+    const { rows } = await pool.query(
+      `SELECT action FROM audit_log
+       WHERE table_name = 'utilisateurs' AND record_id = $1 AND action = 'update'
+       ORDER BY created_at DESC LIMIT 1`,
+      [createdUserId]
+    );
+    expect(rows.length).toBe(1);
   });
 });

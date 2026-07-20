@@ -4,6 +4,7 @@ import { checkPeriodIsOpen } from './PeriodService';
 import { caisseMagasinService } from './CaisseMagasinService';
 import { ClientAllocationService } from './ClientAllocationService';
 import { logger } from '../utils/logger';
+import { logAudit } from '../middleware/audit';
 
 /** Single source of truth for accepted payment methods (was duplicated 4×). */
 export const PAYMENT_METHODS = [
@@ -254,6 +255,14 @@ export class PaiementService {
 
       await client.query('COMMIT');
 
+      await logAudit({
+        utilisateur_id: userId,
+        action: 'create',
+        table_name: 'paiements',
+        record_id: directPaiementId ?? applications[0]?.paiement_id ?? factureId,
+        new_values: { facture_id: factureId, montant: montantNum, methode_paiement, applique_depuis_acomptes: appliedFromAcomptes },
+      });
+
       return {
         facture_id: factureId,
         montant_recu: montantNum,
@@ -280,7 +289,7 @@ export class PaiementService {
    * editable when the payment has no caisse movement and is not an acompte
    * application; the target period(s) must be open.
    */
-  async update(id: number, input: UpdatePaiementInput): Promise<void> {
+  async update(id: number, input: UpdatePaiementInput, userId: number | null = null): Promise<void> {
     const { montant, methode_paiement, reference, notes, date_paiement } = input;
     const client = await pool.connect();
 
@@ -355,6 +364,14 @@ export class PaiementService {
       await ClientAllocationService.recomputeClientAllocations(payment.tiers_id, { transaction: client });
 
       await client.query('COMMIT');
+
+      await logAudit({
+        utilisateur_id: userId,
+        action: 'update',
+        table_name: 'paiements',
+        record_id: id,
+        new_values: { montant, methode_paiement, reference, notes, date_paiement },
+      });
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -445,6 +462,14 @@ export class PaiementService {
       await ClientAllocationService.recomputeClientAllocations(payment.tiers_id, { transaction: client });
 
       await client.query('COMMIT');
+
+      await logAudit({
+        utilisateur_id: userId,
+        action: 'delete',
+        table_name: 'paiements',
+        record_id: id,
+        old_values: { facture_id: payment.facture_id, montant: payment.montant, methode_paiement: payment.methode_paiement },
+      });
     } catch (error) {
       await client.query('ROLLBACK');
       logger.debug({ err: error, paiementId: id }, 'Suppression paiement annulée');

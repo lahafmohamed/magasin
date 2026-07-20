@@ -3,6 +3,7 @@ import { BaseService } from './BaseService';
 import { logger } from '../utils/logger';
 import { checkPeriodIsOpen } from './PeriodService';
 import { businessError } from '../utils/errors';
+import { logAudit } from '../middleware/audit';
 
 export interface EcritureComptableRecord {
   id: number;
@@ -314,6 +315,7 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
     userId?: number
   ): Promise<void> {
     const client = await pool.connect();
+    let firstEcritureId: number | null = null;
 
     try {
       await client.query('BEGIN');
@@ -362,15 +364,24 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
         }
         const compteNumero = compteRows[0].numero;
 
-        await client.query(
+        const { rows: inserted } = await client.query(
           `INSERT INTO ecritures_comptables
            (numero_piece, date_ecriture, journal, compte_numero, debit, credit, libelle, cree_par)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
           [numeroPiece, dateEcriture, journal, compteNumero, ligne.debit, ligne.credit, ligne.description || null, userId || null]
         );
+        if (i === 0) firstEcritureId = inserted[0].id;
       }
 
       await client.query('COMMIT');
+
+      await logAudit({
+        utilisateur_id: userId ?? null,
+        action: 'create',
+        table_name: 'ecritures_comptables',
+        record_id: firstEcritureId ?? 0,
+        new_values: { numero_piece: numeroPiece, journal, lignes: lignes.length },
+      });
 
       logger.info({ numeroPiece, journal, lignes: lignes.length }, 'Manual journal entry created');
     } catch (error) {

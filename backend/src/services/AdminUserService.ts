@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import bcrypt from 'bcrypt';
 import { revokeAllUserSessions } from '../middleware/auth';
+import { logAudit } from '../middleware/audit';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -37,7 +38,7 @@ export class AdminUserService {
     return rows;
   }
 
-  static async createUser(data: any) {
+  static async createUser(data: any, actorId?: number) {
     const { username, email, nom_complet, password, role_id, location_ids } = data;
     
     const client = await pool.connect();
@@ -74,6 +75,15 @@ export class AdminUserService {
       }
 
       await client.query('COMMIT');
+
+      await logAudit({
+        utilisateur_id: actorId ?? null,
+        action: 'create',
+        table_name: 'utilisateurs',
+        record_id: newUserId,
+        new_values: { username, role_id },
+      });
+
       return userRes.rows[0];
     } catch (e) {
       await client.query('ROLLBACK');
@@ -83,7 +93,7 @@ export class AdminUserService {
     }
   }
 
-  static async updateUser(id: number, data: any) {
+  static async updateUser(id: number, data: any, actorId?: number) {
     const { email, nom_complet, role_id, password, actif, location_ids } = data;
     
     const client = await pool.connect();
@@ -148,6 +158,14 @@ export class AdminUserService {
       if (actif === false || password) {
         await revokeAllUserSessions(id);
       }
+
+      await logAudit({
+        utilisateur_id: actorId ?? null,
+        action: 'update',
+        table_name: 'utilisateurs',
+        record_id: id,
+        new_values: { email, nom_complet, role_id, actif, password_changed: !!password },
+      });
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;

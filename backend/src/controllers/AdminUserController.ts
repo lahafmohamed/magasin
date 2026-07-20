@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { AdminUserService } from '../services/AdminUserService';
+import { AuthRequest } from '../middleware/auth';
 import { logger } from '../utils/logger';
 
 export class AdminUserController {
@@ -44,7 +45,7 @@ export class AdminUserController {
         return;
       }
 
-      const user = await AdminUserService.createUser(req.body);
+      const user = await AdminUserService.createUser(req.body, (req as AuthRequest).user?.id);
       res.status(201).json({ success: true, data: user, message: 'Utilisateur créé avec succès' });
     } catch (error: any) {
       logger.error({ err: error }, 'Error creating user');
@@ -59,7 +60,7 @@ export class AdminUserController {
   static async updateUser(req: Request, res: Response): Promise<void> {
     try {
       const id = parseInt(req.params.id);
-      await AdminUserService.updateUser(id, req.body);
+      await AdminUserService.updateUser(id, req.body, (req as AuthRequest).user?.id);
       res.json({ success: true, message: 'Utilisateur mis à jour avec succès' });
     } catch (error) {
       logger.error({ err: error }, 'Error updating user');
