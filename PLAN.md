@@ -26,6 +26,8 @@ Source: 5-track read-only audit (backend quality, frontend UI/UX, security/valid
 
 ## P1 — Security & correctness
 
+> **✅ Sprint 2 landed 2026-07-20** — commits `02fd263` (auth cluster: deactivated-user lockout + `actif` check in authenticate, session revocation on deactivate/password-change, admin password policy via Zod, session TTL derived from JWT_EXPIRATION), `aa17507` (route hardening: attachment entity ACL, patch-router tiersId/payslipId, log token redaction, dev-script prod guards), `510c04b` (Zod on money/stock routes: caisse transfer, paiement update, stock-transfer, stock-locations, caisse create), `b976e60` (GL/caisse-hierarchy/supplier-payment business errors → 4xx), `cbe4879` (FE: DocumentListPage error branch, 4 orphan routes wired, Inventaire double-submit guard), `f891b36` (audit-log on payment/GL/pièce/user-admin paths). 275 backend + 24 FE tests green on dev and a from-scratch CI DB. **Still open in P1:** remaining `err.message`/400-catch-all controllers (Reception/Return/Demande/DepenseV2/POS/CaisseMagasin/Payroll), double-write on `produits.stock`, unbounded export endpoints, DB constraint bundle beyond 089 (document_lignes quantity CHECKs, period-lock UPDATE/DELETE), remaining validateBody routes (demandes/retours/avoirs/payroll/auth).
+
 ### Security
 
 - **Disabled users keep access up to 7 days.** `authenticate` never checks `utilisateurs.actif`, and deactivation paths don't revoke sessions — revoke on `actif=false` and/or join `actif` in the session lookup. (`middleware/auth.ts:93-122`, `AdminUserService.ts:86`, `AuthController.ts:391`) — S
