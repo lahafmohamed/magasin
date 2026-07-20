@@ -8,6 +8,12 @@ import pg from 'pg';
 import bcrypt from 'bcrypt';
 import 'dotenv/config';
 
+// Destructive dev-seed with default credentials — must never run against prod.
+if (process.env.NODE_ENV === 'production') {
+  console.error('reset-users.mjs is a destructive dev-only seed and refuses to run with NODE_ENV=production.');
+  process.exit(1);
+}
+
 const { Pool } = pg;
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',

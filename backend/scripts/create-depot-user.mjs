@@ -2,6 +2,12 @@ import 'dotenv/config';
 import pg from 'pg';
 import bcrypt from 'bcrypt';
 
+// Seeds a user with a default password — dev-only.
+if (process.env.NODE_ENV === 'production') {
+  console.error('create-depot-user.mjs seeds a default-password user and refuses to run with NODE_ENV=production.');
+  process.exit(1);
+}
+
 const { Pool } = pg;
 
 const pool = new Pool({

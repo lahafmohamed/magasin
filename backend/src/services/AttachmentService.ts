@@ -8,6 +8,17 @@ export const ATTACHMENT_ENTITY_TYPES = [
 ] as const;
 export type AttachmentEntityType = typeof ATTACHMENT_ENTITY_TYPES[number];
 
+// Entity types whose attachments are HR/finance-sensitive and must be limited
+// to admin/manager — matching the gating on the owning module's routes
+// (e.g. /api/employes is admin/manager-only, so employee documents must be too).
+const RESTRICTED_ENTITY_TYPES = new Set<string>(['employe']);
+const RESTRICTED_ROLES = ['admin', 'manager'];
+
+/** Roles allowed to read/write attachments for an entity type ('*' = any authenticated). */
+export function attachmentRolesFor(entityType: string): string[] | '*' {
+  return RESTRICTED_ENTITY_TYPES.has(entityType) ? RESTRICTED_ROLES : '*';
+}
+
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_MIME = new Set([
   'application/pdf',
@@ -44,9 +55,9 @@ export class AttachmentService {
   }
 
   /** Fetch one attachment including its bytes (for download). */
-  async getWithContent(id: number): Promise<{ filename: string; mime_type: string; contenu: Buffer } | null> {
+  async getWithContent(id: number): Promise<{ entity_type: string; filename: string; mime_type: string; contenu: Buffer } | null> {
     const { rows } = await pool.query(
-      'SELECT filename, mime_type, contenu FROM attachments WHERE id = $1',
+      'SELECT entity_type, filename, mime_type, contenu FROM attachments WHERE id = $1',
       [id]
     );
     return rows[0] || null;

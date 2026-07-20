@@ -7,7 +7,9 @@ const originalRouter = express.Router;
 express.Router = function(options?: any) {
   const router = originalRouter(options);
 
-  // List of ID parameters used in the application routes that must be valid positive integers
+  // List of ID parameters used in the application routes that must be valid positive integers.
+  // NB: string params (compteNumero, pieceType) are intentionally excluded — they are
+  // validated in-route, not here.
   const idParams = [
     'id',
     'clientId',
@@ -16,7 +18,9 @@ express.Router = function(options?: any) {
     'pieceId',
     'sessionId',
     'session_id',
-    'userId'
+    'userId',
+    'tiersId',
+    'payslipId'
   ];
 
   idParams.forEach(paramName => {
