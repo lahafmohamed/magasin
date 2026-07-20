@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { PaiementController } from '../controllers/PaiementController';
 import { validateBody } from '../middleware/validation';
-import { createPaiementSchema } from '../validation/schemas';
+import { createPaiementSchema, updatePaiementSchema } from '../validation/schemas';
 import { authenticate, authorize } from '../middleware/auth';
 
 const router = Router();
@@ -15,7 +15,7 @@ router.get('/', PaiementController.getAll);
 router.get('/stats', PaiementController.getStats);
 
 // Update a payment (admin, manager only)
-router.put('/:id', authorize(['admin', 'manager']), PaiementController.update);
+router.put('/:id', authorize(['admin', 'manager']), validateBody(updatePaiementSchema), PaiementController.update);
 
 // Delete a payment (admin only)
 router.delete('/:id', authorize(['admin']), PaiementController.delete);

@@ -457,6 +457,59 @@ export const refundAcompteSchema = z.object({
   idempotency_key: z.string().max(255).optional(),
 });
 
+// Shared payment-method enum (matches PaiementService.PAYMENT_METHODS).
+const paymentMethodEnum = z.enum([
+  'espece', 'carte', 'cheque', 'virement',
+  'mobile_money', 'orange_money', 'mtn_money', 'wave',
+]);
+
+// PUT /paiements/:id — partial update; rewrites amount then recomputes FIFO.
+export const updatePaiementSchema = z.object({
+  montant: z.coerce.number().positive('Montant doit être positif').optional(),
+  methode_paiement: paymentMethodEnum.optional(),
+  reference: z.string().max(100).optional().or(z.literal('')),
+  notes: z.string().max(1000).optional().or(z.literal('')),
+  date_paiement: z.string().optional(),
+});
+
+// POST /stock-transfers — inter-location stock move.
+export const createStockTransferSchema = z.object({
+  location_source_id: z.coerce.number().int().positive('Location source requise'),
+  location_destination_id: z.coerce.number().int().positive('Location destination requise'),
+  notes: z.string().max(1000).optional().or(z.literal('')),
+  lignes: z.array(z.object({
+    produit_id: z.coerce.number().int().positive(),
+    quantite_demandee: z.coerce.number().int().positive('Quantité doit être > 0'),
+  })).min(1, 'Au moins une ligne requise'),
+});
+
+// POST/PUT /stock-locations
+export const createStockLocationSchema = z.object({
+  code: z.string().min(1, 'Code requis').max(20),
+  nom: z.string().min(1, 'Nom requis').max(100),
+  adresse: z.string().max(500).optional().or(z.literal('')),
+  responsable_id: z.coerce.number().int().positive().optional().nullable(),
+  est_principal: z.boolean().optional(),
+});
+export const updateStockLocationSchema = createStockLocationSchema.partial();
+
+// POST /caisses-hierarchy — create caisse.
+export const createCaisseSchema = z.object({
+  code: z.string().min(1, 'Code requis').max(50),
+  nom: z.string().min(1, 'Nom requis').max(100),
+  type: z.string().min(1, 'Type requis').max(50),
+  location_id: z.coerce.number().int().positive().optional().nullable(),
+  caisse_parent_id: z.coerce.number().int().positive().optional().nullable(),
+});
+
+// POST /caisses-hierarchy/transferts — move money between caisses.
+export const transfertFondsSchema = z.object({
+  caisse_source_id: z.coerce.number().int().positive('Caisse source requise'),
+  caisse_dest_id: z.coerce.number().int().positive('Caisse destination requise'),
+  montant: z.coerce.number().positive('Montant doit être positif'),
+  notes: z.string().max(1000).optional().or(z.literal('')),
+});
+
 // Admin user management (create / update)
 const strongPassword = z.string().refine(isStrongPassword, PASSWORD_POLICY_MESSAGE);
 

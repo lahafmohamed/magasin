@@ -12,6 +12,10 @@ import {
   updateEmployeSchema,
   createCrmInteractionSchema,
   updateCrmInteractionSchema,
+  updatePaiementSchema,
+  createStockTransferSchema,
+  transfertFondsSchema,
+  recordAcompteSchema,
 } from './schemas';
 
 // Schemas added in the 2026-07-18 P1 pass to gate money-touching mutation
@@ -215,6 +219,57 @@ describe('Money-route Zod schemas', () => {
       // tiers_id is omitted from the update schema, so a stray key is stripped
       const r2 = updateCrmInteractionSchema.safeParse({});
       expect(r2.success).toBe(true);
+    });
+  });
+
+  describe('updatePaiementSchema', () => {
+    it('is partial (empty ok) and coerces montant', () => {
+      expect(updatePaiementSchema.safeParse({}).success).toBe(true);
+      const r = updatePaiementSchema.safeParse({ montant: '250.50' });
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data.montant).toBe(250.5);
+    });
+    it('rejects montant <= 0 and unknown method', () => {
+      expect(updatePaiementSchema.safeParse({ montant: 0 }).success).toBe(false);
+      expect(updatePaiementSchema.safeParse({ methode_paiement: 'gold' }).success).toBe(false);
+    });
+  });
+
+  describe('createStockTransferSchema', () => {
+    it('accepts a valid transfer', () => {
+      const r = createStockTransferSchema.safeParse({
+        location_source_id: 1, location_destination_id: 2,
+        lignes: [{ produit_id: 5, quantite_demandee: 3 }],
+      });
+      expect(r.success).toBe(true);
+    });
+    it('rejects empty lignes and non-positive quantities', () => {
+      expect(createStockTransferSchema.safeParse({ location_source_id: 1, location_destination_id: 2, lignes: [] }).success).toBe(false);
+      expect(createStockTransferSchema.safeParse({
+        location_source_id: 1, location_destination_id: 2,
+        lignes: [{ produit_id: 5, quantite_demandee: 0 }],
+      }).success).toBe(false);
+    });
+  });
+
+  describe('transfertFondsSchema', () => {
+    it('accepts a valid inter-caisse transfer', () => {
+      expect(transfertFondsSchema.safeParse({ caisse_source_id: 1, caisse_dest_id: 2, montant: 5000 }).success).toBe(true);
+    });
+    it('rejects missing ids and non-positive amounts', () => {
+      expect(transfertFondsSchema.safeParse({ caisse_dest_id: 2, montant: 5000 }).success).toBe(false);
+      expect(transfertFondsSchema.safeParse({ caisse_source_id: 1, caisse_dest_id: 2, montant: -1 }).success).toBe(false);
+    });
+  });
+
+  describe('recordAcompteSchema', () => {
+    it('accepts a valid cash deposit and coerces montant', () => {
+      const r = recordAcompteSchema.safeParse({ montant: '10000', methode_paiement: 'espece', magasin_id: 1 });
+      expect(r.success).toBe(true);
+    });
+    it('rejects montant <= 0 and unknown method', () => {
+      expect(recordAcompteSchema.safeParse({ montant: 0, methode_paiement: 'espece' }).success).toBe(false);
+      expect(recordAcompteSchema.safeParse({ montant: 100, methode_paiement: 'crypto' }).success).toBe(false);
     });
   });
 });

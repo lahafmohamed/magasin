@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { CaisseHierarchyController } from '../controllers/CaisseHierarchyController';
 import { authenticate, authorize } from '../middleware/auth';
+import { validateBody } from '../middleware/validation';
+import { createCaisseSchema, transfertFondsSchema } from '../validation/schemas';
 
 const router = Router();
 
@@ -24,7 +26,7 @@ router.get('/consolidated-report', authorize(['admin', 'manager']), CaisseHierar
 router.get('/:id', CaisseHierarchyController.getById);
 
 // POST /api/caisses-hierarchy - Create caisse (admin only)
-router.post('/', authorize(['admin']), CaisseHierarchyController.create);
+router.post('/', authorize(['admin']), validateBody(createCaisseSchema), CaisseHierarchyController.create);
 
 // PUT /api/caisses-hierarchy/:id - Update caisse (admin only)
 router.put('/:id', authorize(['admin']), CaisseHierarchyController.update);
@@ -33,7 +35,7 @@ router.put('/:id', authorize(['admin']), CaisseHierarchyController.update);
 router.patch('/:id/deactivate', authorize(['admin']), CaisseHierarchyController.deactivate);
 
 // POST /api/caisses-hierarchy/transferts - Transfer funds between caisses
-router.post('/transferts', authorize(['admin', 'manager']), CaisseHierarchyController.transfererFonds);
+router.post('/transferts', authorize(['admin', 'manager']), validateBody(transfertFondsSchema), CaisseHierarchyController.transfererFonds);
 
 // GET /api/caisses-hierarchy/transferts/history - Get transfer history
 router.get('/transferts/history', CaisseHierarchyController.getTransferts);
