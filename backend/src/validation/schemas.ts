@@ -25,14 +25,17 @@ export const loginSchema = z.object({
 export const registerSchema = z.object({
   username: z.string().min(3, 'Username doit avoir au moins 3 caractères').max(100),
   email: z.string().email('Email invalide').optional().or(z.literal('')),
-  password: z.string().min(6, 'Mot de passe doit avoir au moins 6 caractères'),
+  // Enforce the same strength policy as the controller (was a weak min(6)).
+  password: z.string().refine(isStrongPassword, PASSWORD_POLICY_MESSAGE),
   nom_complet: z.string().max(255).optional().or(z.literal('')),
-  role: z.enum(['admin', 'manager', 'caissier']).default('caissier'),
+  // Free-form: the app has 6 roles (admin/manager/caissier/depot_staff/
+  // magasin_staff/viewer); the controller resolves the role by name.
+  role: z.string().max(50).default('caissier'),
 });
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Mot de passe actuel requis'),
-  newPassword: z.string().min(6, 'Nouveau mot de passe doit avoir au moins 6 caractères'),
+  newPassword: z.string().refine(isStrongPassword, PASSWORD_POLICY_MESSAGE),
 });
 
 // ============================================
@@ -455,6 +458,17 @@ export const refundAcompteSchema = z.object({
   session_caisse_id: z.coerce.number().int().positive().optional(),
   notes: z.string().max(1000).optional().or(z.literal('')),
   idempotency_key: z.string().max(255).optional(),
+});
+
+// PATCH /retours/:id/statut
+export const updateReturnStatutSchema = z.object({
+  statut: z.enum(['en_attente', 'traite', 'annule']),
+});
+
+// POST /avoirs/:id/apply-to-facture
+export const applyAvoirToFactureSchema = z.object({
+  facture_id: z.coerce.number().int().positive('Facture requise'),
+  montant: z.coerce.number().positive().optional(),
 });
 
 // Shared payment-method enum (matches PaiementService.PAYMENT_METHODS).

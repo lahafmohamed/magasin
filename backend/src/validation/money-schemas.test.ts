@@ -16,6 +16,10 @@ import {
   createStockTransferSchema,
   transfertFondsSchema,
   recordAcompteSchema,
+  updateReturnStatutSchema,
+  applyAvoirToFactureSchema,
+  registerSchema,
+  changePasswordSchema,
 } from './schemas';
 
 // Schemas added in the 2026-07-18 P1 pass to gate money-touching mutation
@@ -270,6 +274,36 @@ describe('Money-route Zod schemas', () => {
     it('rejects montant <= 0 and unknown method', () => {
       expect(recordAcompteSchema.safeParse({ montant: 0, methode_paiement: 'espece' }).success).toBe(false);
       expect(recordAcompteSchema.safeParse({ montant: 100, methode_paiement: 'crypto' }).success).toBe(false);
+    });
+  });
+
+  describe('updateReturnStatutSchema', () => {
+    it('accepts the state-machine values, rejects others', () => {
+      expect(updateReturnStatutSchema.safeParse({ statut: 'traite' }).success).toBe(true);
+      expect(updateReturnStatutSchema.safeParse({ statut: 'annule' }).success).toBe(true);
+      expect(updateReturnStatutSchema.safeParse({ statut: 'expedie' }).success).toBe(false);
+      expect(updateReturnStatutSchema.safeParse({}).success).toBe(false);
+    });
+  });
+
+  describe('applyAvoirToFactureSchema', () => {
+    it('requires a positive facture_id', () => {
+      expect(applyAvoirToFactureSchema.safeParse({ facture_id: 5 }).success).toBe(true);
+      expect(applyAvoirToFactureSchema.safeParse({ facture_id: 0 }).success).toBe(false);
+      expect(applyAvoirToFactureSchema.safeParse({}).success).toBe(false);
+    });
+  });
+
+  describe('auth schemas enforce the password policy', () => {
+    it('registerSchema rejects a weak password, defaults role', () => {
+      expect(registerSchema.safeParse({ username: 'bob', password: 'weak' }).success).toBe(false);
+      const r = registerSchema.safeParse({ username: 'bob', password: 'Strong123' });
+      expect(r.success).toBe(true);
+      if (r.success) expect(r.data.role).toBe('caissier');
+    });
+    it('changePasswordSchema rejects a weak new password', () => {
+      expect(changePasswordSchema.safeParse({ currentPassword: 'x', newPassword: 'short' }).success).toBe(false);
+      expect(changePasswordSchema.safeParse({ currentPassword: 'x', newPassword: 'Strong123' }).success).toBe(true);
     });
   });
 });
