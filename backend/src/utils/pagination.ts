@@ -1,4 +1,12 @@
 /**
+ * Hard cap on rows a single "export everything" endpoint will materialize.
+ * Prevents a full-table pull (100k+ joined rows) from exhausting memory.
+ * Callers that hit the cap should log a warning — a silent truncation reads
+ * as "exported everything" when it didn't.
+ */
+export const EXPORT_MAX_ROWS = 10000;
+
+/**
  * Safe pagination parser.
  * Clamps page >= 1, limit between 1 and 100, and validates sort order.
  */

@@ -5,6 +5,7 @@ import { validateBody } from '../middleware/validation';
 import { createManualEntrySchema } from '../validation/schemas';
 import { GeneralLedgerService } from '../services/GeneralLedgerService';
 import { PDFService } from '../services/PDFService';
+import { EXPORT_MAX_ROWS } from '../utils/pagination';
 
 const router = Router();
 
@@ -32,9 +33,12 @@ router.get('/export', async (req, res) => {
       date_fin: date_fin as string,
       compte_id: compte_id ? parseInt(compte_id as string) : undefined,
       page: 1,
-      limit: 100000,
+      limit: EXPORT_MAX_ROWS,
     });
-    res.json({ success: true, data: result.data });
+    if ((result.total ?? 0) > EXPORT_MAX_ROWS) {
+      console.warn(`GET /api/general-ledger/export truncated: ${result.total} > cap ${EXPORT_MAX_ROWS}`);
+    }
+    res.json({ success: true, data: result.data, truncated: (result.total ?? 0) > EXPORT_MAX_ROWS });
   } catch (error: any) {
     console.error('Erreur GET /api/general-ledger/export:', error);
     res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -59,7 +63,7 @@ router.get('/export-pdf', async (req, res) => {
         date_fin: dateFin,
         compte_id: compte_id ? parseInt(compte_id as string) : undefined,
         page: 1,
-        limit: 100000,
+        limit: EXPORT_MAX_ROWS,
       });
       data = result.data;
       title = 'Grand livre - Écritures comptables';

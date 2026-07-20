@@ -3,7 +3,7 @@ import { consoleError } from '../utils/logError';
 import { factureService } from '../services/FactureService';
 import { PaiementController } from './PaiementController';
 import { AuthRequest } from '../middleware/auth';
-import { parsePagination } from '../utils/pagination';
+import { parsePagination, EXPORT_MAX_ROWS } from '../utils/pagination';
 import { pdfService } from '../services/PDFService';
 
 export class FactureController {
@@ -34,11 +34,14 @@ export class FactureController {
         search as string,
         statut as string,
         1,
-        100000,
+        EXPORT_MAX_ROWS,
         'date_facture',
         'DESC'
       );
-      res.json({ success: true, data: result.data || [] });
+      if ((result.total ?? 0) > EXPORT_MAX_ROWS) {
+        consoleError('GET /api/factures/export', `truncated: ${result.total} rows > cap ${EXPORT_MAX_ROWS}`);
+      }
+      res.json({ success: true, data: result.data || [], truncated: (result.total ?? 0) > EXPORT_MAX_ROWS });
     } catch (error) {
       consoleError('GET /api/factures/export', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });

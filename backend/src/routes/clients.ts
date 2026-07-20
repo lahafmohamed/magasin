@@ -147,6 +147,8 @@ router.get('/:id', async (req: Request, res: Response) => {
 router.get('/:id/historique', async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id);
+    // Bounded to the 500 most recent invoices — an unbounded per-row STRING_AGG
+    // over a client's whole history is a latent scaling hazard.
     const { rows } = await pool.query(
       `SELECT f.*, STRING_AGG(p.nom || ' x' || dl.quantite, ', ') as articles
        FROM factures f
@@ -154,7 +156,8 @@ router.get('/:id/historique', async (req: Request, res: Response) => {
        LEFT JOIN produits p ON dl.produit_id = p.id
        WHERE f.tiers_id = $1 AND f.deleted_at IS NULL
        GROUP BY f.id
-       ORDER BY f.date_facture DESC`,
+       ORDER BY f.date_facture DESC
+       LIMIT 500`,
       [id]
     );
     res.json({ success: true, data: rows });

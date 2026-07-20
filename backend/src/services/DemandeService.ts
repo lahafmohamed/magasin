@@ -840,7 +840,9 @@ export class DemandeService {
             params.push(`%${search}%`);
         }
 
-        query += ` ORDER BY p.nom ASC`;
+        // Bounded: this feeds a type-ahead picker; 200 rows is plenty and keeps
+        // an all-products pull off every keystroke.
+        query += ` ORDER BY p.nom ASC LIMIT 200`;
 
         const { rows } = await pool.query(query, params);
         return rows;
