@@ -3,6 +3,7 @@ import { BaseService } from './BaseService';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { checkPeriodIsOpen } from './PeriodService';
+import { businessError } from '../utils/errors';
 
 export interface FactureFournisseurLigneInput {
   produit_id?: number;
@@ -397,7 +398,7 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
       );
 
       if (invoiceRows.length === 0) {
-        throw new Error('Facture non trouvée');
+        throw businessError(404, 'Facture non trouvée');
       }
 
       const invoice = invoiceRows[0];
@@ -406,11 +407,11 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
       const remainingDue = total - montantPaye;
 
       if (montant <= 0) {
-        throw new Error('Le montant du paiement doit être positif');
+        throw businessError(400, 'Le montant du paiement doit être positif');
       }
 
       if (montant > remainingDue + 0.01) {
-        throw new Error(`Le montant du paiement (${montant}) dépasse le reste dû (${remainingDue})`);
+        throw businessError(400, `Le montant du paiement (${montant}) dépasse le reste dû (${remainingDue})`);
       }
 
       // Get fournisseur_id for ledger entry

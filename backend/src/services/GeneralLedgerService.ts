@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { BaseService } from './BaseService';
 import { logger } from '../utils/logger';
 import { checkPeriodIsOpen } from './PeriodService';
+import { businessError } from '../utils/errors';
 
 export interface EcritureComptableRecord {
   id: number;
@@ -325,7 +326,7 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
       const totalCredit = lignes.reduce((sum, l) => sum + l.credit, 0);
 
       if (Math.abs(totalDebit - totalCredit) > 0.01) {
-        throw new Error(`L'écriture n'est pas équilibrée: Débit ${totalDebit} ≠ Crédit ${totalCredit}`);
+        throw businessError(400, `L'écriture n'est pas équilibrée: Débit ${totalDebit} ≠ Crédit ${totalCredit}`);
       }
 
       // Guard against malformed payloads that would fail on NOT NULL/FK constraints.
@@ -336,15 +337,15 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
         const credit = Number((ligne as any).credit);
 
         if (!Number.isInteger(compteId) || compteId <= 0) {
-          throw new Error(`Ligne ${i + 1}: compte_id invalide ou manquant`);
+          throw businessError(400, `Ligne ${i + 1}: compte_id invalide ou manquant`);
         }
 
         if (!Number.isFinite(debit) || debit < 0 || !Number.isFinite(credit) || credit < 0) {
-          throw new Error(`Ligne ${i + 1}: débit/crédit invalide`);
+          throw businessError(400, `Ligne ${i + 1}: débit/crédit invalide`);
         }
 
         if (debit === 0 && credit === 0) {
-          throw new Error(`Ligne ${i + 1}: débit et crédit ne peuvent pas être tous les deux à zéro`);
+          throw businessError(400, `Ligne ${i + 1}: débit et crédit ne peuvent pas être tous les deux à zéro`);
         }
       }
 
@@ -357,7 +358,7 @@ export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
           [ligne.compte_id]
         );
         if (!compteRows.length) {
-          throw new Error(`Ligne ${i + 1}: compte introuvable (id ${ligne.compte_id})`);
+          throw businessError(404, `Ligne ${i + 1}: compte introuvable (id ${ligne.compte_id})`);
         }
         const compteNumero = compteRows[0].numero;
 

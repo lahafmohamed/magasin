@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { businessError } from '../utils/errors';
 
 export interface CreateCaisseInput {
   code: string;
@@ -114,7 +115,7 @@ export class CaisseHierarchyService {
       );
 
       if (existingRows.length > 0) {
-        throw new Error('Code de caisse déjà utilisé');
+        throw businessError(409, 'Code de caisse déjà utilisé');
       }
 
       // Verify parent caisse exists if provided
@@ -125,7 +126,7 @@ export class CaisseHierarchyService {
         );
 
         if (parentRows.length === 0) {
-          throw new Error('Caisse parent non trouvée');
+          throw businessError(404, 'Caisse parent non trouvée');
         }
       }
 
@@ -252,7 +253,7 @@ export class CaisseHierarchyService {
 
       // Check source != destination
       if (caisse_source_id === caisse_dest_id) {
-        throw new Error('Source and destination caisses must be different');
+        throw businessError(400, 'La caisse source et la destination doivent être différentes');
       }
 
       // Check source balance
@@ -262,11 +263,11 @@ export class CaisseHierarchyService {
       );
 
       if (sourceRows.length === 0) {
-        throw new Error('Caisse source non trouvée');
+        throw businessError(404, 'Caisse source non trouvée');
       }
 
       if (sourceRows[0].solde_actuel < montant) {
-        throw new Error(`Fonds insuffisants. Disponible: ${sourceRows[0].solde_actuel}, Demandé: ${montant}`);
+        throw businessError(400, `Fonds insuffisants. Disponible: ${sourceRows[0].solde_actuel}, Demandé: ${montant}`);
       }
 
       // Check destination exists
@@ -276,7 +277,7 @@ export class CaisseHierarchyService {
       );
 
       if (destRows.length === 0) {
-        throw new Error('Caisse destination non trouvée');
+        throw businessError(404, 'Caisse destination non trouvée');
       }
 
       // Call database function

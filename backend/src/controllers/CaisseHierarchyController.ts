@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { CaisseHierarchyService } from '../services/CaisseHierarchyService';
 import { AuthRequest } from '../middleware/auth';
+import { businessStatusOf } from '../utils/errors';
 
 const caisseService = new CaisseHierarchyService();
 
@@ -62,8 +63,9 @@ export class CaisseHierarchyController {
       const result = await caisseService.create({ code, nom, type, location_id, caisse_parent_id }, req);
       res.status(201).json({ success: true, data: result });
     } catch (error: any) {
-      console.error('CaisseHierarchyController:', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
+      const status = businessStatusOf(error);
+      if (!status) console.error('CaisseHierarchyController:', error);
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -107,8 +109,9 @@ export class CaisseHierarchyController {
 
       res.json({ success: true, data: result });
     } catch (error: any) {
-      console.error('CaisseHierarchyController:', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
+      const status = businessStatusOf(error);
+      if (!status) console.error('CaisseHierarchyController:', error);
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 

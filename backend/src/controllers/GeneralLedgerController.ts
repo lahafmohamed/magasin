@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { generalLedgerService } from '../services/GeneralLedgerService';
 import { successResponse, paginatedResponse } from '../utils/response';
+import { businessStatusOf } from '../utils/errors';
+import { AuthRequest } from '../middleware/auth';
 
 export class GeneralLedgerController {
   /**
@@ -98,7 +100,7 @@ export class GeneralLedgerController {
   /**
    * Create manual journal entry
    */
-  static async createManualEntry(req: Request, res: Response): Promise<void> {
+  static async createManualEntry(req: AuthRequest, res: Response): Promise<void> {
     try {
       const { numero_piece, journal, date_ecriture, lignes } = req.body;
 
@@ -117,8 +119,11 @@ export class GeneralLedgerController {
 
       res.status(201).json({ success: true, message: 'Écriture comptable créée avec succès' });
     } catch (error: any) {
-      console.error('GeneralLedgerController:', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
+      // Surface the service's user-facing validation (unbalanced entry, unknown
+      // account, closed period) instead of a blanket 500.
+      const status = businessStatusOf(error);
+      if (!status) console.error('GeneralLedgerController:', error);
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 

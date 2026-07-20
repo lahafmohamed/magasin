@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { factureFournisseurService } from '../services/FactureFournisseurService';
 import { successResponse, paginatedResponse } from '../utils/response';
+import { businessStatusOf } from '../utils/errors';
 
 export class FactureFournisseurController {
   /**
@@ -126,8 +127,9 @@ export class FactureFournisseurController {
 
       successResponse(res, null, 'Paiement enregistré avec succès');
     } catch (error: any) {
-      console.error('FactureFournisseurController:', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
+      const status = businessStatusOf(error);
+      if (!status) console.error('FactureFournisseurController:', error);
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
