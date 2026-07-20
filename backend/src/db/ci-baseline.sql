@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict eSvrZujHOWEy0kcXVfp3gbUkNWfasGKn94Lh06SOvuEIJBHCM7fTfKxV90pnq7I
+\restrict KTf2TXqmdJwE0Lng2ZabcdTeejPU0fAPkivg1mBfmYIMseuQSHCJCGeKm7z02u9
 
 -- Dumped from database version 18.3
 -- Dumped by pg_dump version 18.3
@@ -91,19 +91,34 @@ CREATE FUNCTION public.assert_ecriture_period_open() RETURNS trigger
     AS $$
 DECLARE
   v_statut TEXT;
+  v_month  INT;
+  v_year   INT;
 BEGIN
-  SELECT statut INTO v_statut
-  FROM periodes_comptables
-  WHERE exercice = EXTRACT(YEAR FROM NEW.date_ecriture)::int
-    AND periode  = EXTRACT(MONTH FROM NEW.date_ecriture)::int;
+  -- Check the NEW period (INSERT / UPDATE target) and the OLD period
+  -- (UPDATE source / DELETE) — a closed period blocks both moving in and
+  -- mutating/removing an existing posting.
+  FOR v_year, v_month IN
+    SELECT DISTINCT EXTRACT(YEAR FROM d)::int, EXTRACT(MONTH FROM d)::int
+    FROM (VALUES
+      (CASE WHEN TG_OP IN ('INSERT','UPDATE') THEN NEW.date_ecriture END),
+      (CASE WHEN TG_OP IN ('UPDATE','DELETE') THEN OLD.date_ecriture END)
+    ) AS v(d)
+    WHERE d IS NOT NULL
+  LOOP
+    SELECT statut INTO v_statut
+    FROM periodes_comptables
+    WHERE exercice = v_year AND periode = v_month;
 
-  IF v_statut = 'fermee' THEN
-    RAISE EXCEPTION 'Periode comptable %/% est cloturee. Aucune ecriture autorisee.',
-      LPAD(EXTRACT(MONTH FROM NEW.date_ecriture)::text, 2, '0'),
-      EXTRACT(YEAR FROM NEW.date_ecriture)::int
-      USING ERRCODE = 'P0001';
+    IF v_statut = 'fermee' THEN
+      RAISE EXCEPTION 'Periode comptable %/% est cloturee. Aucune ecriture autorisee.',
+        LPAD(v_month::text, 2, '0'), v_year
+        USING ERRCODE = 'P0001';
+    END IF;
+  END LOOP;
+
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
   END IF;
-
   RETURN NEW;
 END;
 $$;
@@ -1971,7 +1986,8 @@ CREATE TABLE public.commande_lignes (
     produit_id integer NOT NULL,
     quantite integer DEFAULT 1 NOT NULL,
     prix_unitaire numeric(15,2) NOT NULL,
-    total_ligne numeric(15,2) NOT NULL
+    total_ligne numeric(15,2) NOT NULL,
+    CONSTRAINT chk_commande_lignes_qte_pos CHECK ((quantite > 0))
 );
 
 
@@ -2723,6 +2739,7 @@ CREATE TABLE public.document_lignes (
     parent_ligne_id integer,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     prix_achat_unitaire numeric(15,2) DEFAULT 0.00,
+    CONSTRAINT chk_document_lignes_prix_pos CHECK ((prix_unitaire >= (0)::numeric)),
     CONSTRAINT document_lignes_document_type_check CHECK (((document_type)::text = ANY (ARRAY[('facture'::character varying)::text, ('devis'::character varying)::text, ('bl'::character varying)::text, ('avoir'::character varying)::text]))),
     CONSTRAINT document_lignes_quantite_check CHECK ((quantite > 0))
 );
@@ -4034,7 +4051,8 @@ CREATE TABLE public.retour_lignes (
     raison character varying(500) NOT NULL,
     prix_unitaire numeric(15,2) NOT NULL,
     total_ligne numeric(15,2) NOT NULL,
-    notes text
+    notes text,
+    CONSTRAINT chk_retour_lignes_qte_pos CHECK ((quantite > 0))
 );
 
 
@@ -8056,7 +8074,7 @@ CREATE TRIGGER trg_demande_state_change AFTER UPDATE ON public.demandes_reapprov
 -- Name: ecritures_comptables trg_ecriture_period_lock; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_ecriture_period_lock BEFORE INSERT ON public.ecritures_comptables FOR EACH ROW EXECUTE FUNCTION public.assert_ecriture_period_open();
+CREATE TRIGGER trg_ecriture_period_lock BEFORE INSERT OR DELETE OR UPDATE ON public.ecritures_comptables FOR EACH ROW EXECUTE FUNCTION public.assert_ecriture_period_open();
 
 
 --
@@ -9729,5 +9747,5 @@ ALTER TABLE ONLY public.utilisateurs
 -- PostgreSQL database dump complete
 --
 
-\unrestrict eSvrZujHOWEy0kcXVfp3gbUkNWfasGKn94Lh06SOvuEIJBHCM7fTfKxV90pnq7I
+\unrestrict KTf2TXqmdJwE0Lng2ZabcdTeejPU0fAPkivg1mBfmYIMseuQSHCJCGeKm7z02u9
 
