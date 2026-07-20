@@ -20,6 +20,10 @@ import {
   PackageSearch,
   Settings2,
   ShieldCheck,
+  Landmark,
+  PenSquare,
+  LineChart,
+  History,
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 
@@ -87,6 +91,7 @@ export function useNavCategories(): NavCategory[] {
       icon: Users,
       items: [
         { path: '/tiers', label: 'Contacts', icon: UserCheck },
+        { path: '/clients/analytics', label: 'Analyse clients', icon: LineChart },
         { path: '/employes', label: 'Employés', icon: UserCheck },
         { path: '/paie', label: 'Paie', icon: UserCheck },
       ],
@@ -121,8 +126,10 @@ export function useNavCategories(): NavCategory[] {
         ...((isAdminOrManager || isCaissier || isMagasinStaff) ? [{ path: '/caisse', label: 'Caisse', icon: Wallet }] : []),
         ...((isAdminOrManager || isCaissier || isMagasinStaff) ? [{ path: '/depenses', label: 'Dépenses', icon: Receipt }] : []),
         ...((isAdminOrManager) ? [
+          { path: '/tresorerie', label: 'Trésorerie', icon: Landmark },
           { path: '/caisse/audit', label: 'Audit caisse', icon: ShieldCheck },
           { path: '/general-ledger', label: 'Comptabilité', icon: BookOpen },
+          { path: '/comptabilite', label: 'Saisie comptable', icon: PenSquare },
           { path: '/reporting', label: 'Rapports', icon: TrendingUp },
         ] : []),
       ],
@@ -134,6 +141,7 @@ export function useNavCategories(): NavCategory[] {
       icon: ShieldCheck,
       items: [
         { path: '/admin/users', label: 'Utilisateurs', icon: Users },
+        { path: '/admin/audit', label: "Journal d'audit", icon: History },
         { path: '/admin/parametres-finance', label: 'Paramètres paie & achats', icon: Settings2 },
       ],
     }] : []),

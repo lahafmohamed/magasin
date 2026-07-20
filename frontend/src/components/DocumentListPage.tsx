@@ -72,6 +72,7 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   // Sort is applied server-side (whole dataset, not just the current page) and
@@ -142,7 +143,11 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
       const pagination = Array.isArray(response) ? undefined : response?.pagination;
       setTotal(pagination?.total ?? 0);
       setTotalPages(pagination?.totalPages ?? 0);
+      setError(false);
     } catch {
+      // A fetch failure must NOT read as "no data" — surface an error + retry.
+      setError(true);
+      setRows([]);
       toast.error(opts.loadErrorMessage);
     } finally {
       setLoading(false);
@@ -191,6 +196,7 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
     total,
     totalPages,
     loading,
+    error,
     selected,
     selectedRows,
     allSelected,
@@ -333,6 +339,18 @@ export function DocumentListPage<T extends { id: number }, S = unknown>(
     />
   );
 
+  const errorNode = (
+    <EmptyState
+      icon={props.emptyState.icon}
+      title="Erreur lors du chargement"
+      action={
+        <Button variant="outline" size="sm" onClick={() => list.reload()}>
+          Réessayer
+        </Button>
+      }
+    />
+  );
+
   const tableNode = (
     <Table>
       <TableHeader>
@@ -370,6 +388,12 @@ export function DocumentListPage<T extends { id: number }, S = unknown>(
           <TableRow>
             <TableCell colSpan={colSpan} className="p-0">
               <TableSkeleton rows={10} columns={colSpan} />
+            </TableCell>
+          </TableRow>
+        ) : list.error ? (
+          <TableRow>
+            <TableCell colSpan={colSpan} className="p-0">
+              {errorNode}
             </TableCell>
           </TableRow>
         ) : list.rows.length === 0 ? (
@@ -415,6 +439,8 @@ export function DocumentListPage<T extends { id: number }, S = unknown>(
       cards={
         list.loading ? (
           <ListSkeleton items={6} />
+        ) : list.error ? (
+          errorNode
         ) : list.rows.length === 0 ? (
           emptyNode
         ) : (

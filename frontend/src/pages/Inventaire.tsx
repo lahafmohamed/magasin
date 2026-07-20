@@ -40,6 +40,7 @@ export default function Inventaire() {
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [produitToDelete, setProduitToDelete] = useState<Produit | null>(null);
@@ -193,6 +194,8 @@ export default function Inventaire() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return; // guard against double-submit (duplicate product)
+    setSubmitting(true);
     try {
       if (editingProduit) {
         await produitService.update(editingProduit.id, {
@@ -227,6 +230,8 @@ export default function Inventaire() {
     } catch (error) {
       console.error(error);
       toast.error('Erreur lors de l\'enregistrement');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -895,8 +900,8 @@ export default function Inventaire() {
               <Button type="button" variant="outline" onClick={resetForm}>
                 Annuler
               </Button>
-              <Button type="submit">
-                {editingProduit ? 'Modifier' : 'Ajouter'}
+              <Button type="submit" disabled={submitting}>
+                {submitting ? 'Enregistrement…' : editingProduit ? 'Modifier' : 'Ajouter'}
               </Button>
             </DialogFooter>
           </form>
