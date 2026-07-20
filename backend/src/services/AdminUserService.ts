@@ -1,5 +1,6 @@
 import pool from '../db/connection';
 import bcrypt from 'bcrypt';
+import { revokeAllUserSessions } from '../middleware/auth';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -142,6 +143,11 @@ export class AdminUserService {
       }
 
       await client.query('COMMIT');
+
+      // A deactivated or password-reset user must lose all live sessions at once.
+      if (actif === false || password) {
+        await revokeAllUserSessions(id);
+      }
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isStrongPassword, PASSWORD_POLICY_MESSAGE } from '../utils/security';
 
 // ============================================
 // Common schemas
@@ -454,6 +455,27 @@ export const refundAcompteSchema = z.object({
   session_caisse_id: z.coerce.number().int().positive().optional(),
   notes: z.string().max(1000).optional().or(z.literal('')),
   idempotency_key: z.string().max(255).optional(),
+});
+
+// Admin user management (create / update)
+const strongPassword = z.string().refine(isStrongPassword, PASSWORD_POLICY_MESSAGE);
+
+export const adminCreateUserSchema = z.object({
+  username: z.string().min(1, 'Username requis').max(50),
+  password: strongPassword,
+  role_id: z.coerce.number().int().positive('role_id requis'),
+  email: z.string().email('Email invalide').optional().or(z.literal('')),
+  nom_complet: z.string().max(200).optional().or(z.literal('')),
+  location_ids: z.array(z.coerce.number().int().positive()).optional(),
+});
+
+export const adminUpdateUserSchema = z.object({
+  email: z.string().email('Email invalide').optional().or(z.literal('')),
+  nom_complet: z.string().max(200).optional().or(z.literal('')),
+  role_id: z.coerce.number().int().positive().optional(),
+  actif: z.boolean().optional(),
+  password: strongPassword.optional(),
+  location_ids: z.array(z.coerce.number().int().positive()).optional(),
 });
 
 // POST /tiers/:id/acomptes-client + /tiers/:id/acomptes-fournisseur

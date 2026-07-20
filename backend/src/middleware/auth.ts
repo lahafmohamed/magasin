@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import pool from '../db/connection';
+import { getSessionExpiryDate } from '../utils/security';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -88,10 +89,15 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     }
 
     // Fail closed: a valid JWT is not enough — an active, unrevoked,
-    // unexpired session row must exist for this exact token.
+    // unexpired session row must exist for this exact token, AND the owning
+    // user must still be active (a deactivated employee is denied at once,
+    // not after JWT expiry).
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const { rows } = await pool.query(
-      'SELECT id, revoked_at, expires_at, is_active FROM user_sessions WHERE token_hash = $1',
+      `SELECT s.id, s.revoked_at, s.expires_at, s.is_active, u.actif AS user_actif
+       FROM user_sessions s
+       JOIN utilisateurs u ON u.id = s.utilisateur_id
+       WHERE s.token_hash = $1`,
       [tokenHash]
     );
 
@@ -109,6 +115,14 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       res.status(401).json({
         success: false,
         error: 'Session révoquée, veuillez vous reconnecter',
+      });
+      return;
+    }
+
+    if (session.user_actif === false) {
+      res.status(401).json({
+        success: false,
+        error: 'Compte désactivé',
       });
       return;
     }
@@ -178,10 +192,10 @@ export const generateToken = async (user: { id: number; username: string; role: 
     { expiresIn: JWT_EXPIRATION } as jwt.SignOptions
   );
 
-  // Store session for revocation support
+  // Store session for revocation support. Session TTL is derived from
+  // JWT_EXPIRATION (same source as the JWT itself) so the two never desync.
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 7); // 7 days from now
+  const expiresAt = getSessionExpiryDate();
 
   // Session row is mandatory: authenticate() fails closed without it, so a
   // failed INSERT must fail the login rather than mint an unusable token.
@@ -209,12 +223,23 @@ export const revokeSession = async (token: string): Promise<void> => {
 };
 
 /**
- * Revoke all sessions for a user
+ * Revoke all sessions for a user. Optionally keep one token alive (the caller's
+ * current session, e.g. after a self-service password change).
  */
-export const revokeAllUserSessions = async (userId: number): Promise<void> => {
+export const revokeAllUserSessions = async (userId: number, exceptToken?: string): Promise<void> => {
+  if (exceptToken) {
+    const keepHash = crypto.createHash('sha256').update(exceptToken).digest('hex');
+    await pool.query(
+      `UPDATE user_sessions
+       SET revoked_at = CURRENT_TIMESTAMP, is_active = false
+       WHERE utilisateur_id = $1 AND is_active = true AND token_hash <> $2`,
+      [userId, keepHash]
+    );
+    return;
+  }
   await pool.query(
-    `UPDATE user_sessions 
-     SET revoked_at = CURRENT_TIMESTAMP, is_active = false 
+    `UPDATE user_sessions
+     SET revoked_at = CURRENT_TIMESTAMP, is_active = false
      WHERE utilisateur_id = $1 AND is_active = true`,
     [userId]
   );

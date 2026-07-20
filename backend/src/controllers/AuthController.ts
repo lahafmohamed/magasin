@@ -4,6 +4,7 @@ import { UserModel } from '../models/UserModel';
 import { generateToken, authenticate, AuthRequest, authorize, revokeSession, revokeAllUserSessions, extractToken } from '../middleware/auth';
 import pool from '../db/connection';
 import { logger } from '../utils/logger';
+import { getSessionMaxAgeMs, isStrongPassword, PASSWORD_POLICY_MESSAGE } from '../utils/security';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -81,7 +82,7 @@ export class AuthController {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days, matches JWT_EXPIRATION
+        maxAge: getSessionMaxAgeMs(), // derived from JWT_EXPIRATION (single source)
         path: '/',
       });
 
@@ -165,9 +166,9 @@ export class AuthController {
    * POST /api/auth/register
    * Register a new user (admin only)
    */
-  /** Password complexity policy: ≥8 chars with at least one letter and one digit. */
+  /** Password complexity policy — delegates to the shared single source. */
   static isStrongPassword(pw: unknown): boolean {
-    return typeof pw === 'string' && pw.length >= 8 && /[A-Za-z]/.test(pw) && /\d/.test(pw);
+    return isStrongPassword(pw);
   }
 
   static async register(req: AuthRequest, res: Response): Promise<void> {
@@ -341,6 +342,15 @@ export class AuthController {
         [newPasswordHash, req.user!.id]
       );
 
+      // Invalidate every OTHER session for this user — a password change must
+      // kick out any stolen/old session, while keeping the caller logged in.
+      try {
+        const currentToken = extractToken(req) || undefined;
+        await revokeAllUserSessions(req.user!.id, currentToken);
+      } catch (e) {
+        logger.warn({ err: e }, 'revoke-other-sessions after password change failed (non-fatal)');
+      }
+
       res.json({
         success: true,
         message: 'Mot de passe mis à jour',
@@ -399,6 +409,16 @@ export class AuthController {
         role_id,
         actif,
       });
+
+      // Deactivating a user must terminate their live sessions immediately,
+      // not wait for JWT expiry.
+      if (actif === false) {
+        try {
+          await revokeAllUserSessions(userId);
+        } catch (e) {
+          logger.warn({ err: e }, 'session revocation on user deactivation failed (non-fatal)');
+        }
+      }
 
       // Log audit
       // Audit logging must never break authentication — best-effort only.
