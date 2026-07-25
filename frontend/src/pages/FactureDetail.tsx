@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import StatusBadge from '@/components/StatusBadge';
 import { formatCurrency, formatXOF } from '@/utils/format';
-import { formatPaymentMethod } from '@/utils/paymentMethod';
+import { formatPaymentMethod, type PaymentMethod } from '@/utils/paymentMethod';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DocumentPrint } from '@/components/ui/print-layout';
@@ -169,7 +169,7 @@ export default function FactureDetail() {
 
   const handleAddPayment = async (paiement: {
     montant: number;
-    methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement' | 'wave' | 'orange_money';
+    methode_paiement: PaymentMethod;
     reference?: string;
     notes?: string;
   }) => {

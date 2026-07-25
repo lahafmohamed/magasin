@@ -3,6 +3,7 @@ import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { businessError } from '../utils/errors';
 import { checkPeriodIsOpen } from './PeriodService';
+import { PaymentMethod } from '../utils/paymentMethods';
 
 export const CASH_SESSION_MAX_AGE_HOURS = 24;
 
@@ -41,7 +42,7 @@ export interface CreateMouvementInput {
   type: 'encaissement' | 'decaissement';
   categorie: string;
   montant: number;
-  methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement' | 'mobile_money' | 'orange_money' | 'mtn_money' | 'wave';
+  methode_paiement: PaymentMethod;
   reference_type?: string;
   reference_id?: number;
   libelle: string;

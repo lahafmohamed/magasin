@@ -2570,7 +2570,7 @@ CREATE TABLE public.depenses (
     mouvement_caisse_id integer,
     beneficiaire_libre character varying(255),
     deleted_at timestamp without time zone,
-    CONSTRAINT depenses_methode_paiement_check CHECK (((methode_paiement)::text = ANY (ARRAY[('espece'::character varying)::text, ('carte'::character varying)::text, ('cheque'::character varying)::text, ('virement'::character varying)::text]))),
+    CONSTRAINT depenses_methode_paiement_check CHECK (((methode_paiement)::text = ANY (ARRAY[('espece'::character varying)::text, ('carte'::character varying)::text, ('cheque'::character varying)::text, ('virement'::character varying)::text, ('mobile_money'::character varying)::text, ('orange_money'::character varying)::text, ('mtn_money'::character varying)::text, ('wave'::character varying)::text]))),
     CONSTRAINT depenses_montant_check CHECK ((montant > (0)::numeric))
 );
 

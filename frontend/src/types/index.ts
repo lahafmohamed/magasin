@@ -131,9 +131,18 @@ export interface StatsDashboard {
 }
 
 import { Banknote, CreditCard, ScrollText, Landmark, CircleDollarSign, Wallet, Smartphone, type LucideIcon } from 'lucide-react';
+import type { PaymentMethod } from '../utils/paymentMethod';
 
+/**
+ * Display metadata for every method a payment row can carry.
+ *
+ * Covers all eight selectable methods plus `acompte`, which is display-only:
+ * it labels a payment sourced from an advance application and is not something
+ * a user can pick. Build selectable option lists from `PAYMENT_METHODS` in
+ * utils/paymentMethod, not from this map's keys.
+ */
 export const METHODES_PAIEMENT: Record<
-  'espece' | 'carte' | 'cheque' | 'virement' | 'acompte' | 'wave' | 'orange_money',
+  PaymentMethod | 'acompte',
   { label: string; color: string; Icon: LucideIcon }
 > = {
   espece: { label: 'Espèces', color: 'bg-success-500', Icon: Banknote },
@@ -141,8 +150,10 @@ export const METHODES_PAIEMENT: Record<
   cheque: { label: 'Chèque', color: 'bg-warning-500', Icon: ScrollText },
   virement: { label: 'Virement', color: 'bg-primary-700', Icon: Landmark },
   acompte: { label: 'Acompte', color: 'bg-warning-600', Icon: CircleDollarSign },
+  mobile_money: { label: 'Mobile Money', color: 'bg-pink-500', Icon: Smartphone },
   wave: { label: 'Wave', color: 'bg-cyan-500', Icon: Smartphone },
   orange_money: { label: 'Orange Money', color: 'bg-orange-500', Icon: Smartphone },
+  mtn_money: { label: 'MTN Money', color: 'bg-yellow-500', Icon: Smartphone },
 };
 
 export const FALLBACK_PAIEMENT_ICON: LucideIcon = Wallet;

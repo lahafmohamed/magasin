@@ -47,6 +47,7 @@ import { QueryState } from '@/components/ui/query-state';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import { Pagination } from '@/components/ui/pagination';
 import { TableSkeleton } from '@/components/ui/skeleton';
+import { PAYMENT_METHODS, formatPaymentMethod } from '../utils/paymentMethod';
 
 interface Magasin {
   id: number;
@@ -88,15 +89,16 @@ const METHOD_BADGE_CLASSES: Record<string, string> = {
   cheque: 'bg-orange-100 dark:bg-orange-500/20 text-orange-800 dark:text-orange-200',
   virement: 'bg-purple-100 dark:bg-purple-500/20 text-purple-800 dark:text-purple-200',
   mobile_money: 'bg-pink-100 dark:bg-pink-500/20 text-pink-800 dark:text-pink-200',
+  orange_money: 'bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-200',
+  mtn_money: 'bg-yellow-100 dark:bg-yellow-500/20 text-yellow-800 dark:text-yellow-200',
+  wave: 'bg-cyan-100 dark:bg-cyan-500/20 text-cyan-800 dark:text-cyan-200',
 };
 
-const METHOD_LABELS: Record<string, string> = {
-  espece: 'Espèces',
-  carte: 'Carte',
-  cheque: 'Chèque',
-  virement: 'Virement',
-  mobile_money: 'Mobile Money',
-};
+// Libellés : formatPaymentMethod est la source partagée ; seul « Espèces »
+// porte ici une précision propre au formulaire de dépense.
+const METHOD_LABELS: Record<string, string> = Object.fromEntries(
+  PAYMENT_METHODS.map((m) => [m, formatPaymentMethod(m)])
+);
 
 /** Date du jour en heure LOCALE (YYYY-MM-DD) — toISOString() renverrait la date UTC. */
 const todayLocal = () => {
@@ -518,11 +520,11 @@ export default function DepensesV2() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="espece">Espèces (décrémente la caisse)</SelectItem>
-                        <SelectItem value="carte">Carte bancaire</SelectItem>
-                        <SelectItem value="cheque">Chèque</SelectItem>
-                        <SelectItem value="virement">Virement</SelectItem>
-                        <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                        {PAYMENT_METHODS.map((m) => (
+                          <SelectItem key={m} value={m}>
+                            {m === 'espece' ? 'Espèces (décrémente la caisse)' : formatPaymentMethod(m)}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

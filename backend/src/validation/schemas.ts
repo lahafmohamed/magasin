@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import { isStrongPassword, PASSWORD_POLICY_MESSAGE } from '../utils/security';
+import { PAYMENT_METHODS } from '../utils/paymentMethods';
+
+// Single source of truth for accepted payment methods — mirrors the CHECK
+// constraints on paiements / mouvements_caisse / depenses. Declared here so
+// every schema below builds from it instead of re-listing the literals.
+const paymentMethodEnum = z.enum(PAYMENT_METHODS);
 
 // ============================================
 // Auth schemas
@@ -182,10 +188,7 @@ export const createPaiementSchema = z.object({
   // or supplied via the URL param on POST /factures/:factureId/paiements
   facture_id: z.coerce.number().int().positive().optional(),
   montant: z.coerce.number().positive('Montant doit être positif'),
-  methode_paiement: z.enum([
-    'espece', 'carte', 'cheque', 'virement',
-    'mobile_money', 'orange_money', 'mtn_money', 'wave',
-  ]),
+  methode_paiement: paymentMethodEnum,
   date_paiement: z.string().optional(),
   reference: z.string().max(100).optional().or(z.literal('')),
   notes: z.string().max(1000).optional().or(z.literal('')),
@@ -250,10 +253,7 @@ export const createFactureFournisseurSchema = z.object({
 
 export const recordFactureFournisseurPaiementSchema = z.object({
   montant: z.coerce.number().positive('Montant doit être positif'),
-  methode_paiement: z.enum([
-    'espece', 'carte', 'cheque', 'virement',
-    'mobile_money', 'orange_money', 'mtn_money', 'wave',
-  ]),
+  methode_paiement: paymentMethodEnum,
   reference: z.string().max(100).optional().or(z.literal('')),
 });
 
@@ -272,10 +272,7 @@ export const updatePayslipSchema = z.object({
 });
 
 export const markPayrollPaidSchema = z.object({
-  methode_paiement: z.enum([
-    'espece', 'carte', 'cheque', 'virement',
-    'mobile_money', 'orange_money', 'mtn_money', 'wave',
-  ]).optional(),
+  methode_paiement: paymentMethodEnum.optional(),
 });
 
 // ============================================
@@ -438,10 +435,7 @@ export const applyAcompteSchema = z.object({
 
 export const refundAcompteSchema = z.object({
   montant: z.coerce.number().positive('Montant doit être positif'),
-  methode_paiement: z.enum([
-    'espece', 'carte', 'cheque', 'virement',
-    'mobile_money', 'orange_money', 'mtn_money', 'wave',
-  ]),
+  methode_paiement: paymentMethodEnum,
   session_caisse_id: z.coerce.number().int().positive().optional(),
   notes: z.string().max(1000).optional().or(z.literal('')),
   idempotency_key: z.string().max(255).optional(),
@@ -457,12 +451,6 @@ export const applyAvoirToFactureSchema = z.object({
   facture_id: z.coerce.number().int().positive('Facture requise'),
   montant: z.coerce.number().positive().optional(),
 });
-
-// Shared payment-method enum (matches PaiementService.PAYMENT_METHODS).
-const paymentMethodEnum = z.enum([
-  'espece', 'carte', 'cheque', 'virement',
-  'mobile_money', 'orange_money', 'mtn_money', 'wave',
-]);
 
 // PUT /paiements/:id — partial update; rewrites amount then recomputes FIFO.
 export const updatePaiementSchema = z.object({
@@ -535,10 +523,7 @@ export const adminUpdateUserSchema = z.object({
 // POST /tiers/:id/acomptes-client + /tiers/:id/acomptes-fournisseur
 export const recordAcompteSchema = z.object({
   montant: z.coerce.number().positive('Montant doit être positif'),
-  methode_paiement: z.enum([
-    'espece', 'carte', 'cheque', 'virement',
-    'mobile_money', 'orange_money', 'mtn_money', 'wave',
-  ]),
+  methode_paiement: paymentMethodEnum,
   notes: z.string().max(1000).optional().or(z.literal('')),
   magasin_id: z.coerce.number().int().positive().optional(),
   reference_number: z.string().max(100).optional().or(z.literal('')),
@@ -564,10 +549,7 @@ export const createMouvementDiversSchema = z.object({
   type: z.enum(['encaissement', 'decaissement']),
   categorie: z.enum(['apport', 'retrait_banque', 'autre_entree', 'autre_sortie']),
   montant: z.coerce.number().positive('Montant doit être positif'),
-  methode_paiement: z.enum([
-    'espece', 'carte', 'cheque', 'virement',
-    'mobile_money', 'orange_money', 'mtn_money', 'wave',
-  ]),
+  methode_paiement: paymentMethodEnum,
   libelle: z.string().trim().min(3, 'Libellé (motif) obligatoire (au moins 3 caractères)').max(500),
   idempotency_key: z.string().max(255).optional(),
 });
@@ -591,10 +573,7 @@ export const posQuickSaleSchema = z.object({
   sessionId: z.coerce.number().int().positive('Session ID requis'),
   items: z.array(posQuickSaleLigneSchema).min(1, 'Au moins un article requis'),
   client_id: z.coerce.number().int().positive().nullable().optional(),
-  methode_paiement: z.enum([
-    'espece', 'carte', 'cheque', 'virement',
-    'mobile_money', 'orange_money', 'mtn_money', 'wave',
-  ]).optional(),
+  methode_paiement: paymentMethodEnum.optional(),
 });
 
 // ============================================
@@ -604,7 +583,7 @@ export const createDepenseSchema = z.object({
   magasin_id: z.coerce.number().int().positive('Magasin ID requis'),
   categorie_id: z.coerce.number().int().positive('Catégorie requise'),
   montant: z.coerce.number().positive('Montant doit être positif'),
-  methode_paiement: z.enum(['espece', 'carte', 'cheque', 'virement', 'mobile_money']),
+  methode_paiement: paymentMethodEnum,
   date_depense: z.string().max(40).optional().or(z.literal('')),
   description: z.string().min(1, 'Description requise').max(2000),
   beneficiaire_libre: z.string().max(255).optional().or(z.literal('')),

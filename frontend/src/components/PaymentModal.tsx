@@ -8,13 +8,14 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { formatFCFA } from '../utils/format';
+import type { PaymentMethod } from '../utils/paymentMethod';
 
 interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (paiement: {
     montant: number;
-    methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement' | 'wave' | 'orange_money';
+    methode_paiement: PaymentMethod;
     reference?: string;
     notes?: string;
   }) => Promise<void>;
@@ -30,7 +31,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   total,
 }) => {
   const [montant, setMontant] = useState('');
-  const [methodePaiement, setMethodePaiement] = useState<'espece' | 'carte' | 'cheque' | 'virement' | 'wave' | 'orange_money'>('espece');
+  const [methodePaiement, setMethodePaiement] = useState<PaymentMethod>('espece');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);

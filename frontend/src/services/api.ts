@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Produit, FactureComplete, Paiement, StatsDashboard } from '../types';
+import type { PaymentMethod } from '../utils/paymentMethod';
 
 export interface PaginationMeta {
   page: number;
@@ -502,7 +503,7 @@ export const factureService = {
 export const paiementService = {
   create: async (factureId: number, paiement: {
     montant: number;
-    methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement' | 'wave' | 'orange_money';
+    methode_paiement: PaymentMethod;
     date_paiement?: string;
     reference?: string;
     notes?: string;
@@ -534,7 +535,7 @@ export const paiementService = {
 
   update: async (id: number, paiement: {
     montant?: number;
-    methode_paiement?: 'espece' | 'carte' | 'cheque' | 'virement';
+    methode_paiement?: PaymentMethod;
     reference?: string;
     notes?: string;
     date_paiement?: string;

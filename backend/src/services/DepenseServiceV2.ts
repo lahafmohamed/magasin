@@ -4,12 +4,13 @@ import { logger } from '../utils/logger';
 import { businessError } from '../utils/errors';
 import { caisseMagasinService } from './CaisseMagasinService';
 import { checkPeriodIsOpen } from './PeriodService';
+import { PaymentMethod } from '../utils/paymentMethods';
 
 export interface CreateDepenseInputV2 {
   magasin_id: number;
   categorie_id: number;
   montant: number;
-  methode_paiement: 'espece' | 'carte' | 'cheque' | 'virement' | 'mobile_money';
+  methode_paiement: PaymentMethod;
   date_depense?: string;
   description: string;
   beneficiaire_libre?: string;
@@ -22,7 +23,7 @@ export interface CreateDepenseInputV2 {
 export interface UpdateDepenseInputV2 {
   categorie_id?: number;
   montant?: number;
-  methode_paiement?: 'espece' | 'carte' | 'cheque' | 'virement' | 'mobile_money';
+  methode_paiement?: PaymentMethod;
   date_depense?: string;
   description?: string;
   beneficiaire_libre?: string;

@@ -10,6 +10,22 @@ export const PAYMENT_METHODS = [
 
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+/**
+ * Accepted where an advance or a supplier settlement may also be booked as a
+ * compensation (offsetting a receivable against a payable) rather than an
+ * actual movement of funds: acomptes_clients, acomptes_fournisseur,
+ * paiements_fournisseur. Mirrors those tables' CHECK constraints.
+ *
+ * `paiements`, `mouvements_caisse` and `depenses` do NOT accept it — money
+ * really moves there.
+ */
+export const PAYMENT_METHODS_WITH_COMPENSATION = [
+  ...PAYMENT_METHODS,
+  'compensation',
+] as const;
+
+export type PaymentMethodWithCompensation = (typeof PAYMENT_METHODS_WITH_COMPENSATION)[number];
+
 export function isPaymentMethod(value: unknown): value is PaymentMethod {
   return typeof value === 'string' && (PAYMENT_METHODS as readonly string[]).includes(value);
 }

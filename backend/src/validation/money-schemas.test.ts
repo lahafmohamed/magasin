@@ -126,13 +126,27 @@ describe('Money-route Zod schemas', () => {
       });
       expect(r.success).toBe(true);
     });
-    it('rejects a payment method outside the depenses set', () => {
-      // wave is valid for payments but not for depenses (5-value set)
+    it('accepts every canonical payment method', () => {
+      // Was asserting the opposite: the schema allowed 5 methods and this test
+      // pinned 'wave' as rejected. Meanwhile depenses_methode_paiement_check
+      // allowed only 4, so the form's own "Mobile Money" option passed Zod and
+      // died on the constraint. Migration 096 widened the constraint to the
+      // canonical 8 and the schema now builds from that same list.
       const r = createDepenseSchema.safeParse({
         magasin_id: 1,
         categorie_id: 2,
         montant: 15000,
         methode_paiement: 'wave',
+        description: 'Fournitures',
+      });
+      expect(r.success).toBe(true);
+    });
+    it('rejects a payment method outside the canonical set', () => {
+      const r = createDepenseSchema.safeParse({
+        magasin_id: 1,
+        categorie_id: 2,
+        montant: 15000,
+        methode_paiement: 'crypto',
         description: 'Fournitures',
       });
       expect(r.success).toBe(false);

@@ -27,9 +27,9 @@ import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatDateShort } from '@/utils/format';
-import { formatPaymentMethod } from '@/utils/paymentMethod';
+import { formatPaymentMethod, PAYMENT_METHODS } from '@/utils/paymentMethod';
 
-const METHODES = ['espece', 'carte', 'cheque', 'virement', 'mobile_money', 'orange_money', 'mtn_money', 'wave'];
+const METHODES = PAYMENT_METHODS;
 
 const LEDGER_PAGE_SIZE = 25;
 

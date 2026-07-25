@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { caisseMagasinService } from '../services/CaisseMagasinService';
 import { AuthRequest } from '../middleware/auth';
+import { PAYMENT_METHODS } from '../utils/paymentMethods';
 import { businessStatusOf } from '../utils/errors';
 import pool from '../db/connection';
 
@@ -257,7 +258,7 @@ export class CaisseMagasinController {
       const { type, categorie, montant, methode_paiement, libelle, idempotency_key } = req.body;
 
       const ALLOWED_CATEGORIES = ['apport', 'retrait_banque', 'autre_entree', 'autre_sortie'];
-      const VALID_METHODS = ['espece','carte','cheque','virement','mobile_money','orange_money','mtn_money','wave'];
+      const VALID_METHODS: readonly string[] = PAYMENT_METHODS;
 
       if (!sessionId) {
         res.status(400).json({ error: 'session_id requis' });
