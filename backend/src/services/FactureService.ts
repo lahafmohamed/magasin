@@ -305,7 +305,7 @@ export class FactureService {
       }
 
       // Calculate totals (no TVA)
-      const { sousTotal, remiseGlobale, remiseGlobalePct, total } = calculateTotals(
+      const { sousTotal, remiseGlobale, remiseGlobalePct, total, totalLignes } = calculateTotals(
         lignes,
         remise_globale,
         remise_globale_pct
@@ -351,11 +351,14 @@ export class FactureService {
       const totals: number[] = [];
       const purchasePrices: number[] = [];
 
-      for (const ligne of lignes) {
+      for (const [index, ligne] of lignes.entries()) {
         produitIds.push(ligne.produit_id);
         quantities.push(ligne.quantite);
         prices.push(ligne.prix_unitaire);
-        totals.push(ligne.quantite * ligne.prix_unitaire);
+        // Reuse the rounded per-line totals the header was built from. Recomputing
+        // quantite * prix_unitaire here left the stored lines unrounded while
+        // sous_total was rounded per line, so the two disagreed on fractional prices.
+        totals.push(totalLignes[index]);
         purchasePrices.push(purchasePricesMap.get(ligne.produit_id) ?? 0.00);
       }
 

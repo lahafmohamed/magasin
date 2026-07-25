@@ -4,6 +4,7 @@ import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { checkPeriodIsOpen } from './PeriodService';
 import { businessError } from '../utils/errors';
+import { computeLineTotals } from './PricingService';
 import { SupplierAllocationService } from './SupplierAllocationService';
 
 export interface FactureFournisseurLigneInput {
@@ -319,14 +320,11 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
       const { rows: seqRows } = await client.query("SELECT nextval('facture_fournisseur_numero_seq') as num");
       const numeroFactureInterne = `FF-${new Date().getFullYear()}-${String(seqRows[0].num).padStart(5, '0')}`;
 
-      // Calculate totals
-      let sousTotal = 0;
-
-      for (const ligne of lignes) {
-        const totalLigne = ligne.quantite * ligne.prix_unitaire;
-        sousTotal += totalLigne;
-      }
-
+      // Calculate totals through the shared, cents-safe primitive — the same one
+      // client invoices use. The previous raw float accumulation left sous_total
+      // rounded once at the end while Postgres rounded each total_ligne on
+      // insert, so header and lines disagreed on fractional prices.
+      const { totalLignes, sousTotal } = computeLineTotals(lignes);
       const total = sousTotal;
 
       // Insert invoice
@@ -340,17 +338,21 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
 
       const invoiceId = invoiceResult[0].id;
 
-      // Insert line items
-      for (const ligne of lignes) {
-        const totalLigne = ligne.quantite * ligne.prix_unitaire;
-
-        await client.query(
-          `INSERT INTO facture_fournisseur_lignes
+      // Insert line items in one statement, reusing the totals the header was
+      // built from so the two can never diverge.
+      await client.query(
+        `INSERT INTO facture_fournisseur_lignes
            (facture_id, produit_id, description, quantite, prix_unitaire, total_ligne)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [invoiceId, ligne.produit_id || null, ligne.description || null, ligne.quantite, ligne.prix_unitaire, totalLigne]
-        );
-      }
+         SELECT $1, unnest($2::int[]), unnest($3::text[]), unnest($4::int[]), unnest($5::numeric[]), unnest($6::numeric[])`,
+        [
+          invoiceId,
+          lignes.map((l) => l.produit_id ?? null),
+          lignes.map((l) => l.description ?? null),
+          lignes.map((l) => l.quantite),
+          lignes.map((l) => l.prix_unitaire),
+          totalLignes,
+        ]
+      );
 
       // Supplier ledger: credit entry (new invoice increases AP liability)
       await client.query(

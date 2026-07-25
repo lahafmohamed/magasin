@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { businessError } from '../utils/errors';
 import { generateDocumentNumber } from './NumberingService';
 import { logAudit } from '../middleware/audit';
+import { computeLineTotals } from './PricingService';
 
 export interface CommandeLigneInput {
   produit_id: number;
@@ -31,8 +32,40 @@ export interface UpdateCommandeInput {
  */
 export class CommandeService {
 
-  private sumLignes(lignes: CommandeLigneInput[]): number {
-    return lignes.reduce((sum, l) => sum + l.quantite * l.prix_unitaire, 0);
+  /**
+   * Rounded per-line totals and their sum.
+   *
+   * The header sum and the four line-insert sites used to recompute
+   * `quantite * prix_unitaire` independently and unrounded, so the order, its
+   * lines, the auto-created draft invoice and that invoice's lines could each
+   * land on a different figure for the same order.
+   */
+  private lineTotals(lignes: CommandeLigneInput[]): { totalLignes: number[]; sousTotal: number } {
+    return computeLineTotals(lignes);
+  }
+
+  /** Bulk-insert order lines from totals already computed for the header. */
+  private async insertCommandeLignes(
+    client: any, commandeId: number, lignes: CommandeLigneInput[], totalLignes: number[]
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO commande_lignes (commande_id, produit_id, quantite, prix_unitaire, total_ligne)
+       SELECT $1, unnest($2::int[]), unnest($3::int[]), unnest($4::numeric[]), unnest($5::numeric[])`,
+      [commandeId, lignes.map((l) => l.produit_id), lignes.map((l) => l.quantite),
+        lignes.map((l) => l.prix_unitaire), totalLignes]
+    );
+  }
+
+  /** Bulk-insert the linked draft invoice's lines from the same totals. */
+  private async insertFactureLignes(
+    client: any, factureId: number, lignes: CommandeLigneInput[], totalLignes: number[]
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO facture_fournisseur_lignes (facture_id, produit_id, quantite, prix_unitaire, total_ligne)
+       SELECT $1, unnest($2::int[]), unnest($3::int[]), unnest($4::numeric[]), unnest($5::numeric[])`,
+      [factureId, lignes.map((l) => l.produit_id), lignes.map((l) => l.quantite),
+        lignes.map((l) => l.prix_unitaire), totalLignes]
+    );
   }
 
   private assertLignes(lignes: CommandeLigneInput[] | undefined): asserts lignes is CommandeLigneInput[] {
@@ -59,7 +92,7 @@ export class CommandeService {
       await client.query('BEGIN');
 
       const numeroCommande = await generateDocumentNumber('commande', client);
-      const sousTotal = this.sumLignes(lignes);
+      const { totalLignes, sousTotal } = this.lineTotals(lignes);
 
       const { rows: commandeResult } = await client.query(
         'INSERT INTO commandes_fournisseur (numero_commande, tiers_id, sous_total, notes, date_livraison_prevue) VALUES ($1, $2, $3, $4, $5) RETURNING id',
@@ -67,12 +100,7 @@ export class CommandeService {
       );
       const commandeId = commandeResult[0].id;
 
-      for (const ligne of lignes) {
-        await client.query(
-          'INSERT INTO commande_lignes (commande_id, produit_id, quantite, prix_unitaire, total_ligne) VALUES ($1, $2, $3, $4, $5)',
-          [commandeId, ligne.produit_id, ligne.quantite, ligne.prix_unitaire, ligne.quantite * ligne.prix_unitaire]
-        );
-      }
+      await this.insertCommandeLignes(client, commandeId, lignes, totalLignes);
 
       // Auto-create a facture_fournisseur (brouillon) linked to this commande
       const numeroFactureInterne = await generateDocumentNumber('facture_fournisseur', client);
@@ -87,14 +115,7 @@ export class CommandeService {
       );
       const factureId = ffResult[0].id;
 
-      for (const ligne of lignes) {
-        await client.query(
-          `INSERT INTO facture_fournisseur_lignes
-           (facture_id, produit_id, quantite, prix_unitaire, total_ligne)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [factureId, ligne.produit_id, ligne.quantite, ligne.prix_unitaire, ligne.quantite * ligne.prix_unitaire]
-        );
-      }
+      await this.insertFactureLignes(client, factureId, lignes, totalLignes);
 
       await client.query('COMMIT');
 
@@ -135,7 +156,7 @@ export class CommandeService {
         throw businessError(400, 'Seules les commandes en attente peuvent être modifiées');
       }
 
-      const sousTotal = this.sumLignes(lignes);
+      const { totalLignes, sousTotal } = this.lineTotals(lignes);
 
       await client.query(
         `UPDATE commandes_fournisseur
@@ -145,12 +166,7 @@ export class CommandeService {
       );
 
       await client.query('DELETE FROM commande_lignes WHERE commande_id = $1', [id]);
-      for (const ligne of lignes) {
-        await client.query(
-          'INSERT INTO commande_lignes (commande_id, produit_id, quantite, prix_unitaire, total_ligne) VALUES ($1, $2, $3, $4, $5)',
-          [id, ligne.produit_id, ligne.quantite, ligne.prix_unitaire, ligne.quantite * ligne.prix_unitaire]
-        );
-      }
+      await this.insertCommandeLignes(client, id, lignes, totalLignes);
 
       // Sync the linked invoice while it is still a draft ('en_attente')
       const { rows: ffRows } = await client.query(
@@ -167,14 +183,7 @@ export class CommandeService {
         );
 
         await client.query('DELETE FROM facture_fournisseur_lignes WHERE facture_id = $1', [factureId]);
-        for (const ligne of lignes) {
-          await client.query(
-            `INSERT INTO facture_fournisseur_lignes
-             (facture_id, produit_id, quantite, prix_unitaire, total_ligne)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [factureId, ligne.produit_id, ligne.quantite, ligne.prix_unitaire, ligne.quantite * ligne.prix_unitaire]
-          );
-        }
+        await this.insertFactureLignes(client, factureId, lignes, totalLignes);
       }
 
       await client.query('COMMIT');

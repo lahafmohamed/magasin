@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logger } from '../utils/logger';
 import { toPaiementMethod } from '../utils/paymentMethods';
+import { roundMoney } from './PricingService';
 
 export interface AllocationResult {
   clientId: number;
@@ -9,9 +10,6 @@ export interface AllocationResult {
   totalPool: number;
   totalAllocated: number;
 }
-
-/** Money is NUMERIC(15,2) — keep JS accumulators from drifting off the stored scale. */
-const roundMoney = (n: number): number => parseFloat(n.toFixed(2));
 
 /** One spendable fund in the FIFO pool: a payment row or an acompte balance. */
 interface FundItem {

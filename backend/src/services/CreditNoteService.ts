@@ -239,7 +239,7 @@ export class CreditNoteService {
       const numeroAvoir = await generateDocumentNumber('avoir', client);
 
       // Calculate totals
-      const { sousTotal, total } = calculateTotals(lignes);
+      const { sousTotal, total, totalLignes } = calculateTotals(lignes);
 
       // Insert credit note
       const { rows: avoirResult } = await client.query(
@@ -256,14 +256,14 @@ export class CreditNoteService {
       const prices: number[] = [];
       const totals: number[] = [];
 
-      for (const ligne of lignes) {
+      for (const [index, ligne] of lignes.entries()) {
         produitIds.push(ligne.produit_id || null);
         descriptions.push(ligne.description || null);
         quantities.push(ligne.quantite);
         prices.push(ligne.prix_unitaire);
-
-        const totalLigne = ligne.quantite * ligne.prix_unitaire;
-        totals.push(totalLigne);
+        // Rounded per-line total from calculateTotals — recomputing it here left
+        // the stored lines out of step with the stored sous_total.
+        totals.push(totalLignes[index]);
       }
 
       await client.query(

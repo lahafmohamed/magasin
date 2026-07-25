@@ -37,20 +37,30 @@ export function assertPositiveSalePrices(lignes: SalePriceLine[]): void {
 }
 
 /**
- * Calculate totals for a sales document (facture, devis, BL, avoir).
+ * Round to the scale money is stored at (NUMERIC(15,2)).
  *
- * @param lignes   Line items with quantite and prix_unitaire
- * @param remise_globale    Optional global discount amount
- * @param remise_globale_pct Optional global discount percentage
- * @returns PricingTotals with sousTotal, remise, and total
+ * Every document total must go through this. Postgres rounds on insert anyway,
+ * so a JS accumulator that stays unrounded produces a header rounded once at
+ * the end while each line is rounded independently — and the two disagree.
  */
-export function calculateTotals(
-  lignes: PricingLigneInput[],
-  remise_globale?: number,
-  remise_globale_pct?: number
-): PricingTotals {
-  assertPositiveSalePrices(lignes);
+export function roundMoney(value: number): number {
+  return parseFloat(value.toFixed(2));
+}
 
+/**
+ * Per-line totals plus their sum, both at storage scale.
+ *
+ * Shared by sales and purchase documents. Unlike `calculateTotals` this does
+ * NOT assert a positive unit price: a supplier line may legitimately be free
+ * (warranty replacement, goodwill), while a sales line may not.
+ *
+ * Callers must persist the returned `totalLignes` rather than recomputing
+ * `quantite * prix_unitaire` at insert time, or the stored lines drift from
+ * the stored header.
+ */
+export function computeLineTotals(
+  lignes: PricingLigneInput[]
+): { totalLignes: number[]; sousTotal: number } {
   let sousTotal = 0;
   const totalLignes: number[] = [];
 
@@ -66,10 +76,30 @@ export function calculateTotals(
     }
 
     // Ensure non-negative per line, rounded so stored line totals match reported sums
-    ligneTotal = parseFloat(Math.max(0, ligneTotal).toFixed(2));
+    ligneTotal = roundMoney(Math.max(0, ligneTotal));
     totalLignes.push(ligneTotal);
     sousTotal += ligneTotal;
   }
+
+  return { totalLignes, sousTotal: roundMoney(sousTotal) };
+}
+
+/**
+ * Calculate totals for a sales document (facture, devis, BL, avoir).
+ *
+ * @param lignes   Line items with quantite and prix_unitaire
+ * @param remise_globale    Optional global discount amount
+ * @param remise_globale_pct Optional global discount percentage
+ * @returns PricingTotals with sousTotal, remise, and total
+ */
+export function calculateTotals(
+  lignes: PricingLigneInput[],
+  remise_globale?: number,
+  remise_globale_pct?: number
+): PricingTotals {
+  assertPositiveSalePrices(lignes);
+
+  const { totalLignes, sousTotal } = computeLineTotals(lignes);
 
   // Apply global discount
   let remiseGlobalePct = remise_globale_pct || 0;
@@ -83,10 +113,10 @@ export function calculateTotals(
   const total = Math.max(0, sousTotal - remiseGlobale);
 
   return {
-    sousTotal: parseFloat(sousTotal.toFixed(2)),
-    remiseGlobale: parseFloat(remiseGlobale.toFixed(2)),
-    remiseGlobalePct: parseFloat(remiseGlobalePct.toFixed(2)),
-    total: parseFloat(total.toFixed(2)),
+    sousTotal: roundMoney(sousTotal),
+    remiseGlobale: roundMoney(remiseGlobale),
+    remiseGlobalePct: roundMoney(remiseGlobalePct),
+    total: roundMoney(total),
     totalLignes,
   };
 }
