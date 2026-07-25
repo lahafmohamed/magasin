@@ -1,8 +1,26 @@
-import { Menu, PanelLeft, Search, Sun, Moon, User, LogOut, Command } from 'lucide-react';
+import { Menu, PanelLeft, Search, Sun, Moon, User, LogOut, Command, KeyRound, ChevronDown, Monitor } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useAuth } from '../lib/AuthContext';
 import { useTheme } from '../lib/ThemeContext';
 import { NotificationBell } from './NotificationBell';
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Administrateur',
+  manager: 'Manager',
+  caissier: 'Caissier',
+  depot_staff: 'Personnel dépôt',
+  magasin_staff: 'Personnel magasin',
+  viewer: 'Consultation',
+};
 
 /** Opens the GlobalSearch command palette (it listens for Ctrl/Cmd+K on document). */
 function openGlobalSearch() {
@@ -19,7 +37,7 @@ export function Topbar({
   onOpenMobile: () => void;
 }) {
   const { user, logout } = useAuth();
-  const { resolvedTheme, setTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
 
   return (
@@ -77,24 +95,82 @@ export function Topbar({
 
           <NotificationBell />
 
-          <div className="hidden items-center gap-1.5 px-1.5 text-xs sm:flex">
-            <User className="h-3.5 w-3.5" />
-            <span className="hidden lg:inline">{user.username}</span>
-            <span className="inline-flex items-center rounded-full border px-1.5 text-xs uppercase tracking-wide text-muted-foreground">
-              {user.role}
-            </span>
-          </div>
+          {/* Menu utilisateur : profil, mot de passe, thème, déconnexion. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5 px-2"
+                aria-label="Menu utilisateur"
+              >
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold uppercase text-primary">
+                  {(user.nom_complet || user.username).slice(0, 2)}
+                </span>
+                <span className="hidden max-w-[10rem] truncate text-xs lg:inline">
+                  {user.nom_complet || user.username}
+                </span>
+                <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground sm:inline" />
+              </Button>
+            </DropdownMenuTrigger>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={logout}
-            className="h-8 gap-1 px-2 text-danger-600 hover:bg-danger-50 hover:text-danger-700 dark:text-danger-500 dark:hover:bg-danger-500/10"
-            aria-label="Déconnexion"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            <span className="hidden lg:inline text-xs">Déconnexion</span>
-          </Button>
+            <DropdownMenuContent align="end" className="w-60">
+              <DropdownMenuLabel className="font-normal">
+                <p className="truncate text-sm font-medium">{user.nom_complet || user.username}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {user.email || user.username}
+                </p>
+                <p className="mt-1 text-xs uppercase tracking-wide text-muted-foreground">
+                  {ROLE_LABELS[user.role] || user.role}
+                </p>
+              </DropdownMenuLabel>
+
+              <DropdownMenuSeparator />
+
+              <DropdownMenuItem asChild>
+                <Link to="/profil" className="cursor-pointer">
+                  <User className="h-4 w-4" />
+                  Mon profil
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link to="/profil" className="cursor-pointer">
+                  <KeyRound className="h-4 w-4" />
+                  Changer mon mot de passe
+                </Link>
+              </DropdownMenuItem>
+
+              <DropdownMenuSeparator />
+
+              <DropdownMenuItem onSelect={() => setTheme('light')}>
+                <Sun className="h-4 w-4" />
+                Mode clair
+                {theme === 'light' && <span className="ml-auto text-xs">✓</span>}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setTheme('dark')}>
+                <Moon className="h-4 w-4" />
+                Mode sombre
+                {theme === 'dark' && <span className="ml-auto text-xs">✓</span>}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setTheme('system')}>
+                <Monitor className="h-4 w-4" />
+                Système
+                {theme === 'system' && <span className="ml-auto text-xs">✓</span>}
+              </DropdownMenuItem>
+
+              <DropdownMenuSeparator />
+
+              <DropdownMenuItem
+                onSelect={() => {
+                  void logout();
+                }}
+                className="text-danger-600 focus:bg-danger-50 focus:text-danger-700 dark:text-danger-500 dark:focus:bg-danger-500/10"
+              >
+                <LogOut className="h-4 w-4" />
+                Déconnexion
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
     </header>

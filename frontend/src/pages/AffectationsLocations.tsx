@@ -107,7 +107,7 @@ export default function AffectationsLocations() {
     if (!selectedUserId) return;
 
     if (selectedLocationIds.length === 0) {
-      toast.error('Sélectionnez au moins une location');
+      toast.error('Sélectionnez au moins un emplacement');
       return;
     }
 
@@ -134,8 +134,8 @@ export default function AffectationsLocations() {
     <div className="container mx-auto p-6">
       <PageHeader
         className="mb-6"
-        title="Affectations Utilisateur-Locations"
-        description="Configure les locations accessibles pour chaque utilisateur et la location par défaut."
+        title="Affectations des utilisateurs"
+        description="Configurez les emplacements accessibles à chaque utilisateur et son emplacement par défaut."
       />
 
       <QueryState
@@ -146,7 +146,7 @@ export default function AffectationsLocations() {
         skeleton={<TableSkeleton rows={6} columns={4} />}
         emptyIcon={Users}
         emptyTitle="Aucun utilisateur"
-        emptyDescription="Créez des utilisateurs pour leur affecter des locations."
+        emptyDescription="Créez des utilisateurs pour leur affecter des emplacements."
       >
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="rounded-md border bg-card shadow-sm">
@@ -159,7 +159,7 @@ export default function AffectationsLocations() {
                       <TableHead>Utilisateur</TableHead>
                       <TableHead>Rôle</TableHead>
                       <TableHead>Statut</TableHead>
-                      <TableHead>Locations</TableHead>
+                      <TableHead>Emplacements</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -219,7 +219,7 @@ export default function AffectationsLocations() {
                               {location.nom} <span className="text-xs text-muted-foreground">({location.code})</span>
                             </div>
                             {location.est_principal && (
-                              <div className="text-xs text-primary">Location principale système</div>
+                              <div className="text-xs text-primary">Emplacement principal du système</div>
                             )}
                           </div>
                           <input
@@ -234,7 +234,7 @@ export default function AffectationsLocations() {
                   </div>
 
                   <div className="space-y-1.5 mb-6">
-                    <Label htmlFor="default-location">Location par défaut</Label>
+                    <Label htmlFor="default-location">Emplacement par défaut</Label>
                     <Select
                       value={defaultLocationId == null ? '__none' : String(defaultLocationId)}
                       onValueChange={(v) => setDefaultLocationId(v === '__none' ? null : parseInt(v, 10))}

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { DemandeController } from '../controllers/DemandeController';
 import { authenticate, authorize } from '../middleware/auth';
+import { validateBody } from '../middleware/validation';
+import { createDemandeSchema, updateDemandeSchema, decideDemandeSchema } from '../validation/schemas';
 
 const router = Router();
 
@@ -25,10 +27,10 @@ router.get('/', DemandeController.getAll);
 router.get('/:id', DemandeController.getById);
 
 // Create demande (magasin staff)
-router.post('/', authorize(CAN_CREATE), DemandeController.create);
+router.post('/', authorize(CAN_CREATE), validateBody(createDemandeSchema), DemandeController.create);
 
 // Update demande (brouillon only, own demandes)
-router.put('/:id', authorize(CAN_EDIT_OWN), DemandeController.update);
+router.put('/:id', authorize(CAN_EDIT_OWN), validateBody(updateDemandeSchema), DemandeController.update);
 
 // ============================================
 // STATE TRANSITIONS
@@ -38,7 +40,7 @@ router.put('/:id', authorize(CAN_EDIT_OWN), DemandeController.update);
 router.post('/:id/envoyer', authorize(CAN_EDIT_OWN), DemandeController.send);
 
 // Decide (approve/reject) - depot staff
-router.post('/:id/decider', authorize(CAN_DECIDE), DemandeController.decide);
+router.post('/:id/decider', authorize(CAN_DECIDE), validateBody(decideDemandeSchema), DemandeController.decide);
 
 // Execute (create transfer) - depot staff
 router.post('/:id/executer', authorize(CAN_DECIDE), DemandeController.execute);

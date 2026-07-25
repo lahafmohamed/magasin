@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { DevisService } from '../services/DevisService';
 import { pdfService } from '../services/PDFService';
 import { AuthRequest } from '../middleware/auth';
+import { businessStatusOf } from '../utils/errors';
 
 const devisService = new DevisService();
 
@@ -15,7 +16,7 @@ export class DevisController {
         statut as string,
         (tiers_id || client_id) ? parseInt((tiers_id || client_id) as string) : undefined,
         page ? parseInt(page as string) : 1,
-        limit ? parseInt(limit as string) : 20,
+        Math.min(200, (limit ? parseInt(limit as string) : 20) || 20),
         (sort as string) || 'date_devis',
         (order as string) || 'DESC'
       );
@@ -140,6 +141,15 @@ export class DevisController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       const msg = error?.message || 'Erreur lors de la conversion';
+      const businessStatus = businessStatusOf(error);
+      if (businessStatus) {
+        res.status(businessStatus).json({
+          success: false,
+          error: msg,
+          code: error?.code,
+        });
+        return;
+      }
       const isBusinessError =
         msg.includes('Devis non trouvé') ||
         msg.includes('déjà converti') ||

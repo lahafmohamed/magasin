@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import { payrollService } from '../services/PayrollService';
 import { pdfService } from '../services/PDFService';
 import { successResponse, paginatedResponse } from '../utils/response';
+import { businessStatusOf } from '../utils/errors';
 
 export class PayrollController {
   static async getAll(req: AuthRequest, res: Response): Promise<void> {
@@ -12,7 +13,9 @@ export class PayrollController {
       const { data, total } = await payrollService.listRuns(page, limit);
       paginatedResponse(res, data, total, page, limit, 'Cycles de paie récupérés');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -20,7 +23,9 @@ export class PayrollController {
     try {
       successResponse(res, await payrollService.getStats(), 'Statistiques paie');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -30,7 +35,9 @@ export class PayrollController {
       if (!run) { res.status(404).json({ success: false, error: 'Cycle introuvable' }); return; }
       successResponse(res, run, 'Cycle de paie récupéré');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -44,7 +51,9 @@ export class PayrollController {
       });
       res.status(201).json({ success: true, data: run, message: 'Cycle de paie généré' });
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -57,7 +66,9 @@ export class PayrollController {
       );
       successResponse(res, run, 'Bulletin mis à jour');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -65,7 +76,9 @@ export class PayrollController {
     try {
       successResponse(res, await payrollService.getConfig(), 'Configuration paie');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -79,7 +92,9 @@ export class PayrollController {
       });
       successResponse(res, data, 'Cotisation mise à jour');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -89,7 +104,9 @@ export class PayrollController {
       const data = await payrollService.replaceBaremes(req.body.baremes);
       successResponse(res, data, 'Barème ITS mis à jour');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -102,7 +119,9 @@ export class PayrollController {
       res.setHeader('Content-Disposition', `attachment; filename="bulletin-${payslipId}.pdf"`);
       res.send(buffer);
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -110,7 +129,9 @@ export class PayrollController {
     try {
       successResponse(res, await payrollService.validateRun(parseInt(req.params.id), req.user?.id, req), 'Cycle validé');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -118,7 +139,9 @@ export class PayrollController {
     try {
       successResponse(res, await payrollService.markRunPaid(parseInt(req.params.id), req.body.methode_paiement, req.user?.id, req), 'Cycle payé');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -126,7 +149,9 @@ export class PayrollController {
     try {
       successResponse(res, await payrollService.cancelRun(parseInt(req.params.id), req.user?.id, req), 'Cycle annulé');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 
@@ -135,7 +160,9 @@ export class PayrollController {
       await payrollService.deleteRun(parseInt(req.params.id), req.user?.id, req);
       successResponse(res, null, 'Cycle supprimé');
     } catch (e: any) {
-      res.status(e.statusCode || 500).json({ success: false, error: e.message });
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
     }
   }
 }

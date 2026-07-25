@@ -1,9 +1,17 @@
 /**
- * Escape a single CSV cell: wrap in quotes and double any embedded quotes so that
- * values containing commas, quotes, or newlines do not corrupt the file.
+ * Escape a single CSV cell: neutralize formula injection, then wrap in quotes and
+ * double any embedded quotes so values with commas, quotes, or newlines don't
+ * corrupt the file.
+ *
+ * Formula injection: Excel/Sheets execute a cell whose text starts with = + - @
+ * (or a leading tab/CR) even when it is CSV-quoted. Prefix a single quote so the
+ * value is rendered as literal text. User-entered names/notes reach these exports.
  */
 function escapeCell(value: unknown): string {
-  const s = value === null || value === undefined ? '' : String(value);
+  let s = value === null || value === undefined ? '' : String(value);
+  if (/^[=+\-@\t\r]/.test(s)) {
+    s = `'${s}`;
+  }
   return `"${s.replace(/"/g, '""')}"`;
 }
 

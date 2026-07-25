@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { commandeService, produitService } from '../services/api';
+import { formatCurrency } from '@/utils/format';
 import { Button } from '@/components/ui/button';
 import StatusBadge from '@/components/StatusBadge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { TiersPicker } from '../components/TiersPicker';
@@ -14,8 +16,8 @@ import { AttachmentPanel } from '../components/AttachmentPanel';
 import { Tiers } from '../types';
 import { 
   ArrowLeft, ShoppingCart, Truck, CheckCircle, Clock, 
-  XCircle, Package, Printer, Edit, Save, Search, 
-  Trash2, BookOpen, X, Loader2, Calendar
+  XCircle, Package, Printer, Edit, Save, Search,
+  Trash2, BookOpen, X, Loader2, Calendar, Download
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -29,6 +31,20 @@ export default function CommandeDetail() {
   const [loading, setLoading] = useState(true);
   const [match, setMatch] = useState<any>(null);
   const [matchLoading, setMatchLoading] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+
+  /** Bon de commande fournisseur — PDF généré côté serveur (pas l'impression navigateur). */
+  const downloadBonCommande = async () => {
+    if (!id) return;
+    setDownloadingPdf(true);
+    try {
+      await commandeService.downloadPdf(Number(id), commande?.numero_commande);
+    } catch {
+      toast.error('Erreur lors de la génération du bon de commande');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
 
   // Edit states
   const [isEditing, setIsEditing] = useState(false);
@@ -206,7 +222,7 @@ export default function CommandeDetail() {
       await commandeService.updateStatut(parseInt(id), statut);
       loadCommande();
       toast.success('Statut mis à jour');
-    } catch (error) {
+    } catch {
       toast.error('Erreur lors de la mise à jour');
     }
   };
@@ -345,8 +361,8 @@ export default function CommandeDetail() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label>Fournisseur *</Label>
-                  <TiersPicker role="fournisseur" value={selectedFournisseur} onChange={setSelectedFournisseur} />
+                  <Label htmlFor="cmd-detail-fournisseur">Fournisseur *</Label>
+                  <TiersPicker id="cmd-detail-fournisseur" role="fournisseur" value={selectedFournisseur} onChange={setSelectedFournisseur} />
                 </div>
                 {selectedFournisseur && (
                   <div className="p-3 bg-muted/40 rounded-md border text-xs space-y-1.5">
@@ -368,11 +384,10 @@ export default function CommandeDetail() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="date_livraison">Date de livraison prévue</Label>
-                  <Input
+                  <DatePicker
                     id="date_livraison"
-                    type="date"
                     value={dateLivraison}
-                    onChange={(e) => setDateLivraison(e.target.value)}
+                    onChange={setDateLivraison}
                   />
                 </div>
                 <div className="space-y-2">
@@ -436,7 +451,7 @@ export default function CommandeDetail() {
                               <p className="text-xs text-muted-foreground font-mono">{p.reference}</p>
                             </div>
                             <div className="text-right">
-                              <p className="text-sm font-bold text-primary">{parseFloat(p.prix_achat).toFixed(2)} XOF</p>
+                              <p className="text-sm font-bold text-primary">{formatCurrency(p.prix_achat)}</p>
                               <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
                                 Stock: {p.stock} (Min: {p.stock_min})
                               </p>
@@ -502,7 +517,7 @@ export default function CommandeDetail() {
                                 />
                               </TableCell>
                               <TableCell className="font-bold text-right text-sm">
-                                {(ligne.quantite * ligne.prix_unitaire).toFixed(2)} XOF
+                                {formatCurrency(ligne.quantite * ligne.prix_unitaire)}
                               </TableCell>
                               <TableCell>
                                 <Button type="button" variant="ghost" size="sm" className="text-destructive h-8 w-8 p-0" onClick={() => removeLigne(index)}>
@@ -526,7 +541,7 @@ export default function CommandeDetail() {
                   </div>
                   <div className="text-right">
                     <span className="text-xs text-muted-foreground block font-semibold uppercase">Nouveau Total</span>
-                    <span className="text-2xl font-black text-primary">{sousTotal.toFixed(2)} XOF</span>
+                    <span className="text-2xl font-black text-primary">{formatCurrency(sousTotal)}</span>
                   </div>
                 </div>
               )}
@@ -621,7 +636,7 @@ export default function CommandeDetail() {
                       <p className="text-sm font-semibold truncate">{p.nom}</p>
                       <p className="text-xs font-mono text-muted-foreground">{p.reference}</p>
                       <div className="flex gap-2 items-center mt-1">
-                        <span className="text-xs font-bold text-primary">{parseFloat(p.prix_achat).toFixed(2)} XOF</span>
+                        <span className="text-xs font-bold text-primary">{formatCurrency(p.prix_achat)}</span>
                         <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
                           Stock: {p.stock} (Min: {p.stock_min})
                         </span>
@@ -698,7 +713,21 @@ export default function CommandeDetail() {
         <div className="flex gap-2 w-full sm:w-auto shrink-0 justify-end items-center">
           <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2">
             <Printer className="h-4 w-4" />
-            Imprimer / PDF
+            Imprimer
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={downloadBonCommande}
+            disabled={downloadingPdf}
+            className="gap-2"
+          >
+            {downloadingPdf ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            Bon de commande (PDF)
           </Button>
           {commande.statut === 'en_attente' && (
             <Button variant="default" size="sm" onClick={startEditing} className="gap-2">
@@ -905,7 +934,7 @@ export default function CommandeDetail() {
                   <TableHead>Désignation</TableHead>
                   <TableHead className="text-right w-[100px]">Quantité</TableHead>
                   <TableHead className="text-right w-[160px]">Prix unitaire</TableHead>
-                  <TableHead className="text-right w-[160px]">Total HT</TableHead>
+                  <TableHead className="text-right w-[160px]">Total</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -914,8 +943,8 @@ export default function CommandeDetail() {
                     <TableCell className="font-mono text-xs font-semibold">{ligne.produit_reference}</TableCell>
                     <TableCell className="font-semibold text-sm">{ligne.produit_nom}</TableCell>
                     <TableCell className="text-right font-semibold">{ligne.quantite}</TableCell>
-                    <TableCell className="text-right font-semibold">{parseFloat(ligne.prix_unitaire).toFixed(2)} XOF</TableCell>
-                    <TableCell className="text-right font-black text-primary">{parseFloat(ligne.total_ligne).toFixed(2)} XOF</TableCell>
+                    <TableCell className="text-right font-semibold">{formatCurrency(ligne.prix_unitaire)}</TableCell>
+                    <TableCell className="text-right font-black text-primary">{formatCurrency(ligne.total_ligne)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -929,11 +958,11 @@ export default function CommandeDetail() {
             <CardContent className="p-4 space-y-2.5">
               <div className="flex justify-between items-center text-sm border-b pb-2">
                 <span className="text-muted-foreground font-semibold">Total Partiel</span>
-                <span className="font-bold">{sousTotal.toFixed(2)} XOF</span>
+                <span className="font-bold">{formatCurrency(sousTotal)}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-foreground font-extrabold text-base uppercase">NET À PAYER</span>
-                <span className="font-black text-lg text-primary">{sousTotal.toFixed(2)} XOF</span>
+                <span className="font-black text-lg text-primary">{formatCurrency(sousTotal)}</span>
               </div>
             </CardContent>
           </Card>

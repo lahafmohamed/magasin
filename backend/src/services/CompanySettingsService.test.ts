@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { companySettingsService, CompanySettings } from './CompanySettingsService';
+import { companySettingsService } from './CompanySettingsService';
 import pool from '../db/connection';
 
 describe('CompanySettingsService', () => {

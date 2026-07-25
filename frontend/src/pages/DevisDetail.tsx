@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowLeft, FileCheck, Trash2, Printer, Download, Pencil, Loader2 } from 'lucide-react';
 import { devisService } from '@/services/api';
+import { formatCurrency } from '@/utils/format';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,7 +43,7 @@ export default function DevisDetail() {
         setLoading(true);
         const data = await devisService.getById(Number(id));
         setDevis(data?.data || data);
-      } catch (error) {
+      } catch {
         toast.error('Impossible de charger ce devis');
       } finally {
         setLoading(false);
@@ -216,8 +217,8 @@ export default function DevisDetail() {
                         )}
                       </TableCell>
                       <TableCell>{qte}</TableCell>
-                      <TableCell>{pu.toFixed(2)} XOF</TableCell>
-                      <TableCell>{(qte * pu).toFixed(2)} XOF</TableCell>
+                      <TableCell>{formatCurrency(pu)}</TableCell>
+                      <TableCell>{formatCurrency(qte * pu)}</TableCell>
                     </TableRow>
                   );
                 })}

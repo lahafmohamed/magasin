@@ -10,8 +10,10 @@ import { Produit, Tiers } from '../types';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { DatePicker } from '@/components/ui/date-picker';
 import { ArrowLeft, Search, Minus, Plus, X, AlertCircle, ScanLine } from 'lucide-react';
 import { toast } from 'sonner';
+import { getValidSalePrice } from '../utils/salesPrice';
 
 interface StockLocation {
   id: number;
@@ -27,14 +29,11 @@ interface StockLevel {
 
 import { formatFCFA as formatXOF } from '../utils/format';
 
-// VAT-exempt business: TVA is always 0 (HT == TTC).
-const DEFAULT_TVA_RATE = 0;
-
 // --- Validation schema (react-hook-form + zod) -----------------------------
 // Mirrors the fields that were previously validated manually before submit:
 //  - a client (tiers) must be selected
 //  - at least one line
-//  - per line: quantité > 0, prix unitaire >= 0, remise 0..100
+//  - per line: quantité > 0, prix unitaire > 0, remise 0..100
 // The stock-availability rule (quantité <= stock_dispo) stays in onValid so we
 // keep the exact original toast UX (it depends on per-location live stock).
 const ligneSchema = z.object({
@@ -42,7 +41,7 @@ const ligneSchema = z.object({
   produit_nom: z.string(),
   produit_reference: z.string(),
   quantite: z.number().min(1, 'Quantité invalide'),
-  prix_unitaire: z.number().min(0, 'Prix invalide'),
+  prix_unitaire: z.number().positive('Le prix doit être supérieur à zéro'),
   prix_unitaire_default: z.number(),
   prix_revient: z.number(),
   remise_pct: z.number().min(0).max(100),
@@ -83,15 +82,14 @@ export default function NouvelleFacture() {
 
   // --- Local (non-form) UI state -------------------------------------------
   // Product search / dropdown are pure UX; only the selected product becomes a
-  // form line. tvaRate, locations and the per-location stock map are loaded
-  // async and feed calculations / line stock — not form inputs themselves.
+  // form line. Locations and the per-location stock map are loaded async and
+  // feed calculations / line stock — not form inputs themselves.
   const [produits, setProduits] = useState<Produit[]>([]);
   const [produitSearch, setProduitSearch] = useState('');
   const [showProduitDropdown, setShowProduitDropdown] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [locations, setLocations] = useState<StockLocation[]>([]);
   const [locationStockMap, setLocationStockMap] = useState<Record<number, number>>({});
-  const [tvaRate] = useState(DEFAULT_TVA_RATE);
 
   // --- react-hook-form ------------------------------------------------------
   const {
@@ -174,7 +172,7 @@ export default function NouvelleFacture() {
         }
         setLocationStockMap(nextMap);
       } catch {
-        toast.error('Impossible de charger le stock de la location');
+        toast.error("Impossible de charger le stock de l'emplacement");
       }
     };
     void loadLocationStock();
@@ -204,6 +202,14 @@ export default function NouvelleFacture() {
   }, [produitSearch, selectedLocationId]);
 
   const addProduit = (p: Produit) => {
+    const prixVente = getValidSalePrice(p.prix_vente);
+    if (prixVente === null) {
+      toast.error(
+        'Prix de vente non renseigné. Corrigez la fiche produit avant de continuer.'
+      );
+      return;
+    }
+
     const current = getValues('lignes');
     const existingIdx = current.findIndex((l) => l.produit_id === p.id);
     if (existingIdx >= 0) {
@@ -215,7 +221,6 @@ export default function NouvelleFacture() {
       setShowProduitDropdown(false);
       return;
     }
-    const prixVente = parseFloat(p.prix_vente as any) || 0;
     const prixAchat = parseFloat(p.prix_achat as any) || 0;
     const fallbackStock =
       typeof p.stock === 'string' ? parseInt(p.stock, 10) : Number(p.stock || 0);
@@ -248,11 +253,9 @@ export default function NouvelleFacture() {
     const totalCost = lignes.reduce((s, l) => s + l.quantite * l.prix_revient, 0);
     const margin = subtotal - totalCost;
     const marginPct = subtotal > 0 ? (margin / subtotal) * 100 : 0;
-    const tva = subtotal * tvaRate;
-    const total = subtotal + tva;
     const totalUnits = lignes.reduce((s, l) => s + l.quantite, 0);
-    return { subtotal, totalCost, margin, marginPct, tva, total, totalUnits };
-  }, [lignes, tvaRate]);
+    return { subtotal, totalCost, margin, marginPct, total: subtotal, totalUnits };
+  }, [lignes]);
 
   const isValid = !!watchedClient && lignes.length > 0;
   const disabledReason = !watchedClient
@@ -387,7 +390,7 @@ export default function NouvelleFacture() {
                   htmlFor="facture-location"
                   className="text-xs text-muted-foreground block mb-1.5 font-normal"
                 >
-                  Location de vente
+                  Emplacement de vente
                 </Label>
                 <Controller
                   control={control}
@@ -397,8 +400,8 @@ export default function NouvelleFacture() {
                       value={field.value ? String(field.value) : ''}
                       onValueChange={(v) => field.onChange(parseInt(v, 10))}
                     >
-                      <SelectTrigger id="facture-location" className="w-full" aria-label="Location de vente">
-                        <SelectValue placeholder="Choisir une location" />
+                      <SelectTrigger id="facture-location" className="w-full" aria-label="Emplacement de vente">
+                        <SelectValue placeholder="Choisir un emplacement" />
                       </SelectTrigger>
                       <SelectContent>
                         {locations.map((l) => (
@@ -418,11 +421,17 @@ export default function NouvelleFacture() {
                 >
                   Échéance<span className="text-destructive"> *</span>
                 </Label>
-                <input
-                  id="facture-echeance"
-                  type="date"
-                  className="w-full px-3 py-2 text-sm rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                  {...register('echeance')}
+                <Controller
+                  control={control}
+                  name="echeance"
+                  render={({ field }) => (
+                    <DatePicker
+                      id="facture-echeance"
+                      value={field.value}
+                      onChange={field.onChange}
+                      required
+                    />
+                  )}
                 />
                 {errors.echeance && (
                   <p role="alert" className="text-xs font-medium text-danger mt-1">
@@ -479,7 +488,8 @@ export default function NouvelleFacture() {
               {showProduitDropdown && produits.length > 0 && (
                 <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-popover border rounded-lg shadow-lg overflow-hidden max-h-80 overflow-y-auto">
                   {produits.map((p) => {
-                    const prixVente = parseFloat(p.prix_vente as any) || 0;
+                    const prixVente = getValidSalePrice(p.prix_vente);
+                    const prixManquant = prixVente === null;
                     const apiStock =
                       typeof p.stock === 'string' ? parseInt(p.stock, 10) : Number(p.stock || 0);
                     const stock = selectedLocationId
@@ -493,8 +503,17 @@ export default function NouvelleFacture() {
                       <button
                         key={p.id}
                         type="button"
-                        onMouseDown={() => addProduit(p)}
-                        className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-b last:border-b-0"
+                        disabled={prixManquant}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          if (!prixManquant) addProduit(p);
+                        }}
+                        title={prixManquant ? 'Renseignez le prix de vente dans la fiche produit' : undefined}
+                        className={`flex items-center gap-3 w-full px-3 py-2.5 text-left border-b last:border-b-0 ${
+                          prixManquant
+                            ? 'cursor-not-allowed bg-destructive/5 opacity-70'
+                            : 'hover:bg-muted'
+                        }`}
                       >
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium truncate">{p.nom}</div>
@@ -507,14 +526,20 @@ export default function NouvelleFacture() {
                         </div>
                         <div className="text-right">
                           <div className="text-sm font-semibold font-mono">
-                            {formatXOF(prixVente)}
+                            {prixManquant ? 'Prix non renseigné' : formatXOF(prixVente)}
                           </div>
                           <div
                             className={`text-[11px] ${
-                              stock <= stockMin ? 'text-destructive' : 'text-success-600'
+                              prixManquant || stock <= stockMin
+                                ? 'text-destructive'
+                                : 'text-success-600'
                             }`}
                           >
-                            {stock <= stockMin ? 'Stock bas' : 'Disponible'}
+                            {prixManquant
+                              ? 'Corriger dans l’inventaire'
+                              : stock <= stockMin
+                                ? 'Stock bas'
+                                : 'Disponible'}
                           </div>
                         </div>
                       </button>
@@ -716,7 +741,7 @@ export default function NouvelleFacture() {
               </div>
             ) : (
               <div className="mt-4 py-8 text-center text-sm text-muted-foreground bg-muted/30 rounded-lg">
-                Aucun produit. Recherchez ou scannez pour ajouter.
+                Aucun article ajouté à la facture.
               </div>
             )}
             {errors.lignes?.message && (
@@ -735,13 +760,7 @@ export default function NouvelleFacture() {
               Résumé
             </h2>
 
-            <SummaryRow label="Sous-total" value={formatXOF(totals.subtotal)} />
-            <SummaryRow
-              label={`TVA (${(tvaRate * 100).toFixed(0)}%)`}
-              value={formatXOF(totals.tva)}
-            />
-            <div className="h-px bg-border my-3" />
-            <SummaryRow label="Total TTC" value={formatXOF(totals.total)} large />
+            <SummaryRow label="Total" value={formatXOF(totals.total)} large />
 
             <div
               className={`mt-4 p-3 rounded-md border ${

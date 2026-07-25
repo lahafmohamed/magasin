@@ -1,6 +1,45 @@
 import axios from 'axios';
 import { Produit, FactureComplete, Paiement, StatsDashboard } from '../types';
 
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface Page<T> {
+  data: T[];
+  pagination: PaginationMeta;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+/**
+ * Normalize the API envelope without mutating arrays. Paginated endpoints keep
+ * both their rows and metadata in a stable `{ data, pagination }` contract.
+ */
+export function normalizeApiResponseBody(body: unknown): unknown {
+  if (!isRecord(body) || !('success' in body)) {
+    return body;
+  }
+
+  if (!('data' in body)) {
+    return body;
+  }
+
+  if (body.pagination && Array.isArray(body.data)) {
+    return {
+      data: body.data,
+      pagination: body.pagination,
+    };
+  }
+
+  return body.data;
+}
+
 type CreateProduitPayload = Omit<Produit, 'id' | 'stock'> & {
   stock?: number;
   location_id?: number;
@@ -18,24 +57,10 @@ export const api = axios.create({
   withCredentials: true,
 });
 
-// Response interceptor: unwrap { success, data, pagination } envelope
+// Response interceptor: unwrap non-paginated data and preserve paginated pages.
 api.interceptors.response.use(
   (response) => {
-    const body = response.data;
-    // If the response has the new envelope format, unwrap data
-    if (body && typeof body === 'object' && 'success' in body) {
-      if (body.data !== undefined) {
-        // If there's pagination, attach it to the unwrapped data
-        const result = body.data;
-        if (body.pagination && typeof result === 'object') {
-          (result as any).pagination = body.pagination;
-        }
-        return { ...response, data: result };
-      }
-      // No data field (e.g., message-only responses)
-      return { ...response, data: body };
-    }
-    return response;
+    return { ...response, data: normalizeApiResponseBody(response.data) };
   },
   (error) => {
     // On token expiry / auth failure, clear the session and bounce to login —
@@ -520,15 +545,44 @@ export const paiementService = {
   delete: async (id: number): Promise<void> => {
     await api.delete(`/paiements/${id}`);
   },
+
+  /** Reçu de paiement (quittance) remis au client. */
+  downloadRecu: async (id: number): Promise<void> => {
+    await downloadPdfBlob(`/paiements/${id}/recu`, `recu-paiement-${id}.pdf`);
+  },
 };
 
 
 // ========== COMMANDES ==========
+/** Télécharge un blob PDF renvoyé par l'API sous le nom de fichier donné. */
+async function downloadPdfBlob(url: string, filename: string): Promise<void> {
+  const response = await api.get(url, { responseType: 'blob' });
+  const objectUrl = window.URL.createObjectURL(response.data);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
 export const commandeService = {
-  getAll: async (search?: string, statut?: string): Promise<any[]> => {
+  getAll: async (
+    search?: string,
+    statut?: string,
+    page = 1,
+    limit = 20,
+    sort = 'date',
+    order: 'asc' | 'desc' = 'desc'
+  ): Promise<Page<any>> => {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
     if (statut) params.append('statut', statut);
+    params.append('page', page.toString());
+    params.append('limit', limit.toString());
+    params.append('sort', sort);
+    params.append('order', order);
     const { data } = await api.get(`/commandes?${params}`);
     return data;
   },
@@ -575,6 +629,14 @@ export const commandeService = {
   getMatch: async (id: number): Promise<any> => {
     const { data } = await api.get(`/commandes/${id}/match`);
     return data;
+  },
+
+  /** Bon de commande fournisseur (PDF) — le document envoyé au fournisseur. */
+  downloadPdf: async (id: number, numeroCommande?: string): Promise<void> => {
+    await downloadPdfBlob(
+      `/commandes/${id}/pdf`,
+      `bon-commande-${(numeroCommande || id).toString().replace(/\s+/g, '_')}.pdf`
+    );
   },
 };
 
@@ -755,7 +817,7 @@ export const factureFournisseurService = {
     date_facture: string;
     date_echeance?: string;
     condition_paiement?: string;
-    lignes: { produit_id?: number | null; description?: string; quantite: number; prix_unitaire: number; tva_taux?: number }[];
+    lignes: { produit_id?: number | null; description?: string; quantite: number; prix_unitaire: number }[];
     notes?: string;
   }): Promise<any> => {
     const { data } = await api.post('/factures-fournisseur', facture);
@@ -783,15 +845,17 @@ export const factureFournisseurService = {
 
 // ========== GENERAL LEDGER ==========
 export const generalLedgerService = {
-  getAll: async (journal?: string, date_debut?: string, date_fin?: string, compte_id?: number, page = 1, limit = 50): Promise<any> => {
-    const params = new URLSearchParams();
-    if (journal) params.append('journal', journal);
-    if (date_debut) params.append('date_debut', date_debut);
-    if (date_fin) params.append('date_fin', date_fin);
-    if (compte_id) params.append('compte_id', compte_id.toString());
-    params.append('page', page.toString());
-    params.append('limit', limit.toString());
-    const { data } = await api.get(`/general-ledger?${params}`);
+  getAll: async (filters: {
+    journal?: string;
+    date_debut?: string;
+    date_fin?: string;
+    compte_id?: number;
+    numero_piece?: string;
+    description?: string;
+    page?: number;
+    limit?: number;
+  } = {}): Promise<any> => {
+    const { data } = await api.get('/general-ledger', { params: filters });
     return data;
   },
 
@@ -838,17 +902,19 @@ export const generalLedgerService = {
     return data;
   },
 
-  exportAll: async (params: { journal?: string; date_debut?: string; date_fin?: string; compte_id?: number }): Promise<any> => {
+  exportAll: async (params: { journal?: string; date_debut?: string; date_fin?: string; compte_id?: number; numero_piece?: string; description?: string }): Promise<any> => {
     const { data } = await api.get('/general-ledger/export', { params });
     return data;
   },
 
-  exportPdf: async (params: { journal?: string; date_debut?: string; date_fin?: string; compte_id?: number; type?: string }): Promise<Blob> => {
+  exportPdf: async (params: { journal?: string; date_debut?: string; date_fin?: string; compte_id?: number; numero_piece?: string; description?: string; type?: string }): Promise<Blob> => {
     const q = new URLSearchParams();
     if (params.journal) q.append('journal', params.journal);
     if (params.date_debut) q.append('date_debut', params.date_debut);
     if (params.date_fin) q.append('date_fin', params.date_fin);
     if (params.compte_id) q.append('compte_id', String(params.compte_id));
+    if (params.numero_piece) q.append('numero_piece', params.numero_piece);
+    if (params.description) q.append('description', params.description);
     if (params.type) q.append('type', params.type);
     const response = await api.get(`/general-ledger/export-pdf?${q.toString()}`, { responseType: 'blob' });
     return response.data;
@@ -1149,7 +1215,7 @@ export const bonLivraisonService = {
 
 // ========== AVOIRS (CREDIT NOTES) ==========
 export const creditNoteService = {
-  getAll: async (search?: string, page = 1, limit = 20): Promise<any> => {
+  getAll: async (search?: string, page = 1, limit = 20): Promise<Page<any>> => {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
     params.append('page', page.toString());

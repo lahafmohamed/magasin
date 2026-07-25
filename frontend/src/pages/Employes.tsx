@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { MoneyInput } from '../components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,7 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { EmptyState } from '@/components/ui/empty-state';
+import { QueryState } from '@/components/ui/query-state';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import { ListSkeleton } from '@/components/ui/skeleton';
@@ -73,6 +74,7 @@ export default function Employes() {
 
   const [employes, setEmployes] = useState<Employe[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
 
   // filters / paging
   const [search, setSearch] = useState('');
@@ -105,6 +107,7 @@ export default function Employes() {
 
   const fetchEmployes = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const actif = filterActif === 'all' ? undefined : filterActif === 'true';
       const res = await employeService.getAll(
@@ -120,7 +123,10 @@ export default function Employes() {
       setEmployes(Array.isArray(rows) ? rows : []);
       setTotal(res?.pagination?.total ?? 0);
       setTotalPages(res?.pagination?.totalPages ?? 0);
-    } catch {
+    } catch (err) {
+      // Erreur conservée en état → QueryState propose « Réessayer ».
+      setError(err);
+      setEmployes([]);
       toast.error('Erreur chargement employés');
     } finally {
       setLoading(false);
@@ -292,13 +298,18 @@ export default function Employes() {
             </Select>
           </div>
 
+          <QueryState
+            loading={loading}
+            error={error}
+            isEmpty={employes.length === 0}
+            onRetry={fetchEmployes}
+            skeleton={<ListSkeleton items={6} />}
+            emptyIcon={Users}
+            emptyTitle="Aucun employé"
+          >
           <ResponsiveTable
             cards={
-              loading ? (
-                <ListSkeleton items={6} />
-              ) : employes.length === 0 ? (
-                <EmptyState icon={Users} title="Aucun employé" />
-              ) : (
+              (
                 employes.map((e) => (
                   <DataCard
                     key={e.id}
@@ -332,11 +343,7 @@ export default function Employes() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {loading ? (
-                      <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Chargement...</TableCell></TableRow>
-                    ) : employes.length === 0 ? (
-                      <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">Aucun employé</TableCell></TableRow>
-                    ) : employes.map((e) => (
+                    {employes.map((e) => (
                       <TableRow key={e.id} className="hover:bg-muted/30 cursor-pointer" onClick={() => openDetail(e)}>
                         <TableCell className="font-mono text-xs num">{e.matricule}</TableCell>
                         <TableCell className="font-medium">{e.nom_complet}</TableCell>
@@ -356,6 +363,7 @@ export default function Employes() {
               </div>
             }
           />
+          </QueryState>
 
           {totalPages > 1 && (
             <div className="p-4 border-t">
@@ -402,11 +410,11 @@ export default function Employes() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-embauche">Date d'embauche *</Label>
-                <Input id="emp-embauche" type="date" value={formData.date_embauche} onChange={(e) => setFormData({ ...formData, date_embauche: e.target.value })} required />
+                <DatePicker id="emp-embauche" value={formData.date_embauche} onChange={(date_embauche) => setFormData({ ...formData, date_embauche })} required />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-naissance">Date de naissance</Label>
-                <Input id="emp-naissance" type="date" value={formData.date_naissance} onChange={(e) => setFormData({ ...formData, date_naissance: e.target.value })} />
+                <DatePicker id="emp-naissance" value={formData.date_naissance} onChange={(date_naissance) => setFormData({ ...formData, date_naissance })} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-tel">Téléphone</Label>
@@ -417,8 +425,8 @@ export default function Employes() {
                 <Input id="emp-email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
               </div>
               <div className="space-y-1.5">
-                <Label>Salaire de base</Label>
-                <MoneyInput value={formData.salaire_base} onChange={(v) => setFormData({ ...formData, salaire_base: v })} />
+                <Label htmlFor="emp-salaire">Salaire de base</Label>
+                <MoneyInput id="emp-salaire" value={formData.salaire_base} onChange={(v) => setFormData({ ...formData, salaire_base: v })} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-com">Taux commission (%)</Label>

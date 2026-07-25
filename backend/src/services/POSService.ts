@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { caisseMagasinService } from './CaisseMagasinService';
 import { generateDocumentNumber } from './NumberingService';
 import { checkPeriodIsOpen } from './PeriodService';
+import { assertPositiveSalePrices } from './PricingService';
 import { businessError } from '../utils/errors';
 
 export class POSService {
@@ -165,6 +166,7 @@ export class POSService {
         }
         item.prix_unitaire = parseFloat(prixRows[0].prix_vente);
       }
+      assertPositiveSalePrices(items);
 
       // Generate invoice number — same FAC sequence/format as the rest of the app
       const numeroFacture = await generateDocumentNumber('facture', client);
@@ -271,22 +273,17 @@ export class POSService {
             [magRows[0].id, 'ouverte']
           );
           if (sessRows.length > 0) {
-            try {
-              await caisseMagasinService.enregistrerMouvement(client, {
-                session_caisse_id: sessRows[0].id,
-                type: 'encaissement',
-                categorie: 'paiement_client',
-                montant: total,
-                methode_paiement: 'espece',
-                reference_type: 'paiement',
-                reference_id: paiementResult[0].id,
-                libelle: `Vente POS ${numeroFacture}`,
-                user_id: creePar || undefined,
-              });
-            } catch (cashErr: any) {
-              // Log but don't fail the sale
-              console.warn('⚠️ Could not register POS cash movement:', cashErr.message);
-            }
+            await caisseMagasinService.enregistrerMouvement(client, {
+              session_caisse_id: sessRows[0].id,
+              type: 'encaissement',
+              categorie: 'paiement_client',
+              montant: total,
+              methode_paiement: 'espece',
+              reference_type: 'paiement',
+              reference_id: paiementResult[0].id,
+              libelle: `Vente POS ${numeroFacture}`,
+              user_id: creePar || undefined,
+            });
           }
         }
       }

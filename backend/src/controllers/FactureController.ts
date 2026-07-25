@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { consoleError } from '../utils/logError';
 import { factureService } from '../services/FactureService';
-import { PaiementController } from './PaiementController';
 import { AuthRequest } from '../middleware/auth';
 import { parsePagination, EXPORT_MAX_ROWS } from '../utils/pagination';
 import { pdfService } from '../services/PDFService';

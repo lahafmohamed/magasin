@@ -245,39 +245,43 @@ export class FactureService {
 
       const tiers_id = input.tiers_id ?? input.client_id!;
       const { lignes, notes, cree_par, req, remise_globale, remise_globale_pct } = input;
-      const client_id = tiers_id; // alias for SQL below
       const effectiveLocationId = await this.resolveMagasinLocationId(client, input.location_id);
 
       if (!lignes || lignes.length === 0) {
         throw new Error('La facture doit contenir au moins un produit');
       }
 
-      // Verify stock availability and collect purchase prices
+      // Verify stock availability and collect purchase prices — one query for
+      // all products, per-line checks unchanged (identical error messages)
+      const ligneProduitIds = [...new Set(lignes.map((l) => l.produit_id))];
       const purchasePricesMap = new Map<number, number>();
       for (const ligne of lignes) {
         if (!Number.isInteger(ligne.quantite) || ligne.quantite <= 0) {
           throw new Error(`Quantité invalide pour le produit ID ${ligne.produit_id} (doit être un entier positif)`);
         }
-
+      }
+      {
         const { rows: stockRows } = await client.query(
-          `SELECT p.nom, COALESCE(p.prix_achat, 0.00) as prix_achat, COALESCE(spl.quantite, p.stock) as stock_location
+          `SELECT p.id, p.nom, COALESCE(p.prix_achat, 0.00) as prix_achat, COALESCE(spl.quantite, p.stock) as stock_location
            FROM produits p
            LEFT JOIN stock_par_location spl ON spl.produit_id = p.id AND spl.location_id = $2
-           WHERE p.id = $1 AND p.deleted_at IS NULL`,
-          [ligne.produit_id, effectiveLocationId]
+           WHERE p.id = ANY($1::int[]) AND p.deleted_at IS NULL`,
+          [ligneProduitIds, effectiveLocationId]
         );
+        const infoByProduit = new Map(stockRows.map((r: any) => [Number(r.id), r]));
 
-        if (stockRows.length === 0) {
-          throw new Error(`Produit ID ${ligne.produit_id} non trouvé`);
+        for (const ligne of lignes) {
+          const info = infoByProduit.get(ligne.produit_id);
+          if (!info) {
+            throw new Error(`Produit ID ${ligne.produit_id} non trouvé`);
+          }
+          if (parseInt(info.stock_location, 10) < ligne.quantite) {
+            throw new Error(
+              `Stock insuffisant pour "${info.nom}" dans cette location (disponible: ${info.stock_location}, demande: ${ligne.quantite})`
+            );
+          }
+          purchasePricesMap.set(ligne.produit_id, parseFloat(info.prix_achat || '0.00'));
         }
-
-        if (parseInt(stockRows[0].stock_location, 10) < ligne.quantite) {
-          throw new Error(
-            `Stock insuffisant pour "${stockRows[0].nom}" dans cette location (disponible: ${stockRows[0].stock_location}, demande: ${ligne.quantite})`
-          );
-        }
-
-        purchasePricesMap.set(ligne.produit_id, parseFloat(stockRows[0].prix_achat || '0.00'));
       }
 
       // Generate invoice number
@@ -353,71 +357,106 @@ export class FactureService {
         prices.push(ligne.prix_unitaire);
         totals.push(ligne.quantite * ligne.prix_unitaire);
         purchasePrices.push(purchasePricesMap.get(ligne.produit_id) ?? 0.00);
+      }
 
-        // Check stock availability before deduction
-        const { rows: productRows } = await client.query(
-          `SELECT COALESCE(quantite, 0) as quantite
-           FROM stock_par_location
-           WHERE produit_id = $1 AND location_id = $2
+      // Lock every touched stock row in ONE ordered pass (produit_id ASC).
+      // A stable lock order across concurrent invoices removes the deadlock
+      // exposure the per-line FOR UPDATE loop had.
+      const { rows: splRows } = await client.query(
+        `SELECT produit_id, quantite
+         FROM stock_par_location
+         WHERE location_id = $2 AND produit_id = ANY($1::int[])
+         ORDER BY produit_id
+         FOR UPDATE`,
+        [ligneProduitIds, effectiveLocationId]
+      );
+      const splStock = new Map<number, number>(
+        splRows.map((r: any) => [Number(r.produit_id), parseInt(r.quantite, 10)])
+      );
+
+      // Products with no stock_par_location row fall back to produits.stock
+      // (legacy store — authoritative for those products, see PLAN.md)
+      const legacyIds = ligneProduitIds.filter((id) => !splStock.has(id));
+      const legacyStock = new Map<number, number>();
+      if (legacyIds.length > 0) {
+        const { rows: legacyRows } = await client.query(
+          `SELECT id, stock FROM produits
+           WHERE id = ANY($1::int[]) AND deleted_at IS NULL
+           ORDER BY id
            FOR UPDATE`,
-          [ligne.produit_id, effectiveLocationId]
+          [legacyIds]
         );
+        for (const r of legacyRows) legacyStock.set(Number(r.id), parseInt(r.stock, 10));
+      }
 
-        let currentStock = productRows.length > 0 ? parseInt(productRows[0].quantite, 10) : 0;
-        let useLegacyStock = false;
-
-        if (productRows.length === 0) {
-          const { rows: legacyRows } = await client.query(
-            'SELECT stock FROM produits WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
-            [ligne.produit_id]
-          );
-          if (legacyRows.length > 0) {
-            currentStock = parseInt(legacyRows[0].stock, 10);
-            useLegacyStock = true;
-          }
-        }
-
+      // Per-line validation on a running balance (duplicate lines of one
+      // product see the stock left by the previous line, exactly like the
+      // sequential loop did), building movement rows as we go.
+      const mvtProduits: number[] = [];
+      const mvtQuantites: number[] = [];
+      const mvtAvant: number[] = [];
+      const mvtApres: number[] = [];
+      const deductSpl = new Map<number, number>();
+      const deductLegacy = new Map<number, number>();
+      for (const ligne of lignes) {
+        const isLegacy = !splStock.has(ligne.produit_id);
+        const balances = isLegacy ? legacyStock : splStock;
+        const currentStock = balances.get(ligne.produit_id) ?? 0;
         if (currentStock < ligne.quantite) {
           throw new Error(`Stock insuffisant pour le produit ${ligne.produit_id}. Stock location disponible: ${currentStock}, quantite demandee: ${ligne.quantite}`);
         }
-
-        if (useLegacyStock) {
-          const { rowCount: legacyUpdated } = await client.query(
-            'UPDATE produits SET stock = stock - $1 WHERE id = $2 AND stock >= $1 RETURNING stock',
-            [ligne.quantite, ligne.produit_id]
-          );
-          if (!legacyUpdated || legacyUpdated === 0) {
-            throw new Error(`Stock insuffisant (race) pour le produit ${ligne.produit_id}`);
-          }
-        } else {
-          const { rowCount: splUpdated } = await client.query(
-            `UPDATE stock_par_location
-             SET quantite = quantite - $1
-             WHERE produit_id = $2 AND location_id = $3 AND quantite >= $1
-             RETURNING quantite`,
-            [ligne.quantite, ligne.produit_id, effectiveLocationId]
-          );
-          if (!splUpdated || splUpdated === 0) {
-            throw new Error(`Stock insuffisant (race) pour le produit ${ligne.produit_id} dans cette location`);
-          }
-        }
-
-        // Record stock movement (will be committed with the facture)
-        await client.query(
-          `INSERT INTO mouvements_stock
-             (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)
-           VALUES ($1, 'vente', $2, $3, $4, $5, $6, $7)`,
-          [
-            ligne.produit_id,
-            -ligne.quantite,
-            currentStock,
-            currentStock - ligne.quantite,
-            `Vente — facture ${numeroFacture}`,
-            numeroFacture,
-            effectiveLocationId,
-          ]
-        );
+        balances.set(ligne.produit_id, currentStock - ligne.quantite);
+        const deductions = isLegacy ? deductLegacy : deductSpl;
+        deductions.set(ligne.produit_id, (deductions.get(ligne.produit_id) ?? 0) + ligne.quantite);
+        mvtProduits.push(ligne.produit_id);
+        mvtQuantites.push(-ligne.quantite);
+        mvtAvant.push(currentStock);
+        mvtApres.push(currentStock - ligne.quantite);
       }
+
+      // Set-based deductions, race guard kept (quantite >= total demanded)
+      if (deductSpl.size > 0) {
+        const ids = [...deductSpl.keys()];
+        const qtes = ids.map((id) => deductSpl.get(id)!);
+        const { rows: updated } = await client.query(
+          `UPDATE stock_par_location spl
+           SET quantite = spl.quantite - v.qte
+           FROM (SELECT unnest($1::int[]) AS pid, unnest($2::int[]) AS qte) v
+           WHERE spl.produit_id = v.pid AND spl.location_id = $3 AND spl.quantite >= v.qte
+           RETURNING spl.produit_id`,
+          [ids, qtes, effectiveLocationId]
+        );
+        if (updated.length !== ids.length) {
+          const ok = new Set(updated.map((r: any) => Number(r.produit_id)));
+          const failed = ids.find((id) => !ok.has(id));
+          throw new Error(`Stock insuffisant (race) pour le produit ${failed} dans cette location`);
+        }
+      }
+      if (deductLegacy.size > 0) {
+        const ids = [...deductLegacy.keys()];
+        const qtes = ids.map((id) => deductLegacy.get(id)!);
+        const { rows: updated } = await client.query(
+          `UPDATE produits p
+           SET stock = p.stock - v.qte
+           FROM (SELECT unnest($1::int[]) AS pid, unnest($2::int[]) AS qte) v
+           WHERE p.id = v.pid AND p.stock >= v.qte
+           RETURNING p.id`,
+          [ids, qtes]
+        );
+        if (updated.length !== ids.length) {
+          const ok = new Set(updated.map((r: any) => Number(r.id)));
+          const failed = ids.find((id) => !ok.has(id));
+          throw new Error(`Stock insuffisant (race) pour le produit ${failed}`);
+        }
+      }
+
+      // One movement row per invoice line (committed with the facture)
+      await client.query(
+        `INSERT INTO mouvements_stock
+           (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)
+         SELECT unnest($1::int[]), 'vente', unnest($2::int[]), unnest($3::int[]), unnest($4::int[]), $5, $6, $7`,
+        [mvtProduits, mvtQuantites, mvtAvant, mvtApres, `Vente — facture ${numeroFacture}`, numeroFacture, effectiveLocationId]
+      );
 
       // Batch insert invoice lines without tax, capturing purchase price
       await client.query(

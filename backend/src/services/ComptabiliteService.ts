@@ -2,19 +2,6 @@ import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { checkPeriodIsOpen } from './PeriodService';
 
-interface EcritureInput {
-  journal?: string;
-  date_ecriture: string;
-  compte_numero: string;
-  tiers_id?: number;
-  libelle: string;
-  debit: number;
-  credit: number;
-  reference_type?: string;
-  reference_id?: number;
-  cree_par?: number;
-}
-
 interface PieceInput {
   journal: string;
   date_ecriture: string;

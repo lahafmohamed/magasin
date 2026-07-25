@@ -2,19 +2,6 @@ import { z } from 'zod';
 import { isStrongPassword, PASSWORD_POLICY_MESSAGE } from '../utils/security';
 
 // ============================================
-// Common schemas
-// ============================================
-export const paginationSchema = z.object({
-  page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
-});
-
-export const sortQuerySchema = z.object({
-  sort: z.string().optional(),
-  order: z.enum(['asc', 'desc', 'ASC', 'DESC']).default('asc'),
-});
-
-// ============================================
 // Auth schemas
 // ============================================
 export const loginSchema = z.object({
@@ -158,7 +145,7 @@ export const updateClientSchema = z.object({
 export const factureLigneSchema = z.object({
   produit_id: z.coerce.number().int().positive('ID produit requis'),
   quantite: z.coerce.number().int().positive('Quantité doit être positive'),
-  prix_unitaire: z.coerce.number().nonnegative('Prix unitaire doit être positif'),
+  prix_unitaire: z.coerce.number().positive('Le prix unitaire doit être supérieur à zéro'),
 });
 
 export const createFactureSchema = z.object({
@@ -298,7 +285,7 @@ export const devisLigneSchema = z.object({
   produit_id: z.coerce.number().int().positive('Produit ID requis').optional(),
   description: z.string().max(255).optional().or(z.literal('')),
   quantite: z.coerce.number().int().positive('Quantité doit être positive'),
-  prix_unitaire: z.coerce.number().nonnegative('Prix unitaire doit être positif'),
+  prix_unitaire: z.coerce.number().positive('Le prix unitaire doit être supérieur à zéro'),
   remise_pct: z.coerce.number().nonnegative().max(100).optional(),
   remise_montant: z.coerce.number().nonnegative().optional(),
 });
@@ -337,7 +324,7 @@ export const bonLivraisonLigneSchema = z.object({
   description: z.string().max(255).optional().or(z.literal('')),
   quantite_commandee: z.coerce.number().int().positive('Quantité commandée doit être positive'),
   quantite_livree: z.coerce.number().int().nonnegative().optional(),
-  prix_unitaire: z.coerce.number().nonnegative('Prix unitaire doit être positif'),
+  prix_unitaire: z.coerce.number().positive('Le prix unitaire doit être supérieur à zéro'),
 });
 
 export const createBonLivraisonSchema = z.object({
@@ -370,7 +357,7 @@ export const avoirLigneSchema = z.object({
   produit_id: z.coerce.number().int().positive('Produit ID requis').optional(),
   description: z.string().max(255).optional().or(z.literal('')),
   quantite: z.coerce.number().int().positive('Quantité doit être positive'),
-  prix_unitaire: z.coerce.number().nonnegative('Prix unitaire doit être positif'),
+  prix_unitaire: z.coerce.number().positive('Le prix unitaire doit être supérieur à zéro'),
 });
 
 export const createAvoirFromRetourSchema = z.object({
@@ -700,6 +687,92 @@ export const recordEmployeShiftSchema = z.object({
   heure_fin: z.string().max(20).optional().or(z.literal('')),
   statut: z.enum(['prevu', 'en_cours', 'termine', 'absent']).optional().or(z.literal('')),
   notes: z.string().max(2000).optional().or(z.literal('')),
+});
+
+// ============================================
+// Demandes de réapprovisionnement
+// ============================================
+
+const demandeLigneSchema = z.object({
+  produit_id: z.coerce.number().int().positive(),
+  quantite_demandee: z.coerce.number().int().positive('Quantité demandée invalide'),
+  notes: z.string().max(1000).optional().or(z.literal('')),
+});
+
+export const createDemandeSchema = z.object({
+  magasin_id: z.coerce.number().int().positive('magasin_id requis'),
+  depot_id: z.coerce.number().int().positive('depot_id requis'),
+  motif: z.string().max(2000).optional().or(z.literal('')),
+  lignes: z.array(demandeLigneSchema).min(1, 'La demande doit contenir au moins une ligne'),
+});
+
+export const updateDemandeSchema = z.object({
+  motif: z.string().max(2000).optional().or(z.literal('')),
+  lignes: z.array(demandeLigneSchema).min(1, 'La demande doit contenir au moins une ligne'),
+});
+
+export const decideDemandeSchema = z.object({
+  decision: z.enum(['approuvee', 'refusee']),
+  raison_refus: z.string().max(2000).optional().or(z.literal('')),
+  lignes_decision: z.array(z.object({
+    ligne_id: z.coerce.number().int().positive(),
+    quantite_approuvee: z.coerce.number().int().nonnegative(),
+  })).optional(),
+});
+
+// ============================================
+// Payroll statutory config (admin)
+// ============================================
+
+export const updateCotisationSchema = z.object({
+  taux_salarial: z.coerce.number().min(0).max(100).optional(),
+  taux_patronal: z.coerce.number().min(0).max(100).optional(),
+  plafond: z.number().nonnegative().nullable().optional(),
+  actif: z.boolean().optional(),
+});
+
+export const replaceBaremesSchema = z.object({
+  baremes: z.array(z.object({
+    tranche_min: z.coerce.number().nonnegative(),
+    tranche_max: z.number().positive().nullable(),
+    taux: z.coerce.number().min(0).max(100),
+  })).min(1, 'baremes (array) requis'),
+});
+
+// 3-way match tolerance config (admin)
+export const updateMatchConfigSchema = z.object({
+  qte_tolerance_pct: z.coerce.number().min(0).max(100).optional(),
+  prix_tolerance_pct: z.coerce.number().min(0).max(100).optional(),
+  bloquer: z.boolean().optional(),
+});
+
+export const receivablesReportQuerySchema = z.object({
+  search: z.string().trim().max(100, 'Recherche trop longue').optional(),
+  min_amount: z.coerce.number().nonnegative('Le solde minimum doit être positif').optional(),
+  bucket: z.enum(['all', 'moins_30_jours', 'entre_30_60_jours', 'plus_60_jours']).default('all'),
+  location_id: z.coerce.number().int().positive('Emplacement invalide').optional(),
+  page: z.coerce.number().int().positive('Page invalide').default(1),
+  limit: z.coerce.number().int().min(1).max(100, 'Maximum 100 lignes par page').default(20),
+});
+
+export const generalLedgerQuerySchema = z.object({
+  journal: z.enum(['ACHATS', 'VENTES', 'TRESORERIE', 'OD']).optional(),
+  date_debut: z.iso.date('Date de début invalide').optional(),
+  date_fin: z.iso.date('Date de fin invalide').optional(),
+  compte_id: z.coerce.number().int().positive('Compte invalide').optional(),
+  numero_piece: z.string().trim().max(100, 'Numéro de pièce trop long').optional(),
+  description: z.string().trim().max(200, 'Description trop longue').optional(),
+  page: z.coerce.number().int().positive('Page invalide').default(1),
+  limit: z.coerce.number().int().min(1).max(100, 'Maximum 100 lignes par page').default(50),
+});
+
+export const generalLedgerPdfQuerySchema = generalLedgerQuerySchema.extend({
+  type: z.enum(['ecritures', 'chart', 'balance']).optional(),
+});
+
+// Affectations utilisateur ↔ locations (admin/manager)
+export const updateUserLocationAssignmentsSchema = z.object({
+  location_ids: z.array(z.coerce.number().int().positive()).default([]),
 });
 
 // Lot/batch (migration 015) and serial-number (migration 016) tracking schemas

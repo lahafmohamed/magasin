@@ -1,12 +1,18 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { UserModel } from '../models/UserModel';
-import { generateToken, authenticate, AuthRequest, authorize, revokeSession, revokeAllUserSessions, extractToken } from '../middleware/auth';
+import { generateToken, AuthRequest, revokeSession, revokeAllUserSessions, extractToken } from '../middleware/auth';
 import pool from '../db/connection';
 import { logger } from '../utils/logger';
-import { getSessionMaxAgeMs, isStrongPassword, PASSWORD_POLICY_MESSAGE } from '../utils/security';
+import { getSessionMaxAgeMs, isStrongPassword } from '../utils/security';
 
 const BCRYPT_ROUNDS = 12;
+
+// Real cost-12 hash used only to spend the same ~bcrypt time on the
+// user-not-found path as on a wrong-password path, so response latency no
+// longer reveals whether a username exists (enumeration guard). It matches no
+// password; an invalid hash string would return instantly and defeat the point.
+const DUMMY_PASSWORD_HASH = '$2b$12$UdsXhS0wVwauiQh4ToabyemZEkGJcneZl8DvWXlPAPqY/XDfTRvIq';
 
 export class AuthController {
   /**
@@ -28,6 +34,9 @@ export class AuthController {
       const user = await UserModel.findByUsername(username);
 
       if (!user) {
+        // Spend the same bcrypt time as a real wrong-password attempt so the
+        // response latency doesn't leak whether the username exists.
+        await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
         res.status(401).json({
           success: false,
           error: 'Identifiants invalides',
@@ -278,7 +287,7 @@ export class AuthController {
         return;
       }
 
-      const { password_hash, ...safeUser } = user as any;
+      const { password_hash: _passwordHash, ...safeUser } = user;
       res.json({
         success: true,
         data: safeUser,

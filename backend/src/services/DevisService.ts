@@ -1,7 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
-import { calculateTotals } from './PricingService';
+import { assertPositiveSalePrices, calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { resolveSalesLocationId } from './StockMagasinService';
 import { creditService } from './CreditService';
@@ -94,6 +94,7 @@ export class DevisService {
     if (lignesRows.length === 0) {
       throw new Error('Le devis ne contient aucune ligne à livrer');
     }
+    assertPositiveSalePrices(lignesRows);
 
     // Enforce client credit limit before the confirm auto-creates the BL (credit extension).
     await creditService.assertWithinCreditLimit(client, devis.tiers_id, Number(devis.total));
@@ -203,6 +204,7 @@ export class DevisService {
     if (lignes.length === 0) {
       throw new Error('Le devis ne contient aucune ligne à convertir');
     }
+    assertPositiveSalePrices(lignes);
 
     const numeroFacture = await generateDocumentNumber('facture', client);
 
@@ -839,6 +841,15 @@ export class DevisService {
       if (deliveredBLRows.length === 0) {
         throw new Error('Le devis doit avoir au moins un bon de livraison marqué comme livré avant facturation');
       }
+
+      const { rows: conversionLines } = await client.query(
+        `SELECT prix_unitaire
+         FROM document_lignes
+         WHERE document_type = 'devis' AND document_id = $1
+         ORDER BY id`,
+        [id]
+      );
+      assertPositiveSalePrices(conversionLines);
 
       let factureId: number;
       let numeroFacture: string;

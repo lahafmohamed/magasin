@@ -4,6 +4,24 @@ import { logger } from '../utils/logger';
 import { businessError } from '../utils/errors';
 import { checkPeriodIsOpen } from './PeriodService';
 
+export const CASH_SESSION_MAX_AGE_HOURS = 24;
+
+export function getCashSessionAgeHours(
+  openedAt: string | Date,
+  now: Date = new Date()
+): number {
+  const openedTimestamp = new Date(openedAt).getTime();
+  if (!Number.isFinite(openedTimestamp)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (now.getTime() - openedTimestamp) / (60 * 60 * 1000));
+}
+
+export function isCashSessionStale(
+  openedAt: string | Date,
+  now: Date = new Date()
+): boolean {
+  return getCashSessionAgeHours(openedAt, now) >= CASH_SESSION_MAX_AGE_HOURS;
+}
+
 export interface CreateSessionInput {
   magasin_id: number;
   fond_initial: number;
@@ -66,6 +84,7 @@ export class CaisseMagasinService {
     const encaissements = parseFloat(mouvements[0].total_encaissements) || 0;
     const decaissements = parseFloat(mouvements[0].total_decaissements) || 0;
     const soldeTheorique = fondInitial + encaissements - decaissements;
+    const sessionAgeHours = getCashSessionAgeHours(session.date_ouverture);
 
     return {
       ...session,
@@ -73,6 +92,9 @@ export class CaisseMagasinService {
       total_encaissements: encaissements,
       total_decaissements: decaissements,
       solde_theorique: soldeTheorique,
+      session_age_hours: sessionAgeHours,
+      requires_manager_action:
+        sessionAgeHours >= CASH_SESSION_MAX_AGE_HOURS,
     };
   }
 
@@ -89,7 +111,7 @@ export class CaisseMagasinService {
     if (userRows.length === 0) return 'none';
     const userRole = userRows[0].role;
     
-    if (userRole === 'admin') return 'admin';
+    if (userRole === 'admin' || userRole === 'manager') return 'admin';
     
     // Check user_location_roles (graceful fallback if table missing)
     try {
@@ -137,7 +159,7 @@ export class CaisseMagasinService {
       // Check if user can access this magasin
       const userRole = await this.getUserMagasinRole(input.user_id, input.magasin_id);
       if (userRole === 'none') {
-        throw new Error('Accès refusé - vous ne pouvez pas ouvrir la caisse de ce magasin');
+        throw businessError(403, 'Accès refusé - vous ne pouvez pas ouvrir la caisse de ce magasin');
       }
 
       // Check if a session is already open for this magasin
@@ -147,7 +169,7 @@ export class CaisseMagasinService {
       );
 
       if (existingRows.length > 0) {
-        throw new Error('Une session est déjà ouverte pour ce magasin. Veuillez la clôturer avant d\'ouvrir une nouvelle session.');
+        throw businessError(409, 'Une session est déjà ouverte pour ce magasin. Veuillez la clôturer avant d\'ouvrir une nouvelle session.');
       }
 
       // Create session
@@ -196,7 +218,7 @@ export class CaisseMagasinService {
       `SELECT * FROM sessions_caisse WHERE id = $1`,
       [sessionId]
     );
-    if (sessRows.length === 0) throw new Error('Session introuvable');
+    if (sessRows.length === 0) throw businessError(404, 'Session introuvable');
     const session = sessRows[0];
 
     // Per-method breakdown
@@ -267,14 +289,14 @@ export class CaisseMagasinService {
       );
 
       if (sessionRows.length === 0) {
-        throw new Error('Session non trouvée ou déjà clôturée');
+        throw businessError(409, 'Session non trouvée ou déjà clôturée');
       }
 
       const session = sessionRows[0];
 
       const userRole = await this.getUserMagasinRole(input.user_id, session.magasin_id);
       if (userRole === 'none') {
-        throw new Error('Accès refusé - vous ne pouvez pas clôturer cette caisse');
+        throw businessError(403, 'Accès refusé - vous ne pouvez pas clôturer cette caisse');
       }
 
       // Refuse if orphan lines exist
@@ -286,7 +308,7 @@ export class CaisseMagasinService {
         [input.session_id]
       );
       if (orphans.length > 0) {
-        throw new Error(`Clôture impossible: ${orphans.length} mouvement(s) sans source. Régularisez avant clôture.`);
+        throw businessError(409, `Clôture impossible: ${orphans.length} mouvement(s) sans source. Régularisez avant clôture.`);
       }
 
       // Per-method totals
@@ -318,7 +340,7 @@ export class CaisseMagasinService {
       const ecart = Number((input.fond_final_compte - expectedCash).toFixed(2));
 
       if (ecart !== 0 && (!input.commentaire_cloture || input.commentaire_cloture.trim() === '')) {
-        throw new Error(`Écart de ${ecart.toFixed(0)} FCFA détecté. Un commentaire est obligatoire pour expliquer l'écart.`);
+        throw businessError(422, `Écart de ${ecart.toFixed(0)} FCFA détecté. Un commentaire est obligatoire pour expliquer l'écart.`, 'ECART_COMMENT_REQUIRED');
       }
 
       const { rows } = await client.query(
@@ -402,7 +424,7 @@ export class CaisseMagasinService {
 
     // Lock session row to serialize concurrent inserts within same session
     const { rows: sessionRows } = await client.query(
-      'SELECT id, magasin_id, fond_initial, statut FROM sessions_caisse WHERE id = $1 FOR UPDATE',
+      'SELECT id, magasin_id, fond_initial, statut, date_ouverture FROM sessions_caisse WHERE id = $1 FOR UPDATE',
       [input.session_caisse_id]
     );
 
@@ -413,6 +435,19 @@ export class CaisseMagasinService {
     const session = sessionRows[0];
     if (session.statut !== 'ouverte') {
       throw businessError(409, 'Caisse fermée — ouvrez la caisse du magasin avant d\'enregistrer cette transaction.');
+    }
+
+    if (isCashSessionStale(session.date_ouverture)) {
+      const userRole = input.user_id
+        ? await this.getUserMagasinRole(input.user_id, session.magasin_id)
+        : 'none';
+      if (userRole !== 'admin') {
+        throw businessError(
+          409,
+          'Cette session de caisse est ouverte depuis plus de 24 heures. Un manager doit la contrôler et la clôturer avant toute nouvelle opération.',
+          'STALE_CASH_SESSION'
+        );
+      }
     }
 
     // Source-link enforcement at app layer (DB CHECK is the backstop)
@@ -578,7 +613,7 @@ export class CaisseMagasinService {
     );
 
     if (sessionRows.length === 0) {
-      throw new Error('Session non trouvée');
+      throw businessError(404, 'Session non trouvée');
     }
 
     const session = sessionRows[0];

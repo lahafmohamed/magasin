@@ -1,5 +1,25 @@
 import pool from '../db/connection';
 
+export type ReceivableBucket = 'all' | 'moins_30_jours' | 'entre_30_60_jours' | 'plus_60_jours';
+
+export interface ReceivablesAgingOptions {
+  search?: string;
+  minAmount?: number;
+  bucket?: ReceivableBucket;
+  locationId?: number;
+  page?: number;
+  limit?: number;
+}
+
+export interface ReceivablesAgingResult {
+  data: any[];
+  total: number;
+  montantTotal: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 export class ReportingService {
   /**
    * Profit & Loss summary for a date range
@@ -42,24 +62,99 @@ export class ReportingService {
   /**
    * Receivables aging report (who owes what)
    */
-  async getReceivablesAging(): Promise<any[]> {
+  async getReceivablesAging(options: ReceivablesAgingOptions = {}): Promise<ReceivablesAgingResult> {
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.max(1, options.limit ?? 20);
+    const search = options.search?.trim() || null;
+    const minAmount = Math.max(0, options.minAmount ?? 0);
+    const bucket = options.bucket ?? 'all';
+    const locationId = options.locationId ?? null;
+    const offset = (page - 1) * limit;
+
     const { rows } = await pool.query(
-      `SELECT
-        c.id as client_id,
-        c.raison_sociale as nom,
-        c.prenom,
-        COALESCE(SUM(f.remaining_due) FILTER (WHERE f.statut IN ('en_attente', 'partielle') AND f.deleted_at IS NULL), 0) as total_du,
-        COALESCE(SUM(f.remaining_due) FILTER (WHERE f.statut IN ('en_attente', 'partielle') AND f.deleted_at IS NULL AND f.date_facture >= CURRENT_DATE - INTERVAL '30 days'), 0) as moins_30_jours,
-        COALESCE(SUM(f.remaining_due) FILTER (WHERE f.statut IN ('en_attente', 'partielle') AND f.deleted_at IS NULL AND f.date_facture BETWEEN CURRENT_DATE - INTERVAL '60 days' AND CURRENT_DATE - INTERVAL '30 days'), 0) as entre_30_60_jours,
-        COALESCE(SUM(f.remaining_due) FILTER (WHERE f.statut IN ('en_attente', 'partielle') AND f.deleted_at IS NULL AND f.date_facture < CURRENT_DATE - INTERVAL '60 days'), 0) as plus_60_jours
-       FROM tiers c
-       LEFT JOIN factures f ON c.id = f.tiers_id
-       WHERE c.est_client = true AND c.deleted_at IS NULL
-       GROUP BY c.id, c.raison_sociale, c.prenom
-       HAVING COALESCE(SUM(f.remaining_due) FILTER (WHERE f.statut IN ('en_attente', 'partielle') AND f.deleted_at IS NULL), 0) > 0
-       ORDER BY total_du DESC`
+      `WITH receivables AS (
+         SELECT
+           c.id AS client_id,
+           c.raison_sociale AS nom,
+           c.prenom,
+           COALESCE(SUM(f.remaining_due), 0) AS total_du,
+           COALESCE(SUM(f.remaining_due) FILTER (
+             WHERE f.date_facture >= CURRENT_DATE - INTERVAL '30 days'
+           ), 0) AS moins_30_jours,
+           COALESCE(SUM(f.remaining_due) FILTER (
+             WHERE f.date_facture >= CURRENT_DATE - INTERVAL '60 days'
+               AND f.date_facture < CURRENT_DATE - INTERVAL '30 days'
+           ), 0) AS entre_30_60_jours,
+           COALESCE(SUM(f.remaining_due) FILTER (
+             WHERE f.date_facture < CURRENT_DATE - INTERVAL '60 days'
+           ), 0) AS plus_60_jours
+         FROM tiers c
+         LEFT JOIN factures f
+           ON f.tiers_id = c.id
+          AND f.statut IN ('en_attente', 'partielle')
+          AND f.deleted_at IS NULL
+          AND (
+            $4::int IS NULL
+            OR COALESCE(
+              f.location_id,
+              (SELECT id FROM stock_locations WHERE est_principal = true AND actif = true ORDER BY id LIMIT 1)
+            ) = $4
+          )
+         WHERE c.est_client = true
+           AND c.deleted_at IS NULL
+           AND (
+             $1::text IS NULL
+             OR CONCAT_WS(' ', c.raison_sociale, c.prenom, c.code) ILIKE '%' || $1 || '%'
+           )
+         GROUP BY c.id, c.raison_sociale, c.prenom
+       ),
+       filtered AS (
+         SELECT *
+         FROM receivables
+         WHERE total_du > 0
+           AND total_du >= $2
+           AND CASE $3::text
+             WHEN 'moins_30_jours' THEN moins_30_jours > 0
+             WHEN 'entre_30_60_jours' THEN entre_30_60_jours > 0
+             WHEN 'plus_60_jours' THEN plus_60_jours > 0
+             ELSE true
+           END
+       ),
+       stats AS (
+         SELECT
+           COUNT(*)::int AS total,
+           COALESCE(SUM(total_du), 0) AS montant_total
+         FROM filtered
+       ),
+       page_rows AS (
+         SELECT *
+         FROM filtered
+         ORDER BY total_du DESC, client_id ASC
+         LIMIT $5 OFFSET $6
+       )
+       SELECT
+         stats.total,
+         stats.montant_total,
+         COALESCE(
+           jsonb_agg(to_jsonb(page_rows) ORDER BY page_rows.total_du DESC, page_rows.client_id ASC)
+             FILTER (WHERE page_rows.client_id IS NOT NULL),
+           '[]'::jsonb
+         ) AS data
+       FROM stats
+       LEFT JOIN page_rows ON true
+       GROUP BY stats.total, stats.montant_total`,
+      [search, minAmount, bucket, locationId, limit, offset]
     );
-    return rows;
+
+    const total = Number(rows[0]?.total ?? 0);
+    return {
+      data: rows[0]?.data ?? [],
+      total,
+      montantTotal: Number(rows[0]?.montant_total ?? 0),
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
   }
 
   /**

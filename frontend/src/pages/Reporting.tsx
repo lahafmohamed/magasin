@@ -1,14 +1,23 @@
-import { useState, useEffect, useRef } from 'react';
-import { Loader2 } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Download, Loader2, Search } from 'lucide-react';
 import { api } from '../services/authService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Pagination } from '@/components/ui/pagination';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { toast } from 'sonner';
 import { formatCurrency } from '../utils/format';
 import { PageHeader } from '@/components/ui/page-header';
 import { QueryState } from '@/components/ui/query-state';
+import { downloadCsv } from '@/utils/csv';
+import {
+  ReceivableBucket,
+  ReceivableRow,
+} from '@/utils/receivables';
 import {
   CHART_COLORS as COLORS,
   CHART_PRIMARY,
@@ -21,38 +30,127 @@ import {
 
 const TABLE_HEAD = 'px-3 py-2 font-medium';
 
+interface ReceivableLocation {
+  id: number;
+  code: string;
+  nom: string;
+}
+
 export default function Reporting() {
   const [activeTab, setActiveTab] = useState<'general' | 'margins'>('general');
   const [kpis, setKpis] = useState<any>(null);
   const [pnl, setPnl] = useState<any>(null);
   const [salesByCategory, setSalesByCategory] = useState<any[]>([]);
   const [topProducts, setTopProducts] = useState<any[]>([]);
-  const [receivables, setReceivables] = useState<any[]>([]);
+  const [receivables, setReceivables] = useState<ReceivableRow[]>([]);
+  const [receivableSearch, setReceivableSearch] = useState('');
+  const [receivableMinAmount, setReceivableMinAmount] = useState('');
+  const [receivableBucket, setReceivableBucket] = useState<ReceivableBucket>('all');
+  const [receivableLocationId, setReceivableLocationId] = useState('all');
+  const [receivablePage, setReceivablePage] = useState(1);
+  const [receivableLimit, setReceivableLimit] = useState(20);
+  const [receivableTotal, setReceivableTotal] = useState(0);
+  const [receivableTotalPages, setReceivableTotalPages] = useState(1);
+  const [receivableTotalAmount, setReceivableTotalAmount] = useState(0);
+  const [receivableLocations, setReceivableLocations] = useState<ReceivableLocation[]>([]);
+  const [receivablesLoading, setReceivablesLoading] = useState(true);
+  const [receivablesError, setReceivablesError] = useState<unknown>(null);
+  const [exportingReceivables, setExportingReceivables] = useState(false);
   const [marginsReport, setMarginsReport] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   /** Identifiant de requête pour ignorer les réponses obsolètes (changements rapides de dates). */
   const reqIdRef = useRef(0);
+  const receivablesReqIdRef = useRef(0);
 
   const today = new Date();
   const [dateDebut, setDateDebut] = useState(new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]);
   const [dateFin, setDateFin] = useState(today.toISOString().split('T')[0]);
 
   useEffect(() => {
+    setReceivablePage(1);
+  }, [receivableSearch, receivableMinAmount, receivableBucket, receivableLocationId, receivableLimit]);
+
+  useEffect(() => {
+    if (receivablePage > receivableTotalPages) setReceivablePage(receivableTotalPages);
+  }, [receivablePage, receivableTotalPages]);
+
+  useEffect(() => {
     fetchAllData();
   }, [dateDebut, dateFin]);
+
+  useEffect(() => {
+    api.get('/stock-locations', { params: { actif: true } })
+      .then((response) => setReceivableLocations(response.data.data || []))
+      .catch(() => setReceivableLocations([]));
+  }, []);
+
+  const receivableQueryParams = useCallback((includePage = true) => {
+    const params: Record<string, string | number> = {
+      search: receivableSearch.trim(),
+      min_amount: Math.max(0, Number(receivableMinAmount) || 0),
+      bucket: receivableBucket,
+    };
+    if (receivableLocationId !== 'all') params.location_id = Number(receivableLocationId);
+    if (includePage) {
+      params.page = receivablePage;
+      params.limit = receivableLimit;
+    }
+    return params;
+  }, [
+    receivableSearch,
+    receivableMinAmount,
+    receivableBucket,
+    receivableLocationId,
+    receivablePage,
+    receivableLimit,
+  ]);
+
+  const fetchReceivables = useCallback(async () => {
+    const requestId = ++receivablesReqIdRef.current;
+    setReceivablesLoading(true);
+    setReceivablesError(null);
+
+    try {
+      const response = await api.get('/reports/receivables', {
+        params: receivableQueryParams(),
+      });
+      if (requestId !== receivablesReqIdRef.current) return;
+
+      setReceivables(response.data.data || []);
+      setReceivableTotal(Number(response.data.pagination?.total || 0));
+      setReceivableTotalPages(Math.max(1, Number(response.data.pagination?.totalPages || 1)));
+      setReceivableTotalAmount(Number(response.data.summary?.montant_total || 0));
+    } catch (requestError) {
+      if (requestId !== receivablesReqIdRef.current) return;
+      setReceivablesError(requestError);
+      setReceivables([]);
+      setReceivableTotal(0);
+      setReceivableTotalPages(1);
+      setReceivableTotalAmount(0);
+    } finally {
+      if (requestId === receivablesReqIdRef.current) setReceivablesLoading(false);
+    }
+  }, [receivableQueryParams]);
+
+  useEffect(() => {
+    const debounceMs = receivableSearch.trim() ? 300 : 0;
+    const timeoutId = window.setTimeout(() => {
+      void fetchReceivables();
+    }, debounceMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [fetchReceivables, receivableSearch]);
 
   const fetchAllData = async () => {
     const reqId = ++reqIdRef.current;
     setLoading(true);
     setError(null);
     try {
-      const [kpisRes, pnlRes, catRes, prodRes, recvRes, marginsRes] = await Promise.all([
+      const [kpisRes, pnlRes, catRes, prodRes, marginsRes] = await Promise.all([
         api.get('/reports/dashboard'),
         api.get(`/reports/pnl?date_debut=${dateDebut}&date_fin=${dateFin}`),
         api.get(`/reports/sales-by-category?date_debut=${dateDebut}&date_fin=${dateFin}`),
         api.get(`/reports/products?date_debut=${dateDebut}&date_fin=${dateFin}&limit=10`),
-        api.get('/reports/receivables'),
         api.get(`/reports/margins?date_debut=${dateDebut}&date_fin=${dateFin}`),
       ]);
 
@@ -61,7 +159,6 @@ export default function Reporting() {
       setPnl(pnlRes.data.data);
       setSalesByCategory(catRes.data.data);
       setTopProducts(prodRes.data.data);
-      setReceivables(recvRes.data.data);
       setMarginsReport(marginsRes.data.data);
     } catch (e) {
       if (reqId !== reqIdRef.current) return;
@@ -69,6 +166,36 @@ export default function Reporting() {
       toast.error('Erreur lors du chargement des rapports');
     } finally {
       if (reqId === reqIdRef.current) setLoading(false);
+    }
+  };
+
+  const exportReceivables = async () => {
+    setExportingReceivables(true);
+    try {
+      const response = await api.get('/reports/receivables/export', {
+        params: receivableQueryParams(false),
+      });
+      const exportedRows: ReceivableRow[] = response.data.data || [];
+      downloadCsv(
+        `creances_clients_${new Date().toISOString().slice(0, 10)}.csv`,
+        ['Client', 'Total dû', 'Moins de 30 jours', '30 à 60 jours', 'Plus de 60 jours'],
+        exportedRows.map((client) => [
+          `${client.nom || ''} ${client.prenom || ''}`.trim(),
+          String(client.total_du),
+          String(client.moins_30_jours),
+          String(client.entre_30_60_jours),
+          String(client.plus_60_jours),
+        ])
+      );
+      if (response.data.truncated) {
+        toast.warning(`Export limité aux ${exportedRows.length} premières créances`);
+      } else {
+        toast.success(`${exportedRows.length} créance(s) exportée(s)`);
+      }
+    } catch {
+      toast.error("Impossible d'exporter les créances");
+    } finally {
+      setExportingReceivables(false);
     }
   };
 
@@ -80,9 +207,9 @@ export default function Reporting() {
         className="mb-6"
         actions={
           <div className="flex items-center gap-2">
-            <Input type="date" className="h-8 w-auto" value={dateDebut} onChange={(e) => setDateDebut(e.target.value)} />
+            <DatePicker className="h-8 w-44 text-xs" value={dateDebut} onChange={setDateDebut} aria-label="Date début" />
             <span className="text-muted-foreground">→</span>
-            <Input type="date" className="h-8 w-auto" value={dateFin} onChange={(e) => setDateFin(e.target.value)} />
+            <DatePicker className="h-8 w-44 text-xs" value={dateFin} onChange={setDateFin} aria-label="Date fin" />
           </div>
         }
       />
@@ -177,8 +304,8 @@ export default function Reporting() {
               <CardHeader><CardTitle>Ventes par catégorie</CardTitle></CardHeader>
               <CardContent>
                 {salesByCategory.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <PieChart>
+                  <ResponsiveContainer width="100%" height={300} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                    <PieChart accessibilityLayer>
                       <Pie
                         data={salesByCategory.map((c) => ({ name: c.categorie, value: parseFloat(c.chiffre_affaires) }))}
                         cx="50%" cy="50%" outerRadius={80} fill={CHART_PRIMARY}
@@ -202,8 +329,8 @@ export default function Reporting() {
               <CardHeader><CardTitle>Top 10 produits par marge</CardTitle></CardHeader>
               <CardContent>
                 {topProducts.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={topProducts.map((p) => ({ nom: p.nom.substring(0, 20), marge: parseFloat(p.marge_brute) }))}>
+                  <ResponsiveContainer width="100%" height={300} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                    <BarChart accessibilityLayer data={topProducts.map((p) => ({ nom: p.nom.substring(0, 20), marge: parseFloat(p.marge_brute) }))}>
                       <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
                       <XAxis dataKey="nom" tick={{ fontSize: 10, fill: CHART_AXIS }} />
                       <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} />
@@ -219,35 +346,154 @@ export default function Reporting() {
           </div>
 
           <Card>
-            <CardHeader><CardTitle>Créances clients (aging)</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Créances clients par ancienneté</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Situation actuelle, triée du solde le plus élevé au plus faible
+                {!receivablesLoading && ` · ${receivableTotal} client(s) · ${formatCurrency(receivableTotalAmount)}`}.
+              </p>
+            </CardHeader>
             <CardContent>
-              {receivables.length > 0 ? (
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50 text-left">
-                      <tr className="text-xs uppercase tracking-wide text-muted-foreground">
-                        <th className={TABLE_HEAD}>Client</th>
-                        <th className={TABLE_HEAD + ' text-right'}>Total dû</th>
-                        <th className={TABLE_HEAD + ' text-right'}>&lt; 30 jours</th>
-                        <th className={TABLE_HEAD + ' text-right'}>30-60 jours</th>
-                        <th className={TABLE_HEAD + ' text-right'}>&gt; 60 jours</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {receivables.map((client) => (
-                        <tr key={client.client_id} className="hover:bg-muted/30">
-                          <td className="px-3 py-2 font-medium">{client.nom} {client.prenom}</td>
-                          <td className="px-3 py-2 text-right font-semibold text-danger-700 num">{formatCurrency(client.total_du)}</td>
-                          <td className="px-3 py-2 text-right text-success-700 num">{formatCurrency(client.moins_30_jours)}</td>
-                          <td className="px-3 py-2 text-right text-warning-700 num">{formatCurrency(client.entre_30_60_jours)}</td>
-                          <td className="px-3 py-2 text-right text-danger-700 num">{formatCurrency(client.plus_60_jours)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_170px_190px_190px_auto]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={receivableSearch}
+                    onChange={(event) => setReceivableSearch(event.target.value)}
+                    placeholder="Rechercher un client"
+                    aria-label="Rechercher un client débiteur"
+                    className="pl-9"
+                  />
                 </div>
+                <Input
+                  type="number"
+                  min="0"
+                  value={receivableMinAmount}
+                  onChange={(event) => setReceivableMinAmount(event.target.value)}
+                  placeholder="Solde minimum"
+                  aria-label="Solde minimum en FCFA"
+                />
+                <Select
+                  value={receivableBucket}
+                  onValueChange={(value) => setReceivableBucket(value as ReceivableBucket)}
+                >
+                  <SelectTrigger aria-label="Filtrer par ancienneté">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Toutes les anciennetés</SelectItem>
+                    <SelectItem value="moins_30_jours">Moins de 30 jours</SelectItem>
+                    <SelectItem value="entre_30_60_jours">30 à 60 jours</SelectItem>
+                    <SelectItem value="plus_60_jours">Plus de 60 jours</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={receivableLocationId} onValueChange={setReceivableLocationId}>
+                  <SelectTrigger aria-label="Filtrer par emplacement">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tous les emplacements</SelectItem>
+                    {receivableLocations.map((location) => (
+                      <SelectItem key={location.id} value={String(location.id)}>
+                        {location.nom} ({location.code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  onClick={() => void exportReceivables()}
+                  disabled={receivableTotal === 0 || exportingReceivables}
+                  className="gap-2"
+                >
+                  {exportingReceivables
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : <Download className="h-4 w-4" />}
+                  Exporter
+                </Button>
+              </div>
+
+              {receivablesLoading ? (
+                <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground" aria-live="polite">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Chargement des créances…
+                </div>
+              ) : receivablesError ? (
+                <div className="py-8 text-center" role="alert">
+                  <p className="text-sm text-danger-700">Impossible de charger les créances.</p>
+                  <Button variant="outline" size="sm" className="mt-3" onClick={() => void fetchReceivables()}>
+                    Réessayer
+                  </Button>
+                </div>
+              ) : receivables.length > 0 ? (
+                <>
+                  <div className="hidden overflow-x-auto rounded-md border md:block">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50 text-left">
+                        <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                          <th className={TABLE_HEAD}>Client</th>
+                          <th className={TABLE_HEAD + ' text-right'}>Total dû</th>
+                          <th className={TABLE_HEAD + ' text-right'}>&lt; 30 jours</th>
+                          <th className={TABLE_HEAD + ' text-right'}>30-60 jours</th>
+                          <th className={TABLE_HEAD + ' text-right'}>&gt; 60 jours</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {receivables.map((client) => (
+                          <tr key={client.client_id} className="hover:bg-muted/30">
+                            <td className="px-3 py-2 font-medium">{client.nom} {client.prenom}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-danger-700 num">{formatCurrency(client.total_du)}</td>
+                            <td className="px-3 py-2 text-right text-success-700 num">{formatCurrency(client.moins_30_jours)}</td>
+                            <td className="px-3 py-2 text-right text-warning-700 num">{formatCurrency(client.entre_30_60_jours)}</td>
+                            <td className="px-3 py-2 text-right text-danger-700 num">{formatCurrency(client.plus_60_jours)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="space-y-3 md:hidden">
+                    {receivables.map((client) => (
+                      <article key={client.client_id} className="rounded-lg border p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <h3 className="min-w-0 break-words font-semibold">
+                            {client.nom} {client.prenom}
+                          </h3>
+                          <span className="shrink-0 font-semibold text-danger-700 num">
+                            {formatCurrency(client.total_du)}
+                          </span>
+                        </div>
+                        <dl className="mt-3 grid grid-cols-3 gap-2 border-t pt-3 text-xs">
+                          <div>
+                            <dt className="text-muted-foreground">&lt; 30 j</dt>
+                            <dd className="mt-1 break-words text-success-700 num">{formatCurrency(client.moins_30_jours)}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-muted-foreground">30–60 j</dt>
+                            <dd className="mt-1 break-words text-warning-700 num">{formatCurrency(client.entre_30_60_jours)}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-muted-foreground">&gt; 60 j</dt>
+                            <dd className="mt-1 break-words text-danger-700 num">{formatCurrency(client.plus_60_jours)}</dd>
+                          </div>
+                        </dl>
+                      </article>
+                    ))}
+                  </div>
+
+                  <Pagination
+                    page={receivablePage}
+                    totalPages={receivableTotalPages}
+                    total={receivableTotal}
+                    limit={receivableLimit}
+                    onPageChange={setReceivablePage}
+                    onLimitChange={setReceivableLimit}
+                  />
+                </>
               ) : (
-                <p className="text-center text-muted-foreground py-8 text-sm">Aucune créance</p>
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  Aucune créance ne correspond aux filtres.
+                </p>
               )}
             </CardContent>
           </Card>
@@ -266,8 +512,8 @@ export default function Reporting() {
               </CardHeader>
               <CardContent>
                 {marginsReport.monthly_trend?.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={marginsReport.monthly_trend.map((m: any) => ({
+                  <ResponsiveContainer width="100%" height={300} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                    <BarChart accessibilityLayer data={marginsReport.monthly_trend.map((m: any) => ({
                       mois: new Date(m.mois).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' }),
                       CA: parseFloat(m.chiffre_affaires),
                       Marge: parseFloat(m.marge_brute),
@@ -293,8 +539,9 @@ export default function Reporting() {
               </CardHeader>
               <CardContent>
                 {marginsReport.top_categories?.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={300}>
+                  <ResponsiveContainer width="100%" height={300} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
                     <BarChart
+                      accessibilityLayer
                       layout="vertical"
                       data={marginsReport.top_categories.map((c: any) => ({
                         categorie: c.categorie,

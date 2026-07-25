@@ -95,6 +95,20 @@ export default function DemandeForm() {
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // Guard against losing a multi-line cart to an accidental tab close / reload.
+  // (The cart is local state, not RHF, so this mirrors the sibling create pages'
+  // beforeunload guard rather than useDraft autosave.)
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (cart.length > 0 && !submitting) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [cart.length, submitting]);
+
   // Debounce search
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
@@ -139,7 +153,7 @@ export default function DemandeForm() {
         }
       }
     } catch {
-      toast.error('Erreur lors du chargement des locations');
+      toast.error('Erreur lors du chargement des emplacements');
     }
   };
 
@@ -308,7 +322,7 @@ export default function DemandeForm() {
           {/* Location Selection */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Locations</CardTitle>
+              <CardTitle className="text-base">Emplacements</CardTitle>
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-4">
               <div className="space-y-2">

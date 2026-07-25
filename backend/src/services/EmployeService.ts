@@ -244,7 +244,7 @@ export class EmployeService extends BaseService<EmployeRecord> {
   /**
    * Record sales commission for employee
    */
-  async recordCommission(employeId: number, factureId: number, montantVente: number, req?: any): Promise<void> {
+  async recordCommission(employeId: number, factureId: number, montantVente: number, _req?: any): Promise<void> {
     const client = await pool.connect();
 
     try {

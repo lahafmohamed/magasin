@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { auditService } from '../services/api';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,8 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingState } from '@/components/ui/loading';
+import { QueryState } from '@/components/ui/query-state';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { Search, ShieldAlert, ScrollText } from 'lucide-react';
 import { toast } from 'sonner';
@@ -30,6 +30,7 @@ export default function AuditLog() {
   const [page, setPage] = useState(1);
   const [limit] = useState(50);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [filterTable, setFilterTable] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
@@ -40,6 +41,7 @@ export default function AuditLog() {
 
   const loadLogs = async () => {
     setLoading(true);
+    setError(null);
     try {
       const result = await auditService.getLogs({
         table: filterTable || undefined,
@@ -50,7 +52,11 @@ export default function AuditLog() {
       });
       setLogs(result.data || []);
       setTotal(result.total || 0);
-    } catch {
+    } catch (err) {
+      // On garde l'erreur en état : QueryState affiche « Réessayer » au lieu de
+      // laisser une page vide derrière un toast qui s'efface.
+      setError(err);
+      setLogs([]);
       toast.error('Erreur lors du chargement des logs');
     } finally {
       setLoading(false);
@@ -93,12 +99,12 @@ export default function AuditLog() {
         <CardContent className="pt-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="space-y-1.5">
-              <Label>Table</Label>
+              <Label htmlFor="audit-table">Table</Label>
               <Select
                 value={filterTable === '' ? '__all' : filterTable}
                 onValueChange={(v) => { setFilterTable(v === '__all' ? '' : v); setPage(1); }}
               >
-                <SelectTrigger className="w-full" aria-label="Filtrer par table">
+                <SelectTrigger id="audit-table" className="w-full" aria-label="Filtrer par table">
                   <SelectValue placeholder="Toutes les tables" />
                 </SelectTrigger>
                 <SelectContent>
@@ -112,12 +118,12 @@ export default function AuditLog() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Date début</Label>
-              <Input type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} />
+              <Label htmlFor="audit-date-from">Date début</Label>
+              <DatePicker id="audit-date-from" value={filterDateFrom} onChange={setFilterDateFrom} aria-label="Date début" />
             </div>
             <div className="space-y-1.5">
-              <Label>Date fin</Label>
-              <Input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} />
+              <Label htmlFor="audit-date-to">Date fin</Label>
+              <DatePicker id="audit-date-to" value={filterDateTo} onChange={setFilterDateTo} aria-label="Date fin" />
             </div>
             <div className="flex items-end">
               <Button onClick={loadLogs} className="gap-2 w-full">
@@ -134,11 +140,15 @@ export default function AuditLog() {
           <CardTitle>Modifications ({total})</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {loading ? (
-            <LoadingState />
-          ) : logs.length === 0 ? (
-            <EmptyState icon={ScrollText} title="Aucun log trouvé" />
-          ) : (
+          <QueryState
+            loading={loading}
+            error={error}
+            isEmpty={logs.length === 0}
+            onRetry={loadLogs}
+            skeleton={<LoadingState />}
+            emptyIcon={ScrollText}
+            emptyTitle="Aucun log trouvé"
+          >
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">
@@ -177,7 +187,7 @@ export default function AuditLog() {
                 </tbody>
               </table>
             </div>
-          )}
+          </QueryState>
         </CardContent>
       </Card>
 

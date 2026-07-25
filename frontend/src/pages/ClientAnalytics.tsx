@@ -156,8 +156,8 @@ export default function ClientAnalytics() {
               <CardDescription>Classement des meilleurs clients</CardDescription>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={topClients}>
+              <ResponsiveContainer width="100%" height={300} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                <BarChart accessibilityLayer data={topClients}>
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
                   <XAxis dataKey="nom" tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(value) => `${value.substring(0, 12)}...`} />
                   <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
@@ -176,8 +176,8 @@ export default function ClientAnalytics() {
                 <CardDescription>Top 7 clients</CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
-                  <PieChart>
+                <ResponsiveContainer width="100%" height={250} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                  <PieChart accessibilityLayer>
                     <Pie
                       data={pieData}
                       cx="50%"

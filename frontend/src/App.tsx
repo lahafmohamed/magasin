@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect } from 'react';
+import { Suspense, lazy, useEffect, type ComponentProps, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './lib/AuthContext';
 import { Toaster } from 'sonner';
@@ -52,6 +52,7 @@ const CaisseAudit = lazy(() => import('./pages/CaisseAudit'));
 const CaisseHistorique = lazy(() => import('./pages/CaisseHistorique'));
 const Depenses = lazy(() => import('./pages/DepensesV2'));
 const ChangePassword = lazy(() => import('./pages/ChangePassword'));
+const Profil = lazy(() => import('./pages/Profil'));
 const TiersPage = lazy(() => import('./pages/Tiers'));
 const TiersDetail = lazy(() => import('./pages/TiersDetail'));
 const CompanySettings = lazy(() => import('./pages/CompanySettings'));
@@ -59,6 +60,31 @@ const ParametresFinance = lazy(() => import('./pages/ParametresFinance'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
 const Comptabilite = lazy(() => import('./pages/Comptabilite'));
 const Tresorerie = lazy(() => import('./pages/Tresorerie'));
+
+type RequiredRoles = NonNullable<ComponentProps<typeof ProtectedRoute>['requiredRoles']>;
+
+const ACCESS = {
+  managers: ['admin', 'manager'],
+  purchasing: ['admin', 'manager', 'depot_staff'],
+  sales: ['admin', 'manager', 'magasin_staff', 'caissier'],
+  salesDocuments: ['admin', 'manager', 'magasin_staff'],
+  allStaff: ['admin', 'manager', 'depot_staff', 'magasin_staff', 'caissier'],
+  cash: ['admin', 'manager', 'caissier', 'magasin_staff'],
+  admin: ['admin'],
+} satisfies Record<string, RequiredRoles>;
+
+function protectedPage(
+  page: ReactNode,
+  requiredRoles?: RequiredRoles,
+  withErrorBoundary = false,
+) {
+  const layout = <Layout>{page}</Layout>;
+  return (
+    <ProtectedRoute requiredRoles={requiredRoles}>
+      {withErrorBoundary ? <ErrorBoundary>{layout}</ErrorBoundary> : layout}
+    </ProtectedRoute>
+  );
+}
 
 function AppWithShortcuts() {
   useSseNotifications();
@@ -104,248 +130,64 @@ function AppWithShortcuts() {
           </ProtectedRoute>
         } />
 
-        <Route path="/" element={
-          <ProtectedRoute>
-            <ErrorBoundary>
-              <Layout>
-                <Dashboard />
-              </Layout>
-            </ErrorBoundary>
-          </ProtectedRoute>
-        } />
-        <Route path="/inventaire" element={
-          <ProtectedRoute>
-            <Layout>
-              <Inventaire />
-            </Layout>
-          </ProtectedRoute>
-        } />
+        <Route path="/" element={protectedPage(<Dashboard />, undefined, true)} />
+        {/* Compte utilisateur — accessible à tous les rôles connectés */}
+        <Route path="/profil" element={protectedPage(<Profil />)} />
+        <Route path="/inventaire" element={protectedPage(<Inventaire />)} />
         {/* Tiers — admin/manager only */}
-        <Route path="/tiers" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><TiersPage /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/tiers/:id" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><TiersDetail /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/clients/analytics" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><ClientAnalytics /></Layout>
-          </ProtectedRoute>
-        } />
+        <Route path="/tiers" element={protectedPage(<TiersPage />, ACCESS.managers)} />
+        <Route path="/tiers/:id" element={protectedPage(<TiersDetail />, ACCESS.managers)} />
+        <Route path="/clients/analytics" element={protectedPage(<ClientAnalytics />, ACCESS.managers)} />
 
         {/* Achats — depot_staff, admin, manager */}
-        <Route path="/commandes" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
-            <Layout><Commandes /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/reapprovisionnement" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
-            <Layout><Reapprovisionnement /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/commandes/:id" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
-            <Layout><CommandeDetail /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/receptions" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
-            <Layout><Receptions /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/factures-fournisseur" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
-            <Layout><FacturesFournisseur /></Layout>
-          </ProtectedRoute>
-        } />
+        <Route path="/commandes" element={protectedPage(<Commandes />, ACCESS.purchasing)} />
+        <Route path="/reapprovisionnement" element={protectedPage(<Reapprovisionnement />, ACCESS.purchasing)} />
+        <Route path="/commandes/:id" element={protectedPage(<CommandeDetail />, ACCESS.purchasing)} />
+        <Route path="/receptions" element={protectedPage(<Receptions />, ACCESS.purchasing)} />
+        <Route path="/factures-fournisseur" element={protectedPage(<FacturesFournisseur />, ACCESS.purchasing)} />
 
         {/* Ventes — magasin_staff, caissier, admin, manager */}
-        <Route path="/factures" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff', 'caissier']}>
-            <Layout><Factures /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/factures/:id" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff', 'caissier']}>
-            <Layout><FactureDetail /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/factures/nouvelle" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff', 'caissier']}>
-            <Layout><NouvelleFacture /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/devis" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff']}>
-            <Layout><Devis /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/devis/nouveau" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff']}>
-            <Layout><NouveauDevis /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/devis/:id" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff']}>
-            <Layout><DevisDetail /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/devis/:id/edit" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff']}>
-            <Layout><NouveauDevis /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/bons-livraison" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff']}>
-            <Layout><BonsLivraison /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/bons-livraison/nouveau" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff']}>
-            <Layout><NouveauBonLivraison /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/bons-livraison/:id" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'magasin_staff']}>
-            <Layout><BonLivraisonDetail /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/avoirs" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><Avoirs /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/avoirs/nouveau" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><NouvelAvoir /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/avoirs/:id" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><AvoirDetail /></Layout>
-          </ProtectedRoute>
-        } />
+        <Route path="/factures" element={protectedPage(<Factures />, ACCESS.sales)} />
+        <Route path="/factures/:id" element={protectedPage(<FactureDetail />, ACCESS.sales)} />
+        <Route path="/factures/nouvelle" element={protectedPage(<NouvelleFacture />, ACCESS.sales)} />
+        <Route path="/devis" element={protectedPage(<Devis />, ACCESS.salesDocuments)} />
+        <Route path="/devis/nouveau" element={protectedPage(<NouveauDevis />, ACCESS.salesDocuments)} />
+        <Route path="/devis/:id" element={protectedPage(<DevisDetail />, ACCESS.salesDocuments)} />
+        <Route path="/devis/:id/edit" element={protectedPage(<NouveauDevis />, ACCESS.salesDocuments)} />
+        <Route path="/bons-livraison" element={protectedPage(<BonsLivraison />, ACCESS.salesDocuments)} />
+        <Route path="/bons-livraison/nouveau" element={protectedPage(<NouveauBonLivraison />, ACCESS.salesDocuments)} />
+        <Route path="/bons-livraison/:id" element={protectedPage(<BonLivraisonDetail />, ACCESS.salesDocuments)} />
+        <Route path="/avoirs" element={protectedPage(<Avoirs />, ACCESS.managers)} />
+        <Route path="/avoirs/nouveau" element={protectedPage(<NouvelAvoir />, ACCESS.managers)} />
+        <Route path="/avoirs/:id" element={protectedPage(<AvoirDetail />, ACCESS.managers)} />
 
         {/* Stock */}
-        <Route path="/stock-valuation" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><StockValuation /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/stock-locations" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
-            <Layout><StockLocations /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/stock-transfers" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff']}>
-            <Layout><StockTransfers /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/affectations-locations" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><AffectationsLocations /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/demandes" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff', 'magasin_staff', 'caissier']}>
-            <Layout><DemandesList /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/demandes/nouvelle" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff', 'magasin_staff', 'caissier']}>
-            <Layout><DemandeForm /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/demandes/:id" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff', 'magasin_staff', 'caissier']}>
-            <Layout><DemandeDetail /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/demandes/:id/edit" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'depot_staff', 'magasin_staff', 'caissier']}>
-            <Layout><DemandeForm /></Layout>
-          </ProtectedRoute>
-        } />
+        <Route path="/stock-valuation" element={protectedPage(<StockValuation />, ACCESS.managers)} />
+        <Route path="/stock-locations" element={protectedPage(<StockLocations />, ACCESS.purchasing)} />
+        <Route path="/stock-transfers" element={protectedPage(<StockTransfers />, ACCESS.purchasing)} />
+        <Route path="/affectations-locations" element={protectedPage(<AffectationsLocations />, ACCESS.managers)} />
+        <Route path="/demandes" element={protectedPage(<DemandesList />, ACCESS.allStaff)} />
+        <Route path="/demandes/nouvelle" element={protectedPage(<DemandeForm />, ACCESS.allStaff)} />
+        <Route path="/demandes/:id" element={protectedPage(<DemandeDetail />, ACCESS.allStaff)} />
+        <Route path="/demandes/:id/edit" element={protectedPage(<DemandeForm />, ACCESS.allStaff)} />
 
         {/* Finance */}
-        <Route path="/caisse" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'caissier', 'magasin_staff']}>
-            <Layout><Caisse /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/caisse/audit" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><CaisseAudit /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/caisse/historique" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><CaisseHistorique /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/depenses" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager', 'caissier', 'magasin_staff']}>
-            <Layout><Depenses /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/general-ledger" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><GeneralLedger /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/reporting" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><Reporting /></Layout>
-          </ProtectedRoute>
-        } />
+        <Route path="/caisse" element={protectedPage(<Caisse />, ACCESS.cash)} />
+        <Route path="/caisse/audit" element={protectedPage(<CaisseAudit />, ACCESS.managers)} />
+        <Route path="/caisse/historique" element={protectedPage(<CaisseHistorique />, ACCESS.managers)} />
+        <Route path="/depenses" element={protectedPage(<Depenses />, ACCESS.cash)} />
+        <Route path="/general-ledger" element={protectedPage(<GeneralLedger />, ACCESS.managers)} />
+        <Route path="/reporting" element={protectedPage(<Reporting />, ACCESS.managers)} />
 
         {/* Admin only */}
-        <Route path="/employes" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><Employes /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/paie" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><Payroll /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/admin/users" element={
-          <ProtectedRoute requiredRoles={['admin']}>
-            <Layout><UserManagement /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/settings" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><CompanySettings /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/admin/parametres-finance" element={
-          <ProtectedRoute requiredRoles={['admin']}>
-            <Layout><ParametresFinance /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/admin/audit" element={
-          <ProtectedRoute requiredRoles={['admin']}>
-            <Layout><AuditLog /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/comptabilite" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><Comptabilite /></Layout>
-          </ProtectedRoute>
-        } />
-        <Route path="/tresorerie" element={
-          <ProtectedRoute requiredRoles={['admin', 'manager']}>
-            <Layout><Tresorerie /></Layout>
-          </ProtectedRoute>
-        } />
+        <Route path="/employes" element={protectedPage(<Employes />, ACCESS.managers)} />
+        <Route path="/paie" element={protectedPage(<Payroll />, ACCESS.managers)} />
+        <Route path="/admin/users" element={protectedPage(<UserManagement />, ACCESS.admin)} />
+        <Route path="/settings" element={protectedPage(<CompanySettings />, ACCESS.managers)} />
+        <Route path="/admin/parametres-finance" element={protectedPage(<ParametresFinance />, ACCESS.admin)} />
+        <Route path="/admin/audit" element={protectedPage(<AuditLog />, ACCESS.admin)} />
+        <Route path="/comptabilite" element={protectedPage(<Comptabilite />, ACCESS.managers)} />
+        <Route path="/tresorerie" element={protectedPage(<Tresorerie />, ACCESS.managers)} />
       </Routes>
     </Suspense>
   );

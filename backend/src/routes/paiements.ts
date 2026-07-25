@@ -14,6 +14,9 @@ router.get('/', PaiementController.getAll);
 // Get payment statistics
 router.get('/stats', PaiementController.getStats);
 
+// GET /api/paiements/:id/recu - Reçu de paiement (PDF)
+router.get('/:id/recu', PaiementController.generateRecuPDF);
+
 // Update a payment (admin, manager only)
 router.put('/:id', authorize(['admin', 'manager']), validateBody(updatePaiementSchema), PaiementController.update);
 

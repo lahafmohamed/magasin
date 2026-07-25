@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { ProduitController } from '../controllers/ProduitController';
-import { validateBody, validateQuery } from '../middleware/validation';
+import { validateBody } from '../middleware/validation';
 import { createProduitSchema, updateProduitSchema, adjustStockSchema, stockMovementSchema } from '../validation/schemas';
 import { authenticate, authorize } from '../middleware/auth';
 

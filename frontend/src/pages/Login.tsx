@@ -118,20 +118,6 @@ export default function Login() {
             </Button>
           </form>
 
-          {(import.meta as any).env?.DEV && (
-            <>
-              <div className="my-6 flex items-center text-xs text-muted-foreground">
-                <div className="flex-1 border-t" />
-                <span className="px-2">Comptes de démonstration</span>
-                <div className="flex-1 border-t" />
-              </div>
-              <div className="text-sm text-muted-foreground space-y-1">
-                <p><strong>admin</strong> / admin123</p>
-                <p><strong>manager</strong> / manager123</p>
-                <p><strong>caissier</strong> / caissier123</p>
-              </div>
-            </>
-          )}
         </div>
       </div>
     </div>

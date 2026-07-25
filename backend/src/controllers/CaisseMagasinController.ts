@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { caisseMagasinService } from '../services/CaisseMagasinService';
 import { AuthRequest } from '../middleware/auth';
+import { businessStatusOf } from '../utils/errors';
 import pool from '../db/connection';
 
 export class CaisseMagasinController {
@@ -65,16 +66,9 @@ export class CaisseMagasinController {
         message: 'Caisse ouverte avec succès'
       });
     } catch (error: any) {
-      console.error('Erreur POST /api/caisse/ouvrir:', error);
-      if (error.message.includes('déjà ouverte')) {
-        res.status(409).json({ error: error.message });
-        return;
-      }
-      if (error.message.includes('Accès refusé')) {
-        res.status(403).json({ error: error.message });
-        return;
-      }
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur POST /api/caisse/ouvrir:', error);
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -106,16 +100,13 @@ export class CaisseMagasinController {
         message: result.message
       });
     } catch (error: any) {
-      console.error('Erreur POST /api/caisse/cloturer:', error);
-      if (error.message.includes('commentaire est obligatoire')) {
-        res.status(422).json({ error: error.message, code: 'ECART_COMMENT_REQUIRED' });
-        return;
-      }
-      if (error.message.includes('Accès refusé')) {
-        res.status(403).json({ error: error.message });
-        return;
-      }
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur POST /api/caisse/cloturer:', error);
+      res.status(status ?? 500).json({
+        success: false,
+        error: status ? error.message : 'Erreur serveur',
+        ...(status && error.code ? { code: error.code } : {}),
+      });
     }
   }
 
@@ -147,12 +138,9 @@ export class CaisseMagasinController {
         data: session
       });
     } catch (error: any) {
-      console.error('Erreur GET /api/caisse/session:', error);
-      if (error.message === 'Session non trouvée') {
-        res.status(404).json({ error: error.message });
-        return;
-      }
-      res.status(500).json({ error: 'Erreur serveur' });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur GET /api/caisse/session:', error);
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -249,8 +237,9 @@ export class CaisseMagasinController {
 
       res.json({ success: true, data: preview });
     } catch (error: any) {
-      console.error('Erreur GET /api/caisse/cloture-preview:', error);
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur GET /api/caisse/cloture-preview:', error);
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -326,8 +315,9 @@ export class CaisseMagasinController {
       res.status(201).json({ success: true, data: mouvement });
     } catch (error: any) {
       await dbClient.query('ROLLBACK');
-      console.error('Erreur POST /api/caisse/:session_id/mouvement-divers:', error);
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur POST /api/caisse/:session_id/mouvement-divers:', error);
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     } finally {
       dbClient.release();
     }

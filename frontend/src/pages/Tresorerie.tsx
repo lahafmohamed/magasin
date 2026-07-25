@@ -111,8 +111,8 @@ export default function TresoreriePage() {
               <CardDescription className="text-xs">Projection des flux de trésorerie</CardDescription>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={data.echeancier.map((e: any) => ({
+              <ResponsiveContainer width="100%" height={300} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                <BarChart accessibilityLayer data={data.echeancier.map((e: any) => ({
                   periode: `${e.debut}-${e.fin}`,
                   Encaissements: e.encaissements,
                   Décaissements: e.decaissements,

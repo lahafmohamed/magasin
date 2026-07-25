@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { badgeVariants } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Textarea } from '@/components/ui/textarea';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +27,7 @@ import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatDateShort } from '@/utils/format';
+import { formatPaymentMethod } from '@/utils/paymentMethod';
 
 const METHODES = ['espece', 'carte', 'cheque', 'virement', 'mobile_money', 'orange_money', 'mtn_money', 'wave'];
 
@@ -36,9 +38,11 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   paiement_client:  { label: 'Paiement',         color: 'text-success-600' },
   avoir_client:     { label: 'Avoir',            color: 'text-info-600' },
   acompte_client:   { label: 'Acompte reçu',     color: 'text-success-600' },
+  compensation_client: { label: 'Compensation',  color: 'text-purple-600' },
   facture_fourn:    { label: 'Facture fourn.',   color: 'text-warning-600' },
   paiement_fourn:   { label: 'Paiement fourn.',  color: 'text-success-600' },
   acompte_fourn:    { label: 'Acompte versé',    color: 'text-warning-600' },
+  compensation_fourn: { label: 'Compensation',   color: 'text-purple-600' },
 };
 
 export default function TiersDetail() {
@@ -65,6 +69,7 @@ export default function TiersDetail() {
   const [taches, setTaches] = useState<any[]>([]);
   const [showInteractionForm, setShowInteractionForm] = useState(false);
   const [showTacheForm, setShowTacheForm] = useState(false);
+  const [crmSubmitting, setCrmSubmitting] = useState(false);
   const [interactionForm, setInteractionForm] = useState({ type: 'appel', sujet: '', description: '', date_rappel: '', priorite: 'normale' });
   const [tacheForm, setTacheForm] = useState({ titre: '', description: '', priorite: 'normale', date_echeance: '' });
 
@@ -122,6 +127,8 @@ export default function TiersDetail() {
   // CRM
   const handleCreateInteraction = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (crmSubmitting) return;
+    setCrmSubmitting(true);
     try {
       const newItem = await crmService.createInteraction({
         tiers_id: tiersId,
@@ -133,6 +140,8 @@ export default function TiersDetail() {
       toast.success('Interaction enregistrée');
     } catch {
       toast.error("Erreur lors de l'enregistrement");
+    } finally {
+      setCrmSubmitting(false);
     }
   };
 
@@ -149,6 +158,8 @@ export default function TiersDetail() {
 
   const handleCreateTache = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (crmSubmitting) return;
+    setCrmSubmitting(true);
     try {
       const newTache = await crmService.createTache({
         tiers_id: tiersId,
@@ -160,6 +171,8 @@ export default function TiersDetail() {
       toast.success('Tâche créée');
     } catch {
       toast.error('Erreur lors de la création');
+    } finally {
+      setCrmSubmitting(false);
     }
   };
 
@@ -417,6 +430,7 @@ export default function TiersDetail() {
               </div>
               <div className="text-xs text-muted-foreground mt-1">
                 Facturé: {formatCurrency(totaux.client.total_facture)} · Payé: {formatCurrency(totaux.client.total_paye)}
+                {totaux.client.total_acompte > 0 && <> · Acomptes/comp.: {formatCurrency(totaux.client.total_acompte)}</>}
               </div>
             </CardContent>
           </Card>
@@ -430,6 +444,7 @@ export default function TiersDetail() {
               </div>
               <div className="text-xs text-muted-foreground mt-1">
                 Facturé: {formatCurrency(totaux.fournisseur.total_facture_fourn)} · Payé: {formatCurrency(totaux.fournisseur.total_paye_fourn)}
+                {totaux.fournisseur.total_acompte_fourn > 0 && <> · Acomptes/comp.: {formatCurrency(totaux.fournisseur.total_acompte_fourn)}</>}
               </div>
             </CardContent>
           </Card>
@@ -449,11 +464,11 @@ export default function TiersDetail() {
       <div className="flex gap-3 items-end">
         <div>
           <Label htmlFor="ledger-date-from" className="text-xs">Du</Label>
-          <Input id="ledger-date-from" type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 text-sm w-36" />
+          <DatePicker id="ledger-date-from" value={dateFrom} onChange={setDateFrom} className="h-8 w-44 text-xs" />
         </div>
         <div>
           <Label htmlFor="ledger-date-to" className="text-xs">Au</Label>
-          <Input id="ledger-date-to" type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-8 text-sm w-36" />
+          <DatePicker id="ledger-date-to" value={dateTo} onChange={setDateTo} className="h-8 w-44 text-xs" />
         </div>
         {(dateFrom || dateTo) && (
           <Button variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-xs">Réinitialiser</Button>
@@ -566,7 +581,7 @@ export default function TiersDetail() {
                     <TableCell><span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300">Client</span></TableCell>
                     <TableCell className="text-xs font-mono">{a.id}</TableCell>
                     <TableCell className="text-xs">{formatDateShort(a.date_acompte)}</TableCell>
-                    <TableCell className="text-xs">{a.methode_paiement}</TableCell>
+                    <TableCell className="text-xs">{formatPaymentMethod(a.methode_paiement)}</TableCell>
                     <TableCell className="text-right text-xs">{formatCurrency(a.montant)}</TableCell>
                     <TableCell className="text-right text-xs font-semibold">{formatCurrency(a.montant_restant)}</TableCell>
                     <TableCell className="text-xs">{a.statut}</TableCell>
@@ -580,7 +595,7 @@ export default function TiersDetail() {
                     <TableCell><span className="text-xs px-1.5 py-0.5 rounded bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300">Fourn.</span></TableCell>
                     <TableCell className="text-xs font-mono">{a.id}</TableCell>
                     <TableCell className="text-xs">{formatDateShort(a.date_acompte)}</TableCell>
-                    <TableCell className="text-xs">{a.methode_paiement}</TableCell>
+                    <TableCell className="text-xs">{formatPaymentMethod(a.methode_paiement)}</TableCell>
                     <TableCell className="text-right text-xs">{formatCurrency(a.montant)}</TableCell>
                     <TableCell className="text-right text-xs font-semibold">{formatCurrency(a.montant_restant)}</TableCell>
                     <TableCell className="text-xs">{a.statut}</TableCell>
@@ -759,18 +774,18 @@ export default function TiersDetail() {
               </Select>
             </div>
             <div>
-              <Label>Sujet *</Label>
-              <Input value={interactionForm.sujet} onChange={e => setInteractionForm(p => ({ ...p, sujet: e.target.value }))} required />
+              <Label htmlFor="crm-int-sujet">Sujet *</Label>
+              <Input id="crm-int-sujet" value={interactionForm.sujet} onChange={e => setInteractionForm(p => ({ ...p, sujet: e.target.value }))} required />
             </div>
             <div>
-              <Label>Description</Label>
-              <Textarea value={interactionForm.description} onChange={e => setInteractionForm(p => ({ ...p, description: e.target.value }))} rows={3} />
+              <Label htmlFor="crm-int-desc">Description</Label>
+              <Textarea id="crm-int-desc" value={interactionForm.description} onChange={e => setInteractionForm(p => ({ ...p, description: e.target.value }))} rows={3} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Priorité</Label>
+                <Label htmlFor="crm-int-priorite">Priorité</Label>
                 <Select value={interactionForm.priorite} onValueChange={v => setInteractionForm(p => ({ ...p, priorite: v }))}>
-                  <SelectTrigger className="w-full" aria-label="Priorité">
+                  <SelectTrigger id="crm-int-priorite" className="w-full" aria-label="Priorité">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -782,13 +797,13 @@ export default function TiersDetail() {
                 </Select>
               </div>
               <div>
-                <Label>Rappel le</Label>
-                <Input type="date" value={interactionForm.date_rappel} onChange={e => setInteractionForm(p => ({ ...p, date_rappel: e.target.value }))} />
+                <Label htmlFor="crm-int-rappel">Rappel le</Label>
+                <DatePicker id="crm-int-rappel" value={interactionForm.date_rappel} onChange={(date_rappel) => setInteractionForm(p => ({ ...p, date_rappel }))} aria-label="Rappel le" />
               </div>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowInteractionForm(false)}>Annuler</Button>
-              <Button type="submit">Enregistrer</Button>
+              <Button type="submit" disabled={crmSubmitting}>{crmSubmitting ? 'Enregistrement...' : 'Enregistrer'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -799,18 +814,18 @@ export default function TiersDetail() {
           <DialogHeader><DialogTitle>Nouvelle tâche</DialogTitle></DialogHeader>
           <form onSubmit={handleCreateTache} className="space-y-3">
             <div>
-              <Label>Titre *</Label>
-              <Input value={tacheForm.titre} onChange={e => setTacheForm(p => ({ ...p, titre: e.target.value }))} required />
+              <Label htmlFor="crm-tache-titre">Titre *</Label>
+              <Input id="crm-tache-titre" value={tacheForm.titre} onChange={e => setTacheForm(p => ({ ...p, titre: e.target.value }))} required />
             </div>
             <div>
-              <Label>Description</Label>
-              <Textarea value={tacheForm.description} onChange={e => setTacheForm(p => ({ ...p, description: e.target.value }))} rows={2} className="min-h-[60px]" />
+              <Label htmlFor="crm-tache-desc">Description</Label>
+              <Textarea id="crm-tache-desc" value={tacheForm.description} onChange={e => setTacheForm(p => ({ ...p, description: e.target.value }))} rows={2} className="min-h-[60px]" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Priorité</Label>
+                <Label htmlFor="crm-tache-priorite">Priorité</Label>
                 <Select value={tacheForm.priorite} onValueChange={v => setTacheForm(p => ({ ...p, priorite: v }))}>
-                  <SelectTrigger className="w-full" aria-label="Priorité">
+                  <SelectTrigger id="crm-tache-priorite" className="w-full" aria-label="Priorité">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -822,13 +837,13 @@ export default function TiersDetail() {
                 </Select>
               </div>
               <div>
-                <Label>Échéance</Label>
-                <Input type="date" value={tacheForm.date_echeance} onChange={e => setTacheForm(p => ({ ...p, date_echeance: e.target.value }))} />
+                <Label htmlFor="crm-tache-echeance">Échéance</Label>
+                <DatePicker id="crm-tache-echeance" value={tacheForm.date_echeance} onChange={(date_echeance) => setTacheForm(p => ({ ...p, date_echeance }))} aria-label="Échéance" />
               </div>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowTacheForm(false)}>Annuler</Button>
-              <Button type="submit">Créer</Button>
+              <Button type="submit" disabled={crmSubmitting}>{crmSubmitting ? 'Création...' : 'Créer'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -839,11 +854,11 @@ export default function TiersDetail() {
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Acompte client reçu</DialogTitle></DialogHeader>
           <form onSubmit={handleAcompteClient} className="space-y-3">
-            <div><Label>Montant *</Label><MoneyInput value={acompteForm.montant} onChange={v => setAcompteForm(p => ({ ...p, montant: v }))} required placeholder="0" /></div>
+            <div><Label htmlFor="ac-client-montant">Montant *</Label><MoneyInput id="ac-client-montant" value={acompteForm.montant} onChange={v => setAcompteForm(p => ({ ...p, montant: v }))} required placeholder="0" /></div>
             <div>
-              <Label>Méthode</Label>
+              <Label htmlFor="ac-client-methode">Méthode</Label>
               <Select value={acompteForm.methode} onValueChange={v => setAcompteForm(p => ({ ...p, methode: v }))}>
-                <SelectTrigger className="w-full" aria-label="Méthode de paiement">
+                <SelectTrigger id="ac-client-methode" className="w-full" aria-label="Méthode de paiement">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -852,12 +867,12 @@ export default function TiersDetail() {
               </Select>
             </div>
             <div>
-              <Label>Magasin {acompteForm.methode === 'espece' && <span className="text-danger-500">*</span>}</Label>
+              <Label htmlFor="ac-client-magasin">Magasin {acompteForm.methode === 'espece' && <span className="text-danger-500">*</span>}</Label>
               <Select
                 value={acompteForm.magasin_id || undefined}
                 onValueChange={v => setAcompteForm(p => ({ ...p, magasin_id: v }))}
               >
-                <SelectTrigger aria-label="Magasin">
+                <SelectTrigger id="ac-client-magasin" aria-label="Magasin">
                   <SelectValue placeholder="— Choisir —" />
                 </SelectTrigger>
                 <SelectContent>
@@ -872,11 +887,11 @@ export default function TiersDetail() {
             </div>
             {acompteForm.methode !== 'espece' && (
               <div>
-                <Label>Référence (chèque/virement)</Label>
-                <Input value={acompteForm.reference_number} onChange={e => setAcompteForm(p => ({ ...p, reference_number: e.target.value }))} placeholder="N° de pièce" />
+                <Label htmlFor="ac-client-reference">Référence (chèque/virement)</Label>
+                <Input id="ac-client-reference" value={acompteForm.reference_number} onChange={e => setAcompteForm(p => ({ ...p, reference_number: e.target.value }))} placeholder="N° de pièce" />
               </div>
             )}
-            <div><Label>Notes</Label><Input value={acompteForm.notes} onChange={e => setAcompteForm(p => ({ ...p, notes: e.target.value }))} /></div>
+            <div><Label htmlFor="ac-client-notes">Notes</Label><Input id="ac-client-notes" value={acompteForm.notes} onChange={e => setAcompteForm(p => ({ ...p, notes: e.target.value }))} /></div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowAcompteClient(false)}>Annuler</Button>
               <Button type="submit" disabled={submitting}>{submitting ? 'Enregistrement...' : 'Enregistrer'}</Button>
@@ -890,11 +905,11 @@ export default function TiersDetail() {
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Acompte versé au fournisseur</DialogTitle></DialogHeader>
           <form onSubmit={handleAcompteFourn} className="space-y-3">
-            <div><Label>Montant *</Label><MoneyInput value={acompteForm.montant} onChange={v => setAcompteForm(p => ({ ...p, montant: v }))} required placeholder="0" /></div>
+            <div><Label htmlFor="ac-fourn-montant">Montant *</Label><MoneyInput id="ac-fourn-montant" value={acompteForm.montant} onChange={v => setAcompteForm(p => ({ ...p, montant: v }))} required placeholder="0" /></div>
             <div>
-              <Label>Méthode</Label>
+              <Label htmlFor="ac-fourn-methode">Méthode</Label>
               <Select value={acompteForm.methode} onValueChange={v => setAcompteForm(p => ({ ...p, methode: v }))}>
-                <SelectTrigger className="w-full" aria-label="Méthode de paiement">
+                <SelectTrigger id="ac-fourn-methode" className="w-full" aria-label="Méthode de paiement">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -903,12 +918,12 @@ export default function TiersDetail() {
               </Select>
             </div>
             <div>
-              <Label>Magasin {acompteForm.methode === 'espece' && <span className="text-danger-500">*</span>}</Label>
+              <Label htmlFor="ac-fourn-magasin">Magasin {acompteForm.methode === 'espece' && <span className="text-danger-500">*</span>}</Label>
               <Select
                 value={acompteForm.magasin_id || undefined}
                 onValueChange={v => setAcompteForm(p => ({ ...p, magasin_id: v }))}
               >
-                <SelectTrigger aria-label="Magasin">
+                <SelectTrigger id="ac-fourn-magasin" aria-label="Magasin">
                   <SelectValue placeholder="— Choisir —" />
                 </SelectTrigger>
                 <SelectContent>
@@ -923,11 +938,11 @@ export default function TiersDetail() {
             </div>
             {acompteForm.methode !== 'espece' && (
               <div>
-                <Label>Référence</Label>
-                <Input value={acompteForm.reference_number} onChange={e => setAcompteForm(p => ({ ...p, reference_number: e.target.value }))} placeholder="N° de pièce" />
+                <Label htmlFor="ac-fourn-reference2">Référence</Label>
+                <Input id="ac-fourn-reference2" value={acompteForm.reference_number} onChange={e => setAcompteForm(p => ({ ...p, reference_number: e.target.value }))} placeholder="N° de pièce" />
               </div>
             )}
-            <div><Label>Notes</Label><Input value={acompteForm.notes} onChange={e => setAcompteForm(p => ({ ...p, notes: e.target.value }))} /></div>
+            <div><Label htmlFor="ac-fourn-notes">Notes</Label><Input id="ac-fourn-notes" value={acompteForm.notes} onChange={e => setAcompteForm(p => ({ ...p, notes: e.target.value }))} /></div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowAcompteFourn(false)}>Annuler</Button>
               <Button type="submit" disabled={submitting}>{submitting ? 'Enregistrement...' : 'Enregistrer'}</Button>
@@ -946,13 +961,13 @@ export default function TiersDetail() {
             Maximum compensable : <strong className="text-purple-700 dark:text-purple-300">{formatCurrency(maxComp)}</strong>
           </div>
           <form onSubmit={handleCompensation} className="space-y-3">
-            <div><Label>Date *</Label><Input type="date" value={compForm.date} onChange={e => setCompForm(p => ({ ...p, date: e.target.value }))} required /></div>
+            <div><Label htmlFor="comp-date">Date *</Label><DatePicker id="comp-date" value={compForm.date} onChange={(date) => setCompForm(p => ({ ...p, date }))} required aria-label="Date de compensation" /></div>
             <div>
-              <Label>Montant à compenser *</Label>
-              <MoneyInput value={compForm.montant} onChange={v => setCompForm(p => ({ ...p, montant: v }))} required placeholder="0" />
+              <Label htmlFor="comp-montant">Montant à compenser *</Label>
+              <MoneyInput id="comp-montant" value={compForm.montant} onChange={v => setCompForm(p => ({ ...p, montant: v }))} required placeholder="0" />
               <p className="text-xs text-muted-foreground mt-0.5">Maximum: {formatCurrency(maxComp)}</p>
             </div>
-            <div><Label>Notes</Label><Input value={compForm.notes} onChange={e => setCompForm(p => ({ ...p, notes: e.target.value }))} /></div>
+            <div><Label htmlFor="comp-notes">Notes</Label><Input id="comp-notes" value={compForm.notes} onChange={e => setCompForm(p => ({ ...p, notes: e.target.value }))} /></div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowCompensation(false)}>Annuler</Button>
               <Button type="submit" disabled={submitting} className="bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600">{submitting ? 'Enregistrement...' : 'Compenser'}</Button>
@@ -981,16 +996,16 @@ export default function TiersDetail() {
                 )}
               </div>
               <div>
-                <Label>Montant *</Label>
-                <MoneyInput value={refundForm.montant}
+                <Label htmlFor="refund-montant">Montant *</Label>
+                <MoneyInput id="refund-montant" value={refundForm.montant}
                   onChange={v => setRefundForm(p => ({ ...p, montant: v }))}
                   required placeholder="0" />
               </div>
               <div>
-                <Label>Méthode</Label>
+                <Label htmlFor="refund-methode">Méthode</Label>
                 <Select value={refundForm.methode}
                   onValueChange={v => setRefundForm(p => ({ ...p, methode: v }))}>
-                  <SelectTrigger className="w-full" aria-label="Méthode de remboursement">
+                  <SelectTrigger id="refund-methode" className="w-full" aria-label="Méthode de remboursement">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -999,15 +1014,15 @@ export default function TiersDetail() {
                 </Select>
               </div>
               <div>
-                <Label>Session caisse (optionnel)</Label>
-                <Input type="number" value={refundForm.session_caisse_id}
+                <Label htmlFor="refund-session">Session caisse (optionnel)</Label>
+                <Input id="refund-session" type="number" value={refundForm.session_caisse_id}
                   onChange={e => setRefundForm(p => ({ ...p, session_caisse_id: e.target.value }))}
                   placeholder="Auto si magasin acompte" />
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Si vide, session ouverte du magasin de l'acompte utilisée.
                 </p>
               </div>
-              <div><Label>Notes</Label><Input value={refundForm.notes} onChange={e => setRefundForm(p => ({ ...p, notes: e.target.value }))} /></div>
+              <div><Label htmlFor="refund-notes">Notes</Label><Input id="refund-notes" value={refundForm.notes} onChange={e => setRefundForm(p => ({ ...p, notes: e.target.value }))} /></div>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setRefundTarget(null)}>Annuler</Button>
                 <Button type="submit" disabled={submitting}>{submitting ? 'Remboursement...' : 'Rembourser'}</Button>

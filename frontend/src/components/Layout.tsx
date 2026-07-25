@@ -45,6 +45,14 @@ export default function Layout({ children }: LayoutProps) {
           onToggleSidebar={() => setCollapsed((c) => !c)}
           onOpenMobile={() => setMobileOpen(true)}
         />
+        {import.meta.env.DEV && (
+          <div
+            role="status"
+            className="border-b border-warning-300 bg-warning-50 px-3 py-1.5 text-center text-xs font-medium text-warning-900"
+          >
+            Environnement de développement — des données de test peuvent être présentes.
+          </div>
+        )}
         {/* key forces the enter animation to replay on each route change */}
         <main key={location.pathname} className="page-enter flex-1 w-full">
           {children}

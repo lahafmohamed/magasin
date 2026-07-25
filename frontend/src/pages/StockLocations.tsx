@@ -103,12 +103,12 @@ export default function StockLocations() {
 
     try {
       await stockLocationService.create(formData);
-      toast.success('Location créée');
+      toast.success('Emplacement créé');
       setShowCreateForm(false);
       setFormData({ code: '', nom: '', adresse: '', est_principal: false });
       fetchLocations();
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Erreur création location');
+      toast.error(err.response?.data?.error || "Erreur lors de la création de l'emplacement");
     } finally {
       setSubmitting(false);
     }
@@ -118,12 +118,12 @@ export default function StockLocations() {
     <div className="container mx-auto p-6">
       <PageHeader
         className="mb-6"
-        title="Locations de stock"
+        title="Emplacements de stock"
         icon={Warehouse}
         actions={
           <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
             <Plus className="h-4 w-4" />
-            Nouvelle location
+            Nouvel emplacement
           </Button>
         }
       />
@@ -131,7 +131,7 @@ export default function StockLocations() {
       <Dialog open={showCreateForm} onOpenChange={setShowCreateForm}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Nouvelle location</DialogTitle>
+            <DialogTitle>Nouvel emplacement</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
@@ -147,7 +147,7 @@ export default function StockLocations() {
               <Textarea id="loc-adresse" value={formData.adresse} onChange={(e) => setFormData({ ...formData, adresse: e.target.value })} />
             </div>
             <label className="flex items-center justify-between gap-3 cursor-pointer">
-              <span className="text-sm font-medium">Location principale</span>
+              <span className="text-sm font-medium">Emplacement principal</span>
               <input
                 type="checkbox"
                 className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
@@ -177,18 +177,18 @@ export default function StockLocations() {
         onRetry={fetchLocations}
         skeleton={<TableSkeleton rows={6} columns={5} />}
         emptyIcon={Warehouse}
-        emptyTitle="Aucune location de stock"
-        emptyDescription="Créez une location pour suivre le stock par site."
+        emptyTitle="Aucun emplacement de stock"
+        emptyDescription="Créez un emplacement pour suivre le stock par site."
         emptyAction={
           <Button onClick={() => setShowCreateForm(true)} className="gap-1.5">
-            <Plus className="h-4 w-4" /> Nouvelle location
+            <Plus className="h-4 w-4" /> Nouvel emplacement
           </Button>
         }
       >
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="rounded-md border bg-card shadow-sm">
             <div className="p-5">
-              <h2 className="text-lg font-semibold mb-3">Locations</h2>
+              <h2 className="text-lg font-semibold mb-3">Emplacements</h2>
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
@@ -242,7 +242,7 @@ export default function StockLocations() {
                 {filteredStockLevels.length === 0 ? (
                   <EmptyState
                     icon={Package}
-                    title={searchQuery.trim() ? 'Aucun produit trouvé' : 'Aucun stock dans cette location'}
+                    title={searchQuery.trim() ? 'Aucun produit trouvé' : 'Aucun stock dans cet emplacement'}
                   />
                 ) : (
                   <div className="rounded-md border">

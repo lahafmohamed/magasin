@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { BonLivraisonService } from '../services/BonLivraisonService';
 import { pdfService } from '../services/PDFService';
 import { AuthRequest } from '../middleware/auth';
+import { businessStatusOf } from '../utils/errors';
 
 const blService = new BonLivraisonService();
 
@@ -15,7 +16,7 @@ export class BonLivraisonController {
         statut as string,
         (tiers_id || client_id) ? parseInt((tiers_id || client_id) as string) : undefined,
         page ? parseInt(page as string) : 1,
-        limit ? parseInt(limit as string) : 20,
+        Math.min(200, (limit ? parseInt(limit as string) : 20) || 20),
         (sort as string) || 'date_bl',
         (order as string) || 'DESC'
       );
@@ -91,6 +92,15 @@ export class BonLivraisonController {
       const result = await blService.update(parseInt(req.params.id), req.body, req);
       res.json({ success: true, data: result });
     } catch (error: any) {
+      const status = businessStatusOf(error);
+      if (status) {
+        res.status(status).json({
+          success: false,
+          error: error.message,
+          code: error?.code,
+        });
+        return;
+      }
       console.error('BonLivraisonController:', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
@@ -117,7 +127,12 @@ export class BonLivraisonController {
       res.json({ success: true, data: result });
     } catch (error: any) {
       const msg = error?.message || 'Erreur lors de la conversion en facture';
-      res.status(400).json({ success: false, error: msg });
+      const status = businessStatusOf(error) ?? 400;
+      res.status(status).json({
+        success: false,
+        error: msg,
+        code: error?.code,
+      });
     }
   }
 

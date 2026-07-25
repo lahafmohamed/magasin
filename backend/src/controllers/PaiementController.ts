@@ -4,6 +4,7 @@ import { businessStatusOf } from '../utils/errors';
 import { parsePagination } from '../utils/pagination';
 import { logger } from '../utils/logger';
 import { paiementService } from '../services/PaiementService';
+import { pdfService } from '../services/PDFService';
 import { AuthRequest } from '../middleware/auth';
 
 /**
@@ -239,6 +240,28 @@ export class PaiementController {
       logger.error({ err: error }, 'Erreur DELETE /api/paiements/:id');
       const status = businessStatusOf(error);
       res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
+    }
+  }
+
+  /** Reçu de paiement (quittance) remis au client. */
+  static async generateRecuPDF(req: Request, res: Response): Promise<void> {
+    try {
+      const id = Number(req.params.id);
+      const { rows } = await pool.query(
+        'SELECT id FROM paiements WHERE id = $1 AND deleted_at IS NULL',
+        [id]
+      );
+      if (!rows[0]) {
+        res.status(404).json({ success: false, error: 'Paiement introuvable' });
+        return;
+      }
+      const buffer = await pdfService.generatePaiementRecuPDF(id);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="recu-paiement-${id}.pdf"`);
+      res.send(buffer);
+    } catch (error) {
+      logger.error({ err: error }, 'Erreur GET /api/paiements/:id/recu');
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

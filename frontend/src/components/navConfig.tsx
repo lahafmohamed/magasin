@@ -81,7 +81,7 @@ export function useNavCategories(): NavCategory[] {
         { path: '/commandes', label: 'Commandes', icon: ShoppingCart },
         { path: '/reapprovisionnement', label: 'Réapprovisionnement', icon: PackageSearch },
         { path: '/receptions', label: 'Réceptions', icon: Truck },
-        { path: '/factures-fournisseur', label: 'Factures Fourn.', icon: FileBarChart },
+        { path: '/factures-fournisseur', label: 'Factures fournisseurs', icon: FileBarChart },
       ],
     }] : []),
 
@@ -104,7 +104,7 @@ export function useNavCategories(): NavCategory[] {
       items: [
         { path: '/inventaire', label: 'Inventaire', icon: Package },
         ...((isAdminOrManager || isDepotStaff) ? [
-          { path: '/stock-locations', label: 'Locations', icon: MapPin },
+          { path: '/stock-locations', label: 'Emplacements', icon: MapPin },
           { path: '/stock-transfers', label: 'Transferts', icon: ArrowLeftRight },
           { path: '/demandes', label: 'Demandes Réappro', icon: ClipboardList },
         ] : []),
@@ -113,7 +113,7 @@ export function useNavCategories(): NavCategory[] {
         ] : []),
         ...((isAdminOrManager) ? [
           { path: '/affectations-locations', label: 'Affectations', icon: UserCheck },
-          { path: '/stock-valuation', label: 'Valuation', icon: TrendingUp },
+          { path: '/stock-valuation', label: 'Valorisation', icon: TrendingUp },
         ] : []),
       ],
     },

@@ -15,12 +15,12 @@ export class EmployeController {
         departement: departement as string,
         actif: actif === 'true' ? true : actif === 'false' ? false : undefined,
         page: parseInt(page as string) || 1,
-        limit: parseInt(limit as string) || 20,
+        limit: Math.min(200, parseInt(limit as string) || 20),
         sort: sort as string,
         order: order as string,
       });
 
-      paginatedResponse(res, employees.data, employees.total, parseInt(page as string) || 1, parseInt(limit as string) || 20, 'Employés récupérés avec succès');
+      paginatedResponse(res, employees.data, employees.total, parseInt(page as string) || 1, Math.min(200, parseInt(limit as string) || 20), 'Employés récupérés avec succès');
     } catch (error: any) {
       console.error('EmployeController:', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });

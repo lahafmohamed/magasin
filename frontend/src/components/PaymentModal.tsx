@@ -62,6 +62,16 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       return;
     }
 
+    if ((methodePaiement === 'cheque' || methodePaiement === 'virement') && !reference.trim()) {
+      setError(
+        methodePaiement === 'cheque'
+          ? 'Saisissez le numéro du chèque.'
+          : 'Saisissez la référence du virement.'
+      );
+      requestAnimationFrame(() => document.getElementById('payment-reference')?.focus());
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -94,7 +104,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           <DialogTitle>Enregistrer un paiement</DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <Label htmlFor="payment-amount">Montant du paiement</Label>
@@ -103,18 +113,23 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               </Button>
             </div>
             <MoneyInput
+              id="payment-amount"
               value={montant}
-              onChange={(v) => setMontant(v)}
+              onChange={(v) => {
+                setMontant(v);
+                setError('');
+              }}
               placeholder="0"
-              required
+              aria-invalid={isAmountInvalid}
+              aria-describedby="payment-amount-help"
             />
-            <p className="text-xs text-muted-foreground num">
+            <p id="payment-amount-help" className="text-xs text-muted-foreground num">
               Total facture: {formatFCFA(total)} · Déjà payé: {formatFCFA(total - remainingDue)}
             </p>
           </div>
 
           <div className="space-y-1.5">
-            <Label>Méthode de paiement</Label>
+            <p className="text-sm font-medium">Méthode de paiement</p>
             <div className="grid grid-cols-2 gap-2">
               {Object.entries(METHODES_PAIEMENT)
                 .filter(([key]) => key !== 'acompte')
@@ -145,7 +160,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               id="payment-reference"
               type="text"
               value={reference}
-              onChange={(e) => setReference(e.target.value)}
+              onChange={(e) => {
+                setReference(e.target.value);
+                setError('');
+              }}
               placeholder={
                 methodePaiement === 'cheque'
                   ? 'N° du chèque'
@@ -153,7 +171,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   ? 'Référence du virement'
                   : ''
               }
-              required={methodePaiement === 'cheque' || methodePaiement === 'virement'}
+              aria-required={methodePaiement === 'cheque' || methodePaiement === 'virement'}
             />
           </div>
 

@@ -119,8 +119,18 @@ export default function Avoirs() {
     try {
       setLoading(true);
       setSelected(new Set());
-      const data = await creditNoteService.getAll();
-      setAvoirs(data);
+      const firstPage = await creditNoteService.getAll(undefined, 1, 100);
+      const firstRows = firstPage?.data ?? [];
+      const totalPages = firstPage?.pagination?.totalPages ?? 1;
+      const remainingPages = totalPages > 1
+        ? await Promise.all(
+            Array.from({ length: totalPages - 1 }, (_, index) =>
+              creditNoteService.getAll(undefined, index + 2, 100)
+            )
+          )
+        : [];
+      const remainingRows = remainingPages.flatMap((response) => response?.data ?? []);
+      setAvoirs([...firstRows, ...remainingRows]);
     } catch {
       toast.error("Erreur lors du chargement des avoirs");
     } finally {

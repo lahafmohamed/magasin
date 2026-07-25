@@ -1,5 +1,4 @@
 import pool from '../db/connection';
-import { logger } from '../utils/logger';
 
 export interface PaginationParams {
   page: number;

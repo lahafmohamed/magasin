@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { bonLivraisonService, produitService } from '@/services/api';
+import { bonLivraisonService, devisService, produitService } from '@/services/api';
+import { formatCurrency } from '@/utils/format';
+import { DocumentPicker, DocumentOption } from '@/components/DocumentPicker';
 import { useDraft } from '@/hooks/useDraft';
 import { TiersPicker } from '@/components/TiersPicker';
 import { Tiers, Produit } from '@/types';
@@ -15,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ArrowLeft, Check, Search, Truck, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { getValidSalePrice } from '@/utils/salesPrice';
 
 const ligneSchema = z.object({
   produit_id: z.number(),
@@ -22,7 +25,7 @@ const ligneSchema = z.object({
   produit_reference: z.string(),
   quantite_commandee: z.number().positive('Quantité invalide'),
   quantite_livree: z.number().positive('Quantité invalide'),
-  prix_unitaire: z.number().min(0, 'Prix invalide'),
+  prix_unitaire: z.number().positive('Le prix doit être supérieur à zéro'),
   stock_dispo: z.number(),
 });
 
@@ -39,6 +42,19 @@ const blSchema = z.object({
 
 type BLFormValues = z.infer<typeof blSchema>;
 
+const searchDevisAcceptes = async (q: string): Promise<DocumentOption[]> => {
+  const res = await devisService.getAll(q, 'accepte', 1, 10);
+  const rows: any[] = res?.data ?? [];
+  return rows.map((d) => ({
+    id: d.id,
+    numero: d.numero_devis,
+    tiers_nom: `${d.client_nom || ''} ${d.client_prenom || ''}`.trim() || null,
+    montant: d.montant_total ?? d.total ?? null,
+    date: d.date_devis,
+    statut: d.statut,
+  }));
+};
+
 export default function NouveauBonLivraison() {
   const navigate = useNavigate();
 
@@ -47,6 +63,7 @@ export default function NouveauBonLivraison() {
   const [produitSearch, setProduitSearch] = useState('');
   const [showProduitDropdown, setShowProduitDropdown] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [selectedDevis, setSelectedDevis] = useState<DocumentOption | null>(null);
 
   const {
     control,
@@ -97,13 +114,20 @@ export default function NouveauBonLivraison() {
   }, [produitSearch]);
 
   const addProduit = (produit: Produit) => {
+    const prixVente = getValidSalePrice(produit.prix_vente);
+    if (prixVente === null) {
+      toast.error(
+        'Prix de vente non renseigné. Corrigez la fiche produit avant de continuer.'
+      );
+      return;
+    }
+
     if (getValues('lignes').some((l) => l.produit_id === produit.id)) {
       toast.warning('Ce produit est deja dans le bon de livraison');
       return;
     }
 
     const stock = typeof produit.stock === 'string' ? parseInt(produit.stock) : produit.stock;
-    const prixVente = parseFloat(produit.prix_vente as any) || 0;
 
     append({
       produit_id: produit.id,
@@ -124,7 +148,7 @@ export default function NouveauBonLivraison() {
   const selectedClient = watch('tiers');
   const watchedLignes = watch('lignes');
   const total = (watchedLignes ?? []).reduce(
-    (sum, l) => sum + Number(l.quantite_livree || 0) * Number(l.prix_unitaire || 0) * 1.19,
+    (sum, l) => sum + Number(l.quantite_livree || 0) * Number(l.prix_unitaire || 0),
     0
   );
 
@@ -202,18 +226,27 @@ export default function NouveauBonLivraison() {
         <Card>
           <CardHeader>
             <CardTitle>Devis parent</CardTitle>
-            <CardDescription>Le bon de livraison doit être lié à un devis confirmé</CardDescription>
+            <CardDescription>Le bon de livraison doit être lié à un devis accepté</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-1.5">
               <Label htmlFor="bl-devis-id">Devis<span className="text-destructive"> *</span></Label>
-              <Input
-                id="bl-devis-id"
-                type="number"
-                min={1}
-                placeholder="ID du devis"
-                aria-invalid={errors.devisId ? true : undefined}
-                {...register('devisId')}
+              <Controller
+                control={control}
+                name="devisId"
+                render={({ field }) => (
+                  <DocumentPicker
+                    inputId="bl-devis-id"
+                    value={field.value ? selectedDevis : null}
+                    fallbackId={field.value && !selectedDevis ? field.value : undefined}
+                    onChange={(doc) => {
+                      setSelectedDevis(doc);
+                      field.onChange(doc ? String(doc.id) : '');
+                    }}
+                    search={searchDevisAcceptes}
+                    placeholder="Rechercher un devis accepté (numéro, client)..."
+                  />
+                )}
               />
               {errors.devisId && (
                 <p role="alert" className="text-xs text-danger">
@@ -273,19 +306,41 @@ export default function NouveauBonLivraison() {
               />
               {showProduitDropdown && produits.length > 0 && (
                 <ul className="absolute z-10 w-full mt-1 bg-background border rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                  {produits.map((p) => (
-                    <li
-                      key={p.id}
-                      className="px-4 py-3 hover:bg-muted cursor-pointer transition-colors flex justify-between border-b last:border-b-0"
-                      onMouseDown={() => addProduit(p)}
-                    >
-                      <div>
-                        <p className="font-semibold">{p.nom}</p>
-                        <p className="text-sm text-muted-foreground font-mono">{p.reference}</p>
-                      </div>
-                      <p className="font-semibold">{parseFloat(p.prix_vente as any || 0).toFixed(2)} XOF</p>
-                    </li>
-                  ))}
+                  {produits.map((p) => {
+                    const prixVente = getValidSalePrice(p.prix_vente);
+                    const prixManquant = prixVente === null;
+                    return (
+                      <li key={p.id} className="border-b last:border-b-0">
+                        <button
+                          type="button"
+                          disabled={prixManquant}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            if (!prixManquant) addProduit(p);
+                          }}
+                          title={prixManquant ? 'Renseignez le prix de vente dans la fiche produit' : undefined}
+                          className={`w-full px-4 py-3 transition-colors flex justify-between text-left ${
+                            prixManquant
+                              ? 'cursor-not-allowed bg-destructive/5 opacity-70'
+                              : 'hover:bg-muted'
+                          }`}
+                        >
+                          <div>
+                            <p className="font-semibold">{p.nom}</p>
+                            <p className="text-sm text-muted-foreground font-mono">{p.reference}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className={`font-semibold ${prixManquant ? 'text-destructive' : ''}`}>
+                              {prixManquant ? 'Prix non renseigné' : formatCurrency(prixVente)}
+                            </p>
+                            {prixManquant && (
+                              <p className="text-xs text-destructive">Corriger dans l’inventaire</p>
+                            )}
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -295,10 +350,10 @@ export default function NouveauBonLivraison() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Produit</TableHead>
-                    <TableHead className="w-28">Qte Commandee<span className="text-destructive"> *</span></TableHead>
-                    <TableHead className="w-28">Qte Livree<span className="text-destructive"> *</span></TableHead>
-                    <TableHead className="w-36">Prix Unitaire<span className="text-destructive"> *</span></TableHead>
-                    <TableHead className="w-32">Total TTC</TableHead>
+                    <TableHead className="w-28">Qté commandée<span className="text-destructive"> *</span></TableHead>
+                    <TableHead className="w-28">Qté livrée<span className="text-destructive"> *</span></TableHead>
+                    <TableHead className="w-36">Prix unitaire<span className="text-destructive"> *</span></TableHead>
+                    <TableHead className="w-32">Total</TableHead>
                     <TableHead className="w-16"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -306,7 +361,7 @@ export default function NouveauBonLivraison() {
                   {fields.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                        Aucun produit ajoute
+                        Aucun article ajouté au bon de livraison
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -361,7 +416,7 @@ export default function NouveauBonLivraison() {
                             )}
                           </TableCell>
                           <TableCell className="font-semibold">
-                            {(Number(ligne.quantite_livree || 0) * Number(ligne.prix_unitaire || 0) * 1.19).toFixed(2)} XOF
+                            {formatCurrency(Number(ligne.quantite_livree || 0) * Number(ligne.prix_unitaire || 0))}
                           </TableCell>
                           <TableCell>
                             <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)}>
@@ -399,8 +454,8 @@ export default function NouveauBonLivraison() {
         <Card>
           <CardContent className="pt-6 flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Total estime (TTC)</p>
-              <p className="text-2xl font-bold">{total.toFixed(2)} XOF</p>
+              <p className="text-sm text-muted-foreground">Total estime</p>
+              <p className="text-2xl font-bold">{formatCurrency(total)}</p>
             </div>
             <Button type="submit" disabled={submitting || !selectedClient || fields.length === 0}>
               <Check className="h-4 w-4 mr-2" />

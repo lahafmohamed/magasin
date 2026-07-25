@@ -205,22 +205,52 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
 
       const receptionId = receptionResult[0].id;
 
-      // Insert line items and update stock
+      // Insert line items in one statement; the costed stock-in stays a
+      // per-line call — it owns the weighted-average CMP math (same-product
+      // lines must compound sequentially). Movements and prix_achat sync are
+      // collected during the loop and written set-based afterwards.
+      const rlProduits: number[] = [];
+      const rlQtesCmd: number[] = [];
+      const rlQtesRecues: number[] = [];
+      const rlCouts: number[] = [];
+      const rlTotaux: number[] = [];
+      const rlEcarts: number[] = [];
+      const rlNotes: (string | null)[] = [];
       for (const ligne of lignes) {
-        const totalLigne = ligne.quantite_recue * ligne.cout_unitaire;
-        const ecart = ligne.quantite_recue - ligne.quantite_commandee;
-
-        await client.query(
-          `INSERT INTO reception_lignes
+        rlProduits.push(ligne.produit_id);
+        rlQtesCmd.push(ligne.quantite_commandee);
+        rlQtesRecues.push(ligne.quantite_recue);
+        rlCouts.push(ligne.cout_unitaire);
+        rlTotaux.push(ligne.quantite_recue * ligne.cout_unitaire);
+        rlEcarts.push(ligne.quantite_recue - ligne.quantite_commandee);
+        rlNotes.push(ligne.notes || null);
+      }
+      await client.query(
+        `INSERT INTO reception_lignes
            (reception_id, produit_id, quantite_commandee, quantite_recue, cout_unitaire, total_ligne, ecart, notes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [receptionId, ligne.produit_id, ligne.quantite_commandee, ligne.quantite_recue, ligne.cout_unitaire, totalLigne, ecart, ligne.notes || null]
-        );
+         SELECT $1, unnest($2::int[]), unnest($3::int[]), unnest($4::int[]), unnest($5::numeric[]), unnest($6::numeric[]), unnest($7::int[]), unnest($8::text[])`,
+        [receptionId, rlProduits, rlQtesCmd, rlQtesRecues, rlCouts, rlTotaux, rlEcarts, rlNotes]
+      );
 
-        // Update product stock with received quantity: single costed stock-in
-        // recomputes the weighted-average CMP from the pre-inflow row.
-        // (The previous split upsert-then-recompute read quantite AFTER the
-        // increment, double-counting the received qty in the denominator.)
+      // Stable-order lock (produit_id ASC) on the rows costedStockIn will
+      // touch — removes deadlock exposure between concurrent receptions.
+      await client.query(
+        `SELECT produit_id FROM stock_par_location
+         WHERE location_id = $2 AND produit_id = ANY($1::int[])
+         ORDER BY produit_id
+         FOR UPDATE`,
+        [[...new Set(rlProduits)], effectiveLocationId]
+      );
+
+      const mvtProduits: number[] = [];
+      const mvtQtes: number[] = [];
+      const mvtAvant: number[] = [];
+      const mvtApres: number[] = [];
+      const prixAchatByProduit = new Map<number, number>();
+      for (const ligne of lignes) {
+        // Single costed stock-in recomputes the weighted-average CMP from the
+        // pre-inflow row. (The previous split upsert-then-recompute read
+        // quantite AFTER the increment, double-counting the received qty.)
         if (ligne.quantite_recue > 0) {
           const stockIn = await costedStockIn(client, {
             produitId: ligne.produit_id,
@@ -228,29 +258,35 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
             quantite: ligne.quantite_recue,
             unitCost: ligne.cout_unitaire > 0 ? ligne.cout_unitaire : null,
           });
-
-          await client.query(
-            `INSERT INTO mouvements_stock
-               (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)
-             VALUES ($1, 'commande', $2, $3, $4, $5, $6, $7)`,
-            [
-              ligne.produit_id,
-              ligne.quantite_recue,
-              stockIn.stockAvant,
-              stockIn.stockApres,
-              `Réception — ${numeroReception}`,
-              numeroReception,
-              effectiveLocationId,
-            ]
-          );
-
+          mvtProduits.push(ligne.produit_id);
+          mvtQtes.push(ligne.quantite_recue);
+          mvtAvant.push(stockIn.stockAvant);
+          mvtApres.push(stockIn.stockApres);
           if (ligne.cout_unitaire > 0) {
-            await client.query(
-              'UPDATE produits SET prix_achat = $1 WHERE id = $2',
-              [stockIn.cmpApres, ligne.produit_id]
-            );
+            // last same-product line wins — identical to the sequential loop
+            prixAchatByProduit.set(ligne.produit_id, stockIn.cmpApres);
           }
         }
+      }
+
+      if (mvtProduits.length > 0) {
+        await client.query(
+          `INSERT INTO mouvements_stock
+             (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)
+           SELECT unnest($1::int[]), 'commande', unnest($2::int[]), unnest($3::int[]), unnest($4::int[]), $5, $6, $7`,
+          [mvtProduits, mvtQtes, mvtAvant, mvtApres, `Réception — ${numeroReception}`, numeroReception, effectiveLocationId]
+        );
+      }
+      if (prixAchatByProduit.size > 0) {
+        const ids = [...prixAchatByProduit.keys()];
+        const cmps = ids.map((id) => prixAchatByProduit.get(id)!);
+        await client.query(
+          `UPDATE produits p
+           SET prix_achat = v.cmp
+           FROM (SELECT unnest($1::int[]) AS pid, unnest($2::numeric[]) AS cmp) v
+           WHERE p.id = v.pid`,
+          [ids, cmps]
+        );
       }
 
       // Update order status to delivered

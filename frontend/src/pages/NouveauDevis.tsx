@@ -9,13 +9,14 @@ import { TiersPicker } from '@/components/TiersPicker';
 import { Tiers, Produit } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Check, FileText, Search, ShoppingCart, X } from 'lucide-react';
 import { formatFCFA as formatXOF } from '@/utils/format';
 import { toast } from 'sonner';
+import { getValidSalePrice } from '@/utils/salesPrice';
 
 interface StockLocation {
   id: number;
@@ -31,7 +32,7 @@ interface StockLevel {
 
 // --- zod schema -----------------------------------------------------------
 // Required (matches the original handleSubmit guards): a client must be
-// selected and at least one line item with quantité > 0 / prix >= 0.
+// selected and at least one line item with quantité > 0 / prix > 0.
 // location_id, date_validite and notes are optional, exactly like before
 // (the payload sent them as `value || undefined`).
 const ligneSchema = z.object({
@@ -39,7 +40,7 @@ const ligneSchema = z.object({
   produit_nom: z.string(),
   produit_reference: z.string(),
   quantite: z.number().int().min(1, 'Quantité invalide'),
-  prix_unitaire: z.number().min(0, 'Prix invalide'),
+  prix_unitaire: z.number().positive('Le prix doit être supérieur à zéro'),
   prix_revient: z.number(),
   stock_dispo: z.number(),
 });
@@ -218,13 +219,20 @@ export default function NouveauDevis() {
   }, [produitSearch, selectedLocationId]);
 
   const addProduit = (produit: Produit) => {
+    const prixVente = getValidSalePrice(produit.prix_vente);
+    if (prixVente === null) {
+      toast.error(
+        'Prix de vente non renseigné. Corrigez la fiche produit avant de continuer.'
+      );
+      return;
+    }
+
     const current = getValues('lignes');
     if (current.some((l) => l.produit_id === produit.id)) {
       toast.warning('Ce produit est déjà dans le devis');
       return;
     }
 
-    const prixVente = parseFloat(produit.prix_vente as any) || 0;
     const prixAchat = parseFloat(produit.prix_achat as any) || 0;
     const fallbackStock =
       typeof produit.stock === 'string' ? parseInt(produit.stock, 10) : Number(produit.stock || 0);
@@ -442,7 +450,8 @@ export default function NouveauDevis() {
               {showProduitDropdown && produits.length > 0 && (
                 <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-popover border rounded-lg shadow-lg overflow-hidden max-h-80 overflow-y-auto">
                   {produits.map((p) => {
-                    const prixVente = parseFloat(p.prix_vente as any) || 0;
+                    const prixVente = getValidSalePrice(p.prix_vente);
+                    const prixManquant = prixVente === null;
                     const apiStock =
                       typeof p.stock === 'string' ? parseInt(p.stock, 10) : Number(p.stock || 0);
                     const stock = selectedLocationId
@@ -456,8 +465,17 @@ export default function NouveauDevis() {
                       <button
                         key={p.id}
                         type="button"
-                        onMouseDown={() => addProduit(p)}
-                        className="flex items-center gap-3 w-full px-3 py-2.5 text-left hover:bg-muted border-b last:border-b-0"
+                        disabled={prixManquant}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          if (!prixManquant) addProduit(p);
+                        }}
+                        title={prixManquant ? 'Renseignez le prix de vente dans la fiche produit' : undefined}
+                        className={`flex items-center gap-3 w-full px-3 py-2.5 text-left border-b last:border-b-0 ${
+                          prixManquant
+                            ? 'cursor-not-allowed bg-destructive/5 opacity-70'
+                            : 'hover:bg-muted'
+                        }`}
                       >
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium truncate">{p.nom}</div>
@@ -466,13 +484,21 @@ export default function NouveauDevis() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-sm font-semibold font-mono">{formatXOF(prixVente)}</div>
+                          <div className="text-sm font-semibold font-mono">
+                            {prixManquant ? 'Prix non renseigné' : formatXOF(prixVente)}
+                          </div>
                           <div
                             className={`text-[11px] ${
-                              stock <= stockMin ? 'text-destructive' : 'text-success-600'
+                              prixManquant || stock <= stockMin
+                                ? 'text-destructive'
+                                : 'text-success-600'
                             }`}
                           >
-                            {stock <= stockMin ? 'Stock bas' : 'Disponible'}
+                            {prixManquant
+                              ? 'Corriger dans l’inventaire'
+                              : stock <= stockMin
+                                ? 'Stock bas'
+                                : 'Disponible'}
                           </div>
                         </div>
                       </button>
@@ -606,7 +632,7 @@ export default function NouveauDevis() {
               </div>
             ) : (
               <div className="mt-4 py-8 text-center text-sm text-muted-foreground bg-muted/30 rounded-lg">
-                Aucun produit. Recherchez pour ajouter.
+                Aucun article ajouté au devis.
               </div>
             )}
             {lignesError && (
@@ -624,7 +650,13 @@ export default function NouveauDevis() {
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="devis-validite">Date de validité</Label>
-              <Input id="devis-validite" type="date" {...register('date_validite')} />
+              <Controller
+                control={control}
+                name="date_validite"
+                render={({ field }) => (
+                  <DatePicker id="devis-validite" value={field.value} onChange={field.onChange} />
+                )}
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="devis-notes">Notes</Label>

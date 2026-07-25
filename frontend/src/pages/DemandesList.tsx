@@ -101,7 +101,7 @@ export default function DemandesList() {
         aTraiter: data.filter((d: Demande) => ['envoyee', 'approuvee', 'partiellement_approuvee'].includes(d.statut)).length,
         livrees: data.filter((d: Demande) => d.statut === 'livree').length,
       });
-    } catch (error: any) {
+    } catch {
       toast.error('Erreur lors du chargement des demandes');
     } finally {
       setLoading(false);

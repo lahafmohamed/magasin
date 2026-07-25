@@ -8,19 +8,26 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
-import { Plus, Search, Pencil, Trash2, Users, Truck, UserCheck, Eye, ArrowUpDown, ArrowUp, ArrowDown, Download } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Users, Truck, UserCheck, Eye, ArrowUpDown, ArrowUp, ArrowDown, Download, MoreHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatFCFA } from '@/utils/format';
 import { useExportExcel } from '../hooks/useExportExcel';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import { ListSkeleton } from '@/components/ui/skeleton';
-import { EmptyState } from '@/components/ui/empty-state';
+import { QueryState } from '@/components/ui/query-state';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 type RoleFilter = 'all' | 'client' | 'fournisseur' | 'mixte';
+type ContactFormErrors = Partial<Record<'raison_sociale' | 'email' | 'credit_max' | 'roles', string>>;
 
 const ROLE_TABS: { value: RoleFilter; label: string; icon: any }[] = [
   { value: 'all', label: 'Tous', icon: UserCheck },
@@ -37,6 +44,7 @@ export default function TiersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [role, setRole] = useState<RoleFilter>('all');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
   const [total, setTotal] = useState(0);
@@ -48,6 +56,7 @@ export default function TiersPage() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Tiers | null>(null);
   const [saving, setSaving] = useState(false);
+  const [formErrors, setFormErrors] = useState<ContactFormErrors>({});
 
   const blankForm = {
     raison_sociale: '', prenom: '', telephone: '', email: '', adresse: '',
@@ -67,13 +76,20 @@ export default function TiersPage() {
 
   const loadTiers = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await tiersService.getAll({ search: debouncedSearch, role, page, limit, sort, order });
       const rows = res?.data ?? res ?? [];
       setTiers(Array.isArray(rows) ? rows : []);
       setTotal(res?.pagination?.total ?? 0);
       setTotalPages(res?.pagination?.totalPages ?? 0);
-    } catch { toast.error('Erreur chargement contacts'); }
+    } catch (err) {
+      // Erreur conservée en état → QueryState propose « Réessayer » au lieu de
+      // laisser une liste vide derrière un toast qui disparaît.
+      setError(err);
+      setTiers([]);
+      toast.error('Erreur chargement contacts');
+    }
     finally { setLoading(false); }
   };
 
@@ -89,9 +105,15 @@ export default function TiersPage() {
       : <ArrowDown className="h-3 w-3 opacity-100" />;
   };
 
-  const openCreate = () => { setEditing(null); setFormData(blankForm); setShowForm(true); };
+  const openCreate = () => {
+    setEditing(null);
+    setFormData(blankForm);
+    setFormErrors({});
+    setShowForm(true);
+  };
   const openEdit = (t: Tiers) => {
     setEditing(t);
+    setFormErrors({});
     setFormData({
       raison_sociale: t.raison_sociale, prenom: t.prenom || '', telephone: t.telephone || '',
       email: t.email || '', adresse: t.adresse || '', nif: t.nif || '', rccm: t.rccm || '',
@@ -103,9 +125,31 @@ export default function TiersPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.est_client && !formData.est_fournisseur) {
-      toast.error('Sélectionnez au moins un rôle'); return;
+    const nextErrors: ContactFormErrors = {};
+    if (!formData.raison_sociale.trim()) {
+      nextErrors.raison_sociale = 'Saisissez la raison sociale ou le nom du contact.';
     }
+    if (formData.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
+      nextErrors.email = 'Saisissez une adresse email valide.';
+    }
+    if (formData.credit_max < 0 || formData.credit_max > 15000000) {
+      nextErrors.credit_max = 'Le plafond doit être compris entre 0 et 15 000 000 FCFA.';
+    }
+    if (!formData.est_client && !formData.est_fournisseur) {
+      nextErrors.roles = 'Sélectionnez au moins un rôle.';
+    }
+
+    setFormErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      const firstInvalidId =
+        nextErrors.raison_sociale ? 'tiers-raison-sociale'
+          : nextErrors.email ? 'tiers-email'
+            : nextErrors.credit_max ? 'tiers-credit-max'
+              : 'tiers-role-client';
+      requestAnimationFrame(() => document.getElementById(firstInvalidId)?.focus());
+      return;
+    }
+
     setSaving(true);
     try {
       if (editing) await tiersService.update(editing.id, formData);
@@ -188,13 +232,18 @@ export default function TiersPage() {
           </div>
 
           {/* Table */}
+          <QueryState
+            loading={loading}
+            error={error}
+            isEmpty={tiers.length === 0}
+            onRetry={loadTiers}
+            skeleton={<ListSkeleton items={6} />}
+            emptyIcon={Users}
+            emptyTitle="Aucun contact trouvé"
+          >
           <ResponsiveTable
             cards={
-              loading ? (
-                <ListSkeleton items={6} />
-              ) : tiers.length === 0 ? (
-                <EmptyState icon={Users} title="Aucun contact trouvé" />
-              ) : (
+              (
                 tiers.map((t) => {
                   const soldeNet = (t.solde_net ?? (parseFloat(t.solde_client_live ?? 0) - parseFloat(t.solde_fournisseur_live ?? 0)));
                   return (
@@ -213,15 +262,28 @@ export default function TiersPage() {
                       <DataCardRow label="Contact" value={t.telephone || t.email || '—'} />
                       <DataCardRow label="Solde net" value={<span className={`num font-semibold ${soldeNetColor(soldeNet)}`}>{(t.est_client || t.est_fournisseur) ? formatFCFA(soldeNet) : '—'}</span>} />
                       <div className="mt-2 flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate(`/tiers/${t.id}`)} aria-label="Voir ce contact">
+                        <Button variant="ghost" size="icon" className="h-11 w-11" onClick={() => navigate(`/tiers/${t.id}`)} aria-label="Voir ce contact">
                           <Eye className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(t)} aria-label="Modifier ce contact">
+                        <Button variant="ghost" size="icon" className="h-11 w-11" onClick={() => openEdit(t)} aria-label="Modifier ce contact">
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="destructive" size="icon" className="h-8 w-8" onClick={() => handleDelete(t.id)} aria-label="Supprimer ce contact">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-11 w-11" aria-label="Plus d’actions pour ce contact">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              className="min-h-11 gap-2 text-danger-700 focus:text-danger-700"
+                              onSelect={() => void handleDelete(t.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Supprimer
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </DataCard>
                   );
@@ -250,11 +312,7 @@ export default function TiersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading ? (
-                <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Chargement...</TableCell></TableRow>
-              ) : tiers.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">Aucun contact trouvé</TableCell></TableRow>
-              ) : tiers.map(t => {
+              {tiers.map(t => {
                 const soldeNet = (t.solde_net ?? (parseFloat(t.solde_client_live ?? 0) - parseFloat(t.solde_fournisseur_live ?? 0)));
                 return (
                   <TableRow key={t.id} className="hover:bg-muted/30">
@@ -290,9 +348,22 @@ export default function TiersPage() {
                         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(t)} aria-label="Modifier ce contact">
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="destructive" size="icon" className="h-7 w-7" onClick={() => handleDelete(t.id)} aria-label="Supprimer ce contact">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Plus d’actions pour ce contact">
+                              <MoreHorizontal className="h-3.5 w-3.5" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              className="gap-2 text-danger-700 focus:text-danger-700"
+                              onSelect={() => void handleDelete(t.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Supprimer
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -303,6 +374,7 @@ export default function TiersPage() {
           </div>
             }
           />
+          </QueryState>
 
           {totalPages > 1 && (
             <div className="p-4 border-t">
@@ -317,70 +389,141 @@ export default function TiersPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{editing ? 'Modifier le contact' : 'Nouveau contact'}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {editing
+                ? 'Modifiez les informations, les rôles et les coordonnées du contact.'
+                : 'Renseignez les informations, les rôles et les coordonnées du nouveau contact.'}
+            </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
-              <Label>Raison sociale *</Label>
-              <Input value={formData.raison_sociale} onChange={e => setFormData(p => ({ ...p, raison_sociale: e.target.value }))} required />
+              <Label htmlFor="tiers-raison-sociale">Raison sociale *</Label>
+              <Input
+                id="tiers-raison-sociale"
+                value={formData.raison_sociale}
+                onChange={e => {
+                  setFormData(p => ({ ...p, raison_sociale: e.target.value }));
+                  setFormErrors(p => ({ ...p, raison_sociale: undefined }));
+                }}
+                aria-invalid={!!formErrors.raison_sociale}
+                aria-describedby={formErrors.raison_sociale ? 'tiers-raison-sociale-error' : undefined}
+              />
+              {formErrors.raison_sociale && (
+                <p id="tiers-raison-sociale-error" role="alert" className="mt-1 text-xs text-danger-700">
+                  {formErrors.raison_sociale}
+                </p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Prénom / Contact</Label>
-                <Input value={formData.prenom} onChange={e => setFormData(p => ({ ...p, prenom: e.target.value }))} />
+                <Label htmlFor="tiers-prenom">Prénom / Contact</Label>
+                <Input id="tiers-prenom" value={formData.prenom} onChange={e => setFormData(p => ({ ...p, prenom: e.target.value }))} />
               </div>
               <div>
-                <Label>Téléphone</Label>
-                <Input value={formData.telephone} onChange={e => setFormData(p => ({ ...p, telephone: e.target.value }))} />
+                <Label htmlFor="tiers-telephone">Téléphone</Label>
+                <Input id="tiers-telephone" value={formData.telephone} onChange={e => setFormData(p => ({ ...p, telephone: e.target.value }))} />
               </div>
             </div>
             <div>
-              <Label>Email</Label>
-              <Input type="email" value={formData.email} onChange={e => setFormData(p => ({ ...p, email: e.target.value }))} />
+              <Label htmlFor="tiers-email">Email</Label>
+              <Input
+                id="tiers-email"
+                type="email"
+                value={formData.email}
+                onChange={e => {
+                  setFormData(p => ({ ...p, email: e.target.value }));
+                  setFormErrors(p => ({ ...p, email: undefined }));
+                }}
+                aria-invalid={!!formErrors.email}
+                aria-describedby={formErrors.email ? 'tiers-email-error' : undefined}
+              />
+              {formErrors.email && (
+                <p id="tiers-email-error" role="alert" className="mt-1 text-xs text-danger-700">
+                  {formErrors.email}
+                </p>
+              )}
             </div>
             <div>
-              <Label>Adresse</Label>
-              <Input value={formData.adresse} onChange={e => setFormData(p => ({ ...p, adresse: e.target.value }))} />
+              <Label htmlFor="tiers-adresse">Adresse</Label>
+              <Input id="tiers-adresse" value={formData.adresse} onChange={e => setFormData(p => ({ ...p, adresse: e.target.value }))} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>NIF</Label>
-                <Input value={formData.nif} onChange={e => setFormData(p => ({ ...p, nif: e.target.value }))} />
+                <Label htmlFor="tiers-nif">NIF</Label>
+                <Input id="tiers-nif" value={formData.nif} onChange={e => setFormData(p => ({ ...p, nif: e.target.value }))} />
               </div>
               <div>
-                <Label>RCCM</Label>
-                <Input value={formData.rccm} onChange={e => setFormData(p => ({ ...p, rccm: e.target.value }))} />
+                <Label htmlFor="tiers-rccm">RCCM</Label>
+                <Input id="tiers-rccm" value={formData.rccm} onChange={e => setFormData(p => ({ ...p, rccm: e.target.value }))} />
               </div>
             </div>
             {formData.est_client && (
               <div>
-                <Label>Plafond de crédit (max: 15 000 000 FCFA)</Label>
+                <Label htmlFor="tiers-credit-max">Plafond de crédit (max: 15 000 000 FCFA)</Label>
                 <Input
+                  id="tiers-credit-max"
                   type="number"
                   min="0"
                   max="15000000"
                   value={formData.credit_max}
-                  onChange={e => setFormData(p => ({ ...p, credit_max: Math.min(15000000, parseFloat(e.target.value) || 0) }))}
+                  onChange={e => {
+                    setFormData(p => ({ ...p, credit_max: parseFloat(e.target.value) || 0 }));
+                    setFormErrors(p => ({ ...p, credit_max: undefined }));
+                  }}
                   placeholder="0"
+                  aria-invalid={!!formErrors.credit_max}
+                  aria-describedby={formErrors.credit_max ? 'tiers-credit-max-error' : 'tiers-credit-max-help'}
                 />
-                <p className="text-xs text-muted-foreground mt-1">Maximum autorisé: 15 000 000 FCFA</p>
+                <p id="tiers-credit-max-help" className="text-xs text-muted-foreground mt-1">Maximum autorisé: 15 000 000 FCFA</p>
+                {formErrors.credit_max && (
+                  <p id="tiers-credit-max-error" role="alert" className="mt-1 text-xs text-danger-700">
+                    {formErrors.credit_max}
+                  </p>
+                )}
               </div>
             )}
             <div>
               <Label className="mb-2 block">Rôles *</Label>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={formData.est_client} onChange={e => setFormData(p => ({ ...p, est_client: e.target.checked }))} className="rounded" />
+                  <input
+                    id="tiers-role-client"
+                    type="checkbox"
+                    checked={formData.est_client}
+                    onChange={e => {
+                      setFormData(p => ({ ...p, est_client: e.target.checked }));
+                      setFormErrors(p => ({ ...p, roles: undefined }));
+                    }}
+                    className="rounded"
+                    aria-invalid={!!formErrors.roles}
+                    aria-describedby={formErrors.roles ? 'tiers-roles-error' : undefined}
+                  />
                   <span className="text-sm flex items-center gap-1"><Users className="h-3.5 w-3.5 text-blue-600" /> Client</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={formData.est_fournisseur} onChange={e => setFormData(p => ({ ...p, est_fournisseur: e.target.checked }))} className="rounded" />
+                  <input
+                    type="checkbox"
+                    checked={formData.est_fournisseur}
+                    onChange={e => {
+                      setFormData(p => ({ ...p, est_fournisseur: e.target.checked }));
+                      setFormErrors(p => ({ ...p, roles: undefined }));
+                    }}
+                    className="rounded"
+                    aria-invalid={!!formErrors.roles}
+                    aria-describedby={formErrors.roles ? 'tiers-roles-error' : undefined}
+                  />
                   <span className="text-sm flex items-center gap-1"><Truck className="h-3.5 w-3.5 text-orange-600" /> Fournisseur</span>
                 </label>
               </div>
+              {formErrors.roles && (
+                <p id="tiers-roles-error" role="alert" className="mt-1 text-xs text-danger-700">
+                  {formErrors.roles}
+                </p>
+              )}
             </div>
             <div>
-              <Label>Notes</Label>
-              <Textarea value={formData.notes} onChange={e => setFormData(p => ({ ...p, notes: e.target.value }))} rows={2} />
+              <Label htmlFor="tiers-notes">Notes</Label>
+              <Textarea id="tiers-notes" value={formData.notes} onChange={e => setFormData(p => ({ ...p, notes: e.target.value }))} rows={2} />
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Annuler</Button>

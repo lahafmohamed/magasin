@@ -218,13 +218,13 @@ export default function ParametresFinance() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <Label>Tolérance quantité (%)</Label>
-                <Input type="number" step="0.01" value={toPct(match.qte_tolerance_pct)}
+                <Label htmlFor="match-tol-qte">Tolérance quantité (%)</Label>
+                <Input id="match-tol-qte" type="number" step="0.01" value={toPct(match.qte_tolerance_pct)}
                   onChange={(e) => setMatch({ ...match, qte_tolerance_pct: fromPct(e.target.value) })} />
               </div>
               <div>
-                <Label>Tolérance prix (%)</Label>
-                <Input type="number" step="0.01" value={toPct(match.prix_tolerance_pct)}
+                <Label htmlFor="match-tol-prix">Tolérance prix (%)</Label>
+                <Input id="match-tol-prix" type="number" step="0.01" value={toPct(match.prix_tolerance_pct)}
                   onChange={(e) => setMatch({ ...match, prix_tolerance_pct: fromPct(e.target.value) })} />
               </div>
             </div>

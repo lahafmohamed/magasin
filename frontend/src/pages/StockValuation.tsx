@@ -22,6 +22,7 @@ export default function StockValuation() {
   const [valuation, setValuation] = useState<any>(null);
   const [byCategory, setByCategory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     loadValuation();
@@ -29,6 +30,7 @@ export default function StockValuation() {
 
   const loadValuation = async () => {
     setLoading(true);
+    setError(false);
     try {
       const [valuationData, categoryData] = await Promise.all([
         produitService.getStockValuation(),
@@ -50,9 +52,10 @@ export default function StockValuation() {
         valeur_achat: parseFloat(cat.valeur_achat),
         valeur_vente: parseFloat(cat.valeur_vente),
       })));
-    } catch (error) {
+    } catch (err) {
+      setError(true);
       toast.error('Erreur lors du chargement');
-      console.error(error);
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -77,6 +80,21 @@ export default function StockValuation() {
     return (
       <div className="flex justify-center items-center min-h-[400px]">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      </div>
+    );
+  }
+
+  // Distinguish a fetch failure from a genuinely empty valuation: on error the
+  // body was silently hidden behind `{valuation && …}` with only a fading toast.
+  if (error && !valuation) {
+    return (
+      <div className="p-3 sm:p-6 w-full">
+        <EmptyState
+          icon={BarChart3}
+          title="Impossible de charger la valorisation"
+          description="Une erreur est survenue. Vérifiez votre connexion et réessayez."
+          action={<Button onClick={loadValuation}>Réessayer</Button>}
+        />
       </div>
     );
   }
@@ -158,8 +176,8 @@ export default function StockValuation() {
               {byCategory.length === 0 ? (
                 <EmptyState icon={BarChart3} title="Aucune donnée" description="Aucune valeur de stock à afficher." />
               ) : (
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={byCategory}>
+                <ResponsiveContainer width="100%" height={300} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                  <BarChart accessibilityLayer data={byCategory}>
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
                     <XAxis dataKey="categorie" tick={{ fontSize: 11, fill: CHART_AXIS }} />
                     <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />

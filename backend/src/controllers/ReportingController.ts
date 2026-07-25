@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { consoleError } from '../utils/logError';
-import { reportingService } from '../services/ReportingService';
+import { ReceivableBucket, reportingService } from '../services/ReportingService';
+import { EXPORT_MAX_ROWS, parsePagination } from '../utils/pagination';
 
 export class ReportingController {
 
@@ -31,10 +32,52 @@ export class ReportingController {
 
   static async getReceivablesAging(req: Request, res: Response): Promise<void> {
     try {
-      const data = await reportingService.getReceivablesAging();
-      res.json({ success: true, data });
+      const { page, limit } = parsePagination(req.query as Record<string, any>, { limit: 20 });
+      const result = await reportingService.getReceivablesAging({
+        search: req.query.search as string | undefined,
+        minAmount: req.query.min_amount === undefined ? undefined : Number(req.query.min_amount),
+        bucket: req.query.bucket as ReceivableBucket | undefined,
+        locationId: req.query.location_id === undefined ? undefined : Number(req.query.location_id),
+        page,
+        limit,
+      });
+      res.json({
+        success: true,
+        data: result.data,
+        pagination: {
+          page: result.page,
+          limit: result.limit,
+          total: result.total,
+          totalPages: result.totalPages,
+        },
+        summary: {
+          montant_total: result.montantTotal,
+        },
+      });
     } catch (error) {
       consoleError('GET /api/reports/receivables', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
+  static async exportReceivablesAging(req: Request, res: Response): Promise<void> {
+    try {
+      const result = await reportingService.getReceivablesAging({
+        search: req.query.search as string | undefined,
+        minAmount: req.query.min_amount === undefined ? undefined : Number(req.query.min_amount),
+        bucket: req.query.bucket as ReceivableBucket | undefined,
+        locationId: req.query.location_id === undefined ? undefined : Number(req.query.location_id),
+        page: 1,
+        limit: EXPORT_MAX_ROWS,
+      });
+      res.json({
+        success: true,
+        data: result.data,
+        total: result.total,
+        truncated: result.total > EXPORT_MAX_ROWS,
+      });
+    } catch (error) {
+      consoleError('GET /api/reports/receivables/export', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }

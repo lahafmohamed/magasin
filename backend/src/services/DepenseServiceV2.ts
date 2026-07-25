@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { businessError } from '../utils/errors';
 import { caisseMagasinService } from './CaisseMagasinService';
 import { checkPeriodIsOpen } from './PeriodService';
 
@@ -31,6 +32,77 @@ export interface UpdateDepenseInputV2 {
 }
 
 export class DepenseServiceV2 {
+  async getCategories(): Promise<Record<string, unknown>[]> {
+    const { rows } = await pool.query(
+      'SELECT * FROM categories_depenses WHERE actif = true ORDER BY nom',
+    );
+    return rows;
+  }
+
+  async getReportByLocation(
+    dateDebut?: string,
+    dateFin?: string,
+  ): Promise<Record<string, unknown>[]> {
+    let query = `
+      SELECT
+        sl.code as location_code,
+        sl.nom as location_nom,
+        COUNT(d.id) as nombre_depenses,
+        COALESCE(SUM(d.montant), 0) as total_depenses,
+        cd.nom as categorie_nom,
+        cd.code as categorie_code
+      FROM depenses d
+      LEFT JOIN stock_locations sl ON d.location_id = sl.id
+      LEFT JOIN categories_depenses cd ON d.categorie_id = cd.id
+      WHERE d.deleted_at IS NULL
+    `;
+    const params: string[] = [];
+
+    if (dateDebut) {
+      params.push(dateDebut);
+      query += ` AND d.date_depense >= $${params.length}`;
+    }
+    if (dateFin) {
+      params.push(dateFin);
+      query += ` AND d.date_depense <= $${params.length}`;
+    }
+
+    query += ' GROUP BY sl.code, sl.nom, cd.nom, cd.code ORDER BY total_depenses DESC';
+    const { rows } = await pool.query(query, params);
+    return rows;
+  }
+
+  async getReportByCategorie(
+    dateDebut?: string,
+    dateFin?: string,
+  ): Promise<Record<string, unknown>[]> {
+    let query = `
+      SELECT
+        cd.code as categorie_code,
+        cd.nom as categorie_nom,
+        COUNT(d.id) as nombre_depenses,
+        COALESCE(SUM(d.montant), 0) as total_depenses,
+        AVG(d.montant) as moyenne_depense
+      FROM depenses d
+      LEFT JOIN categories_depenses cd ON d.categorie_id = cd.id
+      WHERE d.deleted_at IS NULL
+    `;
+    const params: string[] = [];
+
+    if (dateDebut) {
+      params.push(dateDebut);
+      query += ` AND d.date_depense >= $${params.length}`;
+    }
+    if (dateFin) {
+      params.push(dateFin);
+      query += ` AND d.date_depense <= $${params.length}`;
+    }
+
+    query += ' GROUP BY cd.code, cd.nom ORDER BY total_depenses DESC';
+    const { rows } = await pool.query(query, params);
+    return rows;
+  }
+
   /**
    * Check if user can create expense at this magasin
    */
@@ -66,7 +138,7 @@ export class DepenseServiceV2 {
       );
 
       if (catRows.length === 0) {
-        throw new Error('Catégorie de dépense invalide');
+        throw businessError(422, 'Catégorie de dépense invalide');
       }
       const categorieNom = catRows[0].nom;
 
@@ -81,7 +153,7 @@ export class DepenseServiceV2 {
       if (methode_paiement === 'espece') {
         const session = await caisseMagasinService.getSessionActive(magasin_id);
         if (!session) {
-          throw new Error('Caisse fermée — ouvrez la caisse du magasin avant d\'enregistrer cette dépense.');
+          throw businessError(422, 'Caisse fermée — ouvrez la caisse du magasin avant d\'enregistrer cette dépense.', 'CAISSE_FERMEE');
         }
         sessionCaisseId = session.id;
       }
@@ -177,7 +249,7 @@ export class DepenseServiceV2 {
       );
 
       if (existingRows.length === 0) {
-        throw new Error('Dépense non trouvée');
+        throw businessError(404, 'Dépense non trouvée');
       }
 
       const existing = existingRows[0];
@@ -185,12 +257,12 @@ export class DepenseServiceV2 {
       // Check permission
       const canAccess = await this.canAccessMagasin(userId, userRole, existing.magasin_id);
       if (!canAccess) {
-        throw new Error('Accès refusé - vous ne pouvez pas modifier cette dépense');
+        throw businessError(403, 'Accès refusé - vous ne pouvez pas modifier cette dépense');
       }
 
       // If linked to closed session, reject
       if (existing.session_statut === 'cloturee') {
-        throw new Error('Cette dépense est dans une session clôturée - modification impossible.');
+        throw businessError(422, 'Cette dépense est dans une session clôturée - modification impossible.', 'SESSION_CLOTUREE');
       }
 
       // Check if amount or payment method changed for cash expenses
@@ -258,7 +330,7 @@ export class DepenseServiceV2 {
         // Changed from non-cash to cash: check caisse is open
         const session = await caisseMagasinService.getSessionActive(existing.magasin_id);
         if (!session) {
-          throw new Error('Caisse fermée — impossible de passer cette dépense en espèces.');
+          throw businessError(422, 'Caisse fermée — impossible de passer cette dépense en espèces.', 'CAISSE_FERMEE');
         }
 
         const newMouvement = await caisseMagasinService.enregistrerMouvement(client, {
@@ -369,7 +441,7 @@ export class DepenseServiceV2 {
       );
 
       if (rows.length === 0) {
-        throw new Error('Dépense non trouvée');
+        throw businessError(404, 'Dépense non trouvée');
       }
 
       const expense = rows[0];
@@ -377,12 +449,12 @@ export class DepenseServiceV2 {
       // Check permission
       const canAccess = await this.canAccessMagasin(userId, userRole, expense.magasin_id);
       if (!canAccess) {
-        throw new Error('Accès refusé - vous ne pouvez pas supprimer cette dépense');
+        throw businessError(403, 'Accès refusé - vous ne pouvez pas supprimer cette dépense');
       }
 
       // Check if linked to closed session
       if (expense.session_statut === 'cloturee') {
-        throw new Error('Cette dépense est dans une session clôturée - suppression impossible.');
+        throw businessError(422, 'Cette dépense est dans une session clôturée - suppression impossible.', 'SESSION_CLOTUREE');
       }
 
       // If cash expense, create reverse movement
@@ -530,7 +602,7 @@ export class DepenseServiceV2 {
     const { rows } = await pool.query(query, params);
 
     // Count
-    let countQuery = `SELECT COUNT(*) FROM depenses d ${whereClause}`;
+    const countQuery = `SELECT COUNT(*) FROM depenses d ${whereClause}`;
     const countParams = params.slice(0, -2);
     const { rows: countRows } = await pool.query(countQuery, countParams);
     const total = parseInt(countRows[0].count);

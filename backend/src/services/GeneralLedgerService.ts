@@ -36,75 +36,91 @@ export interface BalanceComptable {
   solde: number;
 }
 
+export interface GeneralLedgerFilters {
+  journal?: string;
+  date_debut?: string;
+  date_fin?: string;
+  compte_id?: number;
+  numero_piece?: string;
+  description?: string;
+  page?: number;
+  limit?: number;
+}
+
 export class GeneralLedgerService extends BaseService<EcritureComptableRecord> {
   protected tableName = 'ecritures_comptables';
-  protected selectColumns = 'ec.id, ec.numero_piece, ec.date_ecriture, ec.journal, ec.reference_id, ec.reference_type, ec.compte_numero, ec.debit, ec.credit, ec.libelle, ec.libelle as description, ec.date_saisie, pc.numero as compte_pc_numero, pc.intitule as compte_intitule';
+  protected selectColumns = `ec.id, ec.numero_piece, ec.date_ecriture, ec.journal,
+    ec.piece_id, ec.piece_type, ec.reference_id, ec.reference_type,
+    CASE
+      WHEN ec.reference_type IS NOT NULL THEN ec.reference_id
+      ELSE ec.piece_id
+    END AS source_id,
+    COALESCE(ec.reference_type, ec.piece_type) AS source_type,
+    ec.compte_numero, ec.debit, ec.credit, ec.libelle,
+    ec.libelle AS description, ec.date_saisie,
+    pc.id AS compte_id, pc.numero AS compte_pc_numero, pc.intitule AS compte_intitule`;
   protected defaultSortColumn = 'date_ecriture';
   protected allowedSortColumns = ['date_ecriture', 'journal', 'numero_piece'];
 
   /**
    * Get all journal entries with pagination
    */
-  async getAll(options?: { journal?: string; date_debut?: string; date_fin?: string; compte_id?: number; page?: number; limit?: number }): Promise<{ data: any[]; total: number }> {
+  async getAll(options: GeneralLedgerFilters = {}): Promise<{ data: any[]; total: number }> {
     const page = options?.page || 1;
     const limit = options?.limit || 50;
     const offset = (page - 1) * limit;
-
-    let query = `
-      SELECT ${this.selectColumns}
-      FROM ecritures_comptables ec
-      LEFT JOIN plan_comptable pc ON pc.numero = ec.compte_numero
-      WHERE 1=1
-    `;
+    const filters: string[] = [];
     const params: any[] = [];
 
     if (options?.journal) {
-      query += ` AND ec.journal = $${params.length + 1}`;
+      filters.push(`ec.journal = $${params.length + 1}`);
       params.push(options.journal);
     }
 
     if (options?.date_debut) {
-      query += ` AND ec.date_ecriture >= $${params.length + 1}::timestamp`;
+      filters.push(`ec.date_ecriture >= $${params.length + 1}::date`);
       params.push(options.date_debut);
     }
 
     if (options?.date_fin) {
-      query += ` AND ec.date_ecriture <= $${params.length + 1}::timestamp`;
+      filters.push(`ec.date_ecriture < ($${params.length + 1}::date + INTERVAL '1 day')`);
       params.push(options.date_fin);
     }
 
     if (options?.compte_id) {
       // compte_id from the API is the plan_comptable.id; resolve to its numero.
-      query += ` AND ec.compte_numero = (SELECT numero FROM plan_comptable WHERE id = $${params.length + 1})`;
+      filters.push(`ec.compte_numero = (SELECT numero FROM plan_comptable WHERE id = $${params.length + 1})`);
       params.push(options.compte_id);
     }
 
-    query += ' ORDER BY ec.date_ecriture DESC, ec.id ASC';
-    query += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
+    if (options?.numero_piece?.trim()) {
+      filters.push(`ec.numero_piece ILIKE $${params.length + 1}`);
+      params.push(`%${options.numero_piece.trim()}%`);
+    }
 
-    const { rows } = await pool.query(query, params);
+    if (options?.description?.trim()) {
+      filters.push(`ec.libelle ILIKE $${params.length + 1}`);
+      params.push(`%${options.description.trim()}%`);
+    }
 
-    // Get total count
-    let countQuery = `SELECT COUNT(*) as total FROM ecritures_comptables ec WHERE 1=1`;
-    const countParams: any[] = [];
-    if (options?.journal) {
-      countQuery += ` AND ec.journal = $${countParams.length + 1}`;
-      countParams.push(options.journal);
-    }
-    if (options?.date_debut) {
-      countQuery += ` AND ec.date_ecriture >= $${countParams.length + 1}::timestamp`;
-      countParams.push(options.date_debut);
-    }
-    if (options?.date_fin) {
-      countQuery += ` AND ec.date_ecriture <= $${countParams.length + 1}::timestamp`;
-      countParams.push(options.date_fin);
-    }
-    if (options?.compte_id) {
-      countQuery += ` AND ec.compte_numero = (SELECT numero FROM plan_comptable WHERE id = $${countParams.length + 1})`;
-      countParams.push(options.compte_id);
-    }
-    const { rows: countRows } = await pool.query(countQuery, countParams);
+    const whereSql = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+    const dataParams = [...params, limit, offset];
+    const query = `
+      SELECT ${this.selectColumns}
+      FROM ecritures_comptables ec
+      LEFT JOIN plan_comptable pc ON pc.numero = ec.compte_numero
+      ${whereSql}
+      ORDER BY ec.date_ecriture DESC, ec.id ASC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
+
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      pool.query(query, dataParams),
+      pool.query(
+        `SELECT COUNT(*) AS total FROM ecritures_comptables ec ${whereSql}`,
+        params
+      ),
+    ]);
     const total = parseInt(countRows[0].total);
 
     return { data: rows, total };

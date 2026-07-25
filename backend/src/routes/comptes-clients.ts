@@ -2,23 +2,19 @@
  * DEPRECATED – /api/comptes is a compatibility shim.
  * All new code should use /api/tiers/:id/acomptes-client and /api/tiers/:id/compte instead.
  */
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Request, Response } from 'express';
 import { TiersController } from '../controllers/TiersController';
 import pool from '../db/connection';
 import { authenticate, authorize } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
 import { recordAcompteSchema } from '../validation/schemas';
+import { deprecateRoute } from '../middleware/deprecation';
 
 const router = Router();
 
 router.use(authenticate);
 
-const deprecated = (_req: Request, res: Response, next: NextFunction) => {
-  res.setHeader('Deprecation', 'true');
-  res.setHeader('Link', '</api/tiers>; rel="successor-version"');
-  next();
-};
-router.use(deprecated);
+router.use(deprecateRoute('/api/tiers'));
 
 // POST /api/comptes/:clientId/acomptes → POST /api/tiers/:id/acomptes-client
 router.post(

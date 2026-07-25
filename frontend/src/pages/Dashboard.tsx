@@ -39,6 +39,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { DashboardDemandeWidgets } from '../components/DashboardDemandeWidgets';
+import StatusBadge from '../components/StatusBadge';
 import { DashboardSkeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import {
@@ -344,6 +345,12 @@ export default function Dashboard() {
 
   const maxProduct = topProducts[0]?.total_quantite || 1;
   const maxClient = topClients[0]?.total_depenses || 1;
+  const forecastValue = Number(forecastData?.forecast?.prevision) || 0;
+  const forecastMin = Number(forecastData?.forecast?.min) || 0;
+  const forecastMax = Number(forecastData?.forecast?.max) || 0;
+  const forecastLowConfidence =
+    forecastMax > 0 &&
+    (forecastValue <= 0 || (forecastMax - forecastMin) / forecastValue > 1);
 
   // Sparkline series (per KPI)
   const sparkRevenue = revenueData.map((p) => ({ v: p.total }));
@@ -429,8 +436,8 @@ export default function Dashboard() {
                   <span className="text-[10px] text-muted-foreground">vs. période préc.</span>
                 </div>
                 <div className="-mx-1 -mb-1 mt-2 h-10">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={sparkRevenue}>
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                    <AreaChart accessibilityLayer data={sparkRevenue}>
                       <Area
                         type="monotone"
                         dataKey="v"
@@ -467,8 +474,8 @@ export default function Dashboard() {
                   Total: {stats?.total_factures.count || 0} factures
                 </p>
                 <div className="-mx-1 -mb-1 mt-2 h-10">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={sparkCountStub}>
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                    <LineChart accessibilityLayer data={sparkCountStub}>
                       <Line
                         type="monotone"
                         dataKey="v"
@@ -558,36 +565,52 @@ export default function Dashboard() {
                 <Activity className="h-4 w-4 text-primary" />
                 Prévision mois prochain
               </CardTitle>
-              <CardDescription className="text-xs">Moyenne mobile sur 3 mois</CardDescription>
+              <CardDescription className="text-xs">
+                Moyenne mobile sur 3 mois · fourchette indicative
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="rounded-lg border p-3 bg-muted/30">
-                  <p className="text-xs text-muted-foreground">Prévision</p>
-                  <p className="text-lg font-bold mt-1">{formatXOF(forecastData.forecast?.prevision)}</p>
+              {forecastLowConfidence ? (
+                <div className="flex items-start gap-3 rounded-lg border border-warning-300 bg-warning-50 p-4 text-warning-900">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+                  <div>
+                    <p className="font-semibold">Prévision non affichée : confiance insuffisante</p>
+                    <p className="mt-1 text-sm">
+                      Les ventes des trois derniers mois sont trop dispersées pour fournir une estimation utile.
+                    </p>
+                  </div>
                 </div>
-                <div className="rounded-lg border p-3 bg-muted/30">
-                  <p className="text-xs text-muted-foreground">Min estimé</p>
-                  <p className="text-lg font-bold mt-1 text-warning-600">{formatXOF(forecastData.forecast?.min)}</p>
-                </div>
-                <div className="rounded-lg border p-3 bg-muted/30">
-                  <p className="text-xs text-muted-foreground">Max estimé</p>
-                  <p className="text-lg font-bold mt-1 text-success-600">{formatXOF(forecastData.forecast?.max)}</p>
-                </div>
-              </div>
-              {forecastData.historique?.length > 1 && (
-                <div className="mt-3">
-                  <ResponsiveContainer width="100%" height={120}>
-                    <AreaChart data={[
-                      ...forecastData.historique.map((h: any) => ({ mois: h.mois?.slice(5,7) || '', value: parseFloat(h.chiffre_affaires) || 0 })),
-                      { mois: 'Prévi', value: forecastData.forecast?.prevision || 0 },
-                    ]}>
-                      <Area type="monotone" dataKey="value" stroke={CHART_PRIMARY} fill={CHART_PRIMARY} fillOpacity={0.2} strokeWidth={2} />
-                      <Tooltip formatter={(v: any) => formatXOF(v)} contentStyle={CHART_TOOLTIP_STYLE} />
-                      <XAxis dataKey="mois" tick={{ fontSize: 10, fill: CHART_AXIS }} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="rounded-lg border p-3 bg-muted/30">
+                      <p className="text-xs text-muted-foreground">Prévision</p>
+                      <p className="text-lg font-bold mt-1">{formatXOF(forecastValue)}</p>
+                    </div>
+                    <div className="rounded-lg border p-3 bg-muted/30">
+                      <p className="text-xs text-muted-foreground">Min estimé</p>
+                      <p className="text-lg font-bold mt-1 text-warning-600">{formatXOF(forecastMin)}</p>
+                    </div>
+                    <div className="rounded-lg border p-3 bg-muted/30">
+                      <p className="text-xs text-muted-foreground">Max estimé</p>
+                      <p className="text-lg font-bold mt-1 text-success-600">{formatXOF(forecastMax)}</p>
+                    </div>
+                  </div>
+                  {forecastData.historique?.length > 1 && (
+                    <div className="mt-3">
+                      <ResponsiveContainer width="100%" height={120} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                        <AreaChart accessibilityLayer data={[
+                          ...forecastData.historique.map((h: any) => ({ mois: h.mois?.slice(5,7) || '', value: parseFloat(h.chiffre_affaires) || 0 })),
+                          { mois: 'Prévi', value: forecastValue },
+                        ]}>
+                          <Area type="monotone" dataKey="value" stroke={CHART_PRIMARY} fill={CHART_PRIMARY} fillOpacity={0.2} strokeWidth={2} />
+                          <Tooltip formatter={(v: any) => formatXOF(v)} contentStyle={CHART_TOOLTIP_STYLE} />
+                          <XAxis dataKey="mois" tick={{ fontSize: 10, fill: CHART_AXIS }} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
@@ -723,8 +746,8 @@ export default function Dashboard() {
               </div>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={chartHeight}>
-                <AreaChart data={revenueData}>
+              <ResponsiveContainer width="100%" height={chartHeight} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                <AreaChart accessibilityLayer data={revenueData}>
                   <defs>
                     <linearGradient id="caGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={CHART_PRIMARY} stopOpacity={0.4} />
@@ -764,8 +787,8 @@ export default function Dashboard() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={chartHeight}>
-                <BarChart data={yoyData.current_year.map((c: any, i: number) => ({
+              <ResponsiveContainer width="100%" height={chartHeight} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                <BarChart accessibilityLayer data={yoyData.current_year.map((c: any, i: number) => ({
                   mois: c.mois_nom?.trim().slice(0, 3) || '',
                   current: parseFloat(c.chiffre_affaires) || 0,
                   previous: parseFloat(yoyData.previous_year?.[i]?.chiffre_affaires || 0),
@@ -889,8 +912,8 @@ export default function Dashboard() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={chartHeight * 0.75}>
-                  <PieChart>
+                <ResponsiveContainer width="100%" height={chartHeight * 0.75} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                  <PieChart accessibilityLayer>
                     <Pie
                       data={stockByCategory}
                       cx="50%"
@@ -945,8 +968,8 @@ export default function Dashboard() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={chartHeight * 0.75}>
-                <BarChart data={weekdayBreakdown}>
+              <ResponsiveContainer width="100%" height={chartHeight * 0.75} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+                <BarChart accessibilityLayer data={weekdayBreakdown}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART_GRID} />
                   <XAxis dataKey="day" tick={{ fontSize: 12, fill: CHART_AXIS }} />
                   <YAxis
@@ -1050,12 +1073,6 @@ export default function Dashboard() {
                 <div className="space-y-1">
                   {recentInvoices.slice(0, 5).map((f: any, i: number) => {
                     const statut = (f.statut || 'brouillon').toLowerCase();
-                    const variant: any =
-                      statut === 'payee' || statut === 'payée'
-                        ? 'success'
-                        : statut === 'annulee' || statut === 'annulée'
-                        ? 'destructive'
-                        : 'warning';
                     return (
                       <Link
                         key={f.id || i}
@@ -1067,9 +1084,7 @@ export default function Dashboard() {
                             <span className="text-sm font-semibold truncate">
                               {f.numero_facture || `#${f.id}`}
                             </span>
-                            <Badge variant={variant} className="text-[10px] py-0">
-                              {statut}
-                            </Badge>
+                            <StatusBadge type="facture" statut={statut} className="text-[10px] py-0" />
                           </div>
                           <p className="text-[11px] text-muted-foreground truncate">
                             {f.client_nom || f.nom_client || 'Client'} ·{' '}

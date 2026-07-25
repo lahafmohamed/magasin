@@ -38,7 +38,7 @@ export default function BonLivraisonDetail() {
         setLoading(true);
         const data = await bonLivraisonService.getById(Number(id));
         setBon(data?.data || data);
-      } catch (error) {
+      } catch {
         toast.error('Impossible de charger ce bon de livraison');
       } finally {
         setLoading(false);

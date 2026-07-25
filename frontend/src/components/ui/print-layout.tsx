@@ -15,7 +15,6 @@ interface PrintLigne {
   quantite: number | string;
   quantite_livree?: number | string;
   prix_unitaire: number | string;
-  tva_taux?: number | string;
 }
 
 interface DocumentPrintProps {
@@ -27,7 +26,6 @@ interface DocumentPrintProps {
   clientNom?: string;
   clientPrenom?: string;
   lignes: PrintLigne[];
-  tvaIncluded?: boolean;
   hideTotals?: boolean;
   format?: 'A4' | 'A5';
 }
@@ -70,7 +68,6 @@ export function DocumentPrint({
   clientNom,
   clientPrenom,
   lignes,
-  tvaIncluded = true,
   hideTotals = false,
   format = 'A4',
 }: DocumentPrintProps) {
@@ -85,16 +82,11 @@ export function DocumentPrint({
   const rows = lignes.map((l) => {
     const qte = Number(docType === 'bl' ? (l.quantite_livree ?? l.quantite) : l.quantite) || 0;
     const pu = Number(l.prix_unitaire) || 0;
-    const tva = l.tva_taux !== undefined ? Number(l.tva_taux) : (tvaIncluded ? 18 : 0);
     const montant = qte * pu;
-    return { ...l, qte, pu, tva, montant };
+    return { ...l, qte, pu, montant };
   });
 
   const sousTotal = rows.reduce((s, r) => s + r.montant, 0);
-  const totalTva = rows.reduce((s, r) => s + r.montant * (r.tva / 100), 0);
-  const total = sousTotal + totalTva;
-  const hasTva = totalTva > 0;
-  const tvaPctDisplay = rows.find((r) => r.tva > 0)?.tva ?? 18;
 
   const labels = dateLabels[docType];
   const clientFull = [clientNom, clientPrenom].filter(Boolean).join(' ').trim();
@@ -149,7 +141,6 @@ export function DocumentPrint({
               <th className="pbd-col-desc">Description</th>
               <th className="pbd-col-qte">Quantité</th>
               <th className="pbd-col-pu">Prix unitaire</th>
-              {!isTicket && docType !== 'bl' && <th className="pbd-col-tva">TVA</th>}
               <th className="pbd-col-mt">Montant</th>
             </tr>
           </thead>
@@ -171,9 +162,6 @@ export function DocumentPrint({
                     <span className="pbd-unite">Unité(s)</span>
                   </td>
                   <td className="pbd-col-pu">{fmtMoney(r.pu, devise)}</td>
-                  {!isTicket && docType !== 'bl' && (
-                    <td className="pbd-col-tva">{r.tva > 0 ? `${r.tva}%` : '-'}</td>
-                  )}
                   <td className="pbd-col-mt">{fmtMoney(r.montant, devise)}</td>
                 </tr>
               );
@@ -186,18 +174,12 @@ export function DocumentPrint({
           <div className="pbd-totals">
             <div className="pbd-totals-box">
               <div className="pbd-total-row">
-                <span>Montant hors taxes</span>
+                <span>Montant total</span>
                 <span>{fmtMoney(sousTotal, devise)}</span>
               </div>
-              {hasTva && !isTicket && (
-                <div className="pbd-total-row">
-                  <span>T.V.A. {tvaPctDisplay}%</span>
-                  <span>{fmtMoney(totalTva, devise)}</span>
-                </div>
-              )}
               <div className="pbd-total-row pbd-total-grand">
-                <span>Total</span>
-                <span>{fmtMoney(total, devise)}</span>
+                <span>Total à payer</span>
+                <span>{fmtMoney(sousTotal, devise)}</span>
               </div>
             </div>
           </div>
@@ -304,7 +286,6 @@ export function DocumentPrint({
         }
         .pbd-table .pbd-col-qte,
         .pbd-table .pbd-col-pu,
-        .pbd-table .pbd-col-tva,
         .pbd-table .pbd-col-mt {
           text-align: right;
         }

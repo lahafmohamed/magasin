@@ -4,6 +4,28 @@ import { checkPeriodIsOpen } from './PeriodService';
 import { caisseMagasinService } from './CaisseMagasinService';
 import { ClientAllocationService } from './ClientAllocationService';
 import { PAYMENT_METHODS, PaymentMethod } from './PaiementService';
+import { SupplierAllocationService, SupplierAllocationResult } from './SupplierAllocationService';
+
+const CASH_METHODS: PaymentMethod[] = ['espece'];
+
+export interface CreateAcompteInput {
+  tiersId: number;
+  montant: number;
+  methode_paiement: PaymentMethod;
+  notes?: string | null;
+  magasin_id?: number | null;
+  reference_number?: string | null;
+  session_caisse_id?: number | null;
+  idempotency_key?: string | null;
+  userId: number | null;
+}
+
+export interface CreateAcompteResult {
+  idempotent: boolean;
+  acompte: any;
+  mouvement_caisse_id: number | null;
+  allocation?: SupplierAllocationResult;
+}
 
 export interface ApplyAcompteInput {
   acompteId: number;
@@ -69,6 +91,169 @@ export class AcompteService {
       throw businessError(422, `Montant dépasse le restant (${acRestant})`);
     }
     return acRestant;
+  }
+
+  /** Record a customer deposit (money in; caisse + tiers ledger + acompte row). */
+  async createClient(input: CreateAcompteInput): Promise<CreateAcompteResult> {
+    return this.createAcompte('client', input);
+  }
+
+  /** Record a supplier advance (money out) and FIFO-allocate it to open invoices. */
+  async createFournisseur(input: CreateAcompteInput): Promise<CreateAcompteResult> {
+    return this.createAcompte('fournisseur', input);
+  }
+
+  /**
+   * Shared create flow for both sides. The differences (table, tiers role,
+   * caisse direction, ledger target, post-insert allocation) are parametrized;
+   * everything else — idempotency, session resolution, movement, ledger — is
+   * strictly the behavior the two former controller transactions shared.
+   */
+  private async createAcompte(side: 'client' | 'fournisseur', input: CreateAcompteInput): Promise<CreateAcompteResult> {
+    const {
+      tiersId, montant, methode_paiement, notes, magasin_id,
+      reference_number, session_caisse_id, idempotency_key, userId,
+    } = input;
+
+    const montantNum = Number(montant);
+    if (!montantNum || montantNum <= 0) {
+      throw businessError(400, 'Montant doit être > 0');
+    }
+    if (!methode_paiement || !PAYMENT_METHODS.includes(methode_paiement)) {
+      throw businessError(400, 'methode_paiement invalide');
+    }
+
+    const isClient = side === 'client';
+    const acompteTable = isClient ? 'acomptes_clients' : 'acomptes_fournisseur';
+    const roleColumn = isClient ? 'est_client' : 'est_fournisseur';
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      if (idempotency_key) {
+        const { rows: dup } = await client.query(
+          `SELECT * FROM ${acompteTable} WHERE idempotency_key = $1`,
+          [idempotency_key]
+        );
+        if (dup.length > 0) {
+          await client.query('COMMIT');
+          return { idempotent: true, acompte: dup[0], mouvement_caisse_id: dup[0].mouvement_caisse_id ?? null };
+        }
+      }
+
+      const { rows: tiersRows } = await client.query(
+        `SELECT id, ${roleColumn} AS has_role FROM tiers WHERE id = $1 AND deleted_at IS NULL`,
+        [tiersId]
+      );
+      if (tiersRows.length === 0) {
+        throw businessError(404, 'Tiers introuvable');
+      }
+      if (tiersRows[0].has_role === false) {
+        throw businessError(422, isClient
+          ? 'Tiers n\'est pas un client — promouvoir d\'abord'
+          : 'Tiers n\'est pas un fournisseur — promouvoir d\'abord');
+      }
+
+      // Resolve target session for cash payments — fail hard if no open session
+      let effectiveSessionId: number | null = session_caisse_id || null;
+      let effectiveMagasinId: number | null = magasin_id || null;
+
+      if (CASH_METHODS.includes(methode_paiement)) {
+        if (!effectiveSessionId) {
+          if (!effectiveMagasinId) {
+            throw businessError(422, 'magasin_id ou session_caisse_id requis pour paiement espèces');
+          }
+          const { rows: sessRows } = await client.query(
+            `SELECT id FROM sessions_caisse WHERE magasin_id = $1 AND statut = 'ouverte' LIMIT 1`,
+            [effectiveMagasinId]
+          );
+          if (sessRows.length === 0) {
+            throw businessError(409, 'Aucune session caisse ouverte pour ce magasin');
+          }
+          effectiveSessionId = sessRows[0].id;
+        } else {
+          const { rows: sessRows } = await client.query(
+            `SELECT magasin_id FROM sessions_caisse WHERE id = $1 AND statut = 'ouverte'`,
+            [effectiveSessionId]
+          );
+          if (sessRows.length === 0) {
+            throw businessError(409, 'Session caisse non ouverte');
+          }
+          effectiveMagasinId = effectiveMagasinId || sessRows[0].magasin_id;
+        }
+      }
+
+      // Insert acompte (montant_restant = montant)
+      const { rows: acompteRows } = await client.query(
+        `INSERT INTO ${acompteTable} (
+          tiers_id, montant, montant_restant, methode_paiement, notes,
+          cree_par, magasin_id, session_caisse_id, reference_number, idempotency_key
+        ) VALUES ($1,$2,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [tiersId, montantNum, methode_paiement, notes || null, userId,
+          effectiveMagasinId, effectiveSessionId, reference_number || null, idempotency_key || null]
+      );
+      const acompte = acompteRows[0];
+
+      // Caisse movement when a session is attached — FAIL the transaction on
+      // error, no swallow. Non-cash methods tracked too for the full breakdown.
+      let mouvement: any = null;
+      if (effectiveSessionId) {
+        mouvement = await caisseMagasinService.enregistrerMouvement(client, {
+          session_caisse_id: effectiveSessionId,
+          type: isClient ? 'encaissement' : 'decaissement',
+          categorie: isClient ? 'acompte_client' : 'paiement_fournisseur',
+          montant: montantNum,
+          methode_paiement,
+          reference_type: isClient ? 'acompte' : 'acompte_fournisseur',
+          reference_id: acompte.id,
+          libelle: isClient ? `Acompte client #${tiersId}` : `Acompte fournisseur #${tiersId}`,
+          user_id: userId ?? undefined,
+          idempotency_key: idempotency_key ? `${idempotency_key}:mvt` : undefined,
+        });
+
+        await client.query(
+          `UPDATE ${acompteTable} SET mouvement_caisse_id = $1 WHERE id = $2`,
+          [mouvement.id, acompte.id]
+        );
+      }
+
+      // Tiers ledger: client pays us → credit; we pay the supplier → debit (AP down)
+      if (isClient) {
+        await client.query(
+          `INSERT INTO compte_client_lignes
+             (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
+           VALUES ($1, 'acompte', $2, $3, 0, $4, $5, $6)`,
+          [tiersId, acompte.id, `ACO-${acompte.id}`, montantNum, notes || null, userId]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO compte_fournisseur_lignes
+             (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
+           VALUES ($1, 'acompte', $2, $3, $4, 0, $5, $6)`,
+          [tiersId, acompte.id, `ACOF-${acompte.id}`, montantNum, notes || null, userId]
+        );
+      }
+
+      // Supplier advances FIFO-allocate to open invoices immediately; the client
+      // side has no equivalent here — client allocation derives from the fund
+      // pool on facture/paiement events (ClientAllocationService).
+      let allocation: SupplierAllocationResult | undefined;
+      if (!isClient) {
+        allocation = await SupplierAllocationService.allocateAvailableAdvances(tiersId, {
+          transaction: client,
+          userId,
+        });
+      }
+
+      await client.query('COMMIT');
+      return { idempotent: false, acompte, mouvement_caisse_id: mouvement?.id ?? null, allocation };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   /**
@@ -226,15 +411,18 @@ export class AcompteService {
       // Decrement montant_restant; statut→rembourse only if fully refunded
       const newRestant = acRestant - montantNum;
       const newStatut = newRestant <= 0.005 ? 'rembourse' : acompte.statut;
+      // montant_rembourse feeds the 095 sync/cap triggers: without it, a later
+      // application event would resurrect the refunded amount.
       await client.query(
         `UPDATE acomptes_clients
          SET montant_restant = $1,
-             statut = $2,
-             rembourse_par_user_id = COALESCE(rembourse_par_user_id, $3),
+             montant_rembourse = COALESCE(montant_rembourse, 0) + $2,
+             statut = $3,
+             rembourse_par_user_id = COALESCE(rembourse_par_user_id, $4),
              date_remboursement = COALESCE(date_remboursement, CURRENT_TIMESTAMP),
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = $4`,
-        [Math.max(0, newRestant), newStatut, userId, acompteId]
+         WHERE id = $5`,
+        [Math.max(0, newRestant), montantNum, newStatut, userId, acompteId]
       );
 
       // Ledger: debit (we owe customer less now — restore balance)
@@ -411,15 +599,17 @@ export class AcompteService {
 
       const newRestant = acRestant - montantNum;
       const newStatut = newRestant <= 0.005 ? 'rembourse' : acompte.statut;
+      // montant_rembourse feeds the 095 sync/cap triggers (same reason as client side)
       await client.query(
         `UPDATE acomptes_fournisseur
          SET montant_restant = $1,
-             statut = $2,
-             rembourse_par_user_id = COALESCE(rembourse_par_user_id, $3),
+             montant_rembourse = COALESCE(montant_rembourse, 0) + $2,
+             statut = $3,
+             rembourse_par_user_id = COALESCE(rembourse_par_user_id, $4),
              date_remboursement = COALESCE(date_remboursement, CURRENT_TIMESTAMP),
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = $4`,
-        [Math.max(0, newRestant), newStatut, userId, acompteId]
+         WHERE id = $5`,
+        [Math.max(0, newRestant), montantNum, newStatut, userId, acompteId]
       );
 
       // Ledger: credit (supplier returned funds → AP increases)

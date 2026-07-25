@@ -50,6 +50,3 @@ export const CHART_TOOLTIP_STYLE: React.CSSProperties = {
   fontSize: '12px',
   boxShadow: '0 4px 12px -2px rgb(0 0 0 / 0.12)',
 };
-
-/** Common tick props for recharts XAxis/YAxis so ticks pick up the theme axis color. */
-export const CHART_AXIS_TICK = { fill: 'hsl(var(--chart-axis))', fontSize: 12 } as const;

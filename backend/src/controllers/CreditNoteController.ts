@@ -15,7 +15,7 @@ export class CreditNoteController {
         statut as string,
         (tiers_id || client_id) ? parseInt((tiers_id || client_id) as string) : undefined,
         page ? parseInt(page as string) : 1,
-        limit ? parseInt(limit as string) : 20,
+        Math.min(200, (limit ? parseInt(limit as string) : 20) || 20),
         (sort as string) || 'date_avoir',
         (order as string) || 'DESC'
       );

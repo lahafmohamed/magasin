@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { AuthController } from '../controllers/AuthController';
 import { authenticate, authorize } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
-import { loginSchema, changePasswordSchema, registerSchema } from '../validation/schemas';
+import { loginSchema, changePasswordSchema, registerSchema, adminUpdateUserSchema } from '../validation/schemas';
 
 const router = Router();
 
@@ -18,6 +18,6 @@ router.post('/revoke-all-sessions/:userId', authenticate, authorize('admin'), Au
 
 // Admin routes
 router.get('/users', authenticate, authorize('admin'), AuthController.getAllUsers);
-router.put('/users/:id', authenticate, authorize('admin'), AuthController.updateUser);
+router.put('/users/:id', authenticate, authorize('admin'), validateBody(adminUpdateUserSchema), AuthController.updateUser);
 
 export default router;

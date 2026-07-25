@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { depenseServiceV2 } from '../services/DepenseServiceV2';
-import { depenseService } from '../services/DepenseService';
 import { AuthRequest } from '../middleware/auth';
+import { businessStatusOf } from '../utils/errors';
 
 export class DepenseControllerV2 {
   /**
@@ -140,19 +140,14 @@ export class DepenseControllerV2 {
         message: 'Dépense créée avec succès'
       });
     } catch (error: any) {
-      console.error('Erreur POST /api/depenses:', error);
-      
-      // Special handling for "Caisse fermée" error
-      if (error.message.includes('Caisse fermée')) {
-        res.status(422).json({ 
-          error: error.message,
-          code: 'CAISSE_FERMEE',
-          action_required: 'OPEN_CAISSE'
-        });
-        return;
-      }
-      
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur POST /api/depenses:', error);
+      res.status(status ?? 500).json({
+        success: false,
+        error: status ? error.message : 'Erreur serveur',
+        ...(status && error.code ? { code: error.code } : {}),
+        ...(status && error.code === 'CAISSE_FERMEE' ? { action_required: 'OPEN_CAISSE' } : {}),
+      });
     }
   }
 
@@ -174,25 +169,13 @@ export class DepenseControllerV2 {
         message: 'Dépense mise à jour'
       });
     } catch (error: any) {
-      console.error('Erreur PUT /api/depenses:', error);
-      
-      if (error.message.includes('session clôturée')) {
-        res.status(422).json({ error: error.message, code: 'SESSION_CLOTUREE' });
-        return;
-      }
-      if (error.message.includes('Accès refusé')) {
-        res.status(403).json({ error: error.message });
-        return;
-      }
-      if (error.message.includes('Caisse fermée')) {
-        res.status(422).json({ 
-          error: error.message,
-          code: 'CAISSE_FERMEE'
-        });
-        return;
-      }
-      
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur PUT /api/depenses:', error);
+      res.status(status ?? 500).json({
+        success: false,
+        error: status ? error.message : 'Erreur serveur',
+        ...(status && error.code ? { code: error.code } : {}),
+      });
     }
   }
 
@@ -212,18 +195,13 @@ export class DepenseControllerV2 {
         message: 'Dépense supprimée'
       });
     } catch (error: any) {
-      console.error('Erreur DELETE /api/depenses:', error);
-      
-      if (error.message.includes('session clôturée')) {
-        res.status(422).json({ error: error.message, code: 'SESSION_CLOTUREE' });
-        return;
-      }
-      if (error.message.includes('Accès refusé')) {
-        res.status(403).json({ error: error.message });
-        return;
-      }
-      
-      res.status(400).json({ error: error.message });
+      const status = businessStatusOf(error);
+      if (!status) console.error('Erreur DELETE /api/depenses:', error);
+      res.status(status ?? 500).json({
+        success: false,
+        error: status ? error.message : 'Erreur serveur',
+        ...(status && error.code ? { code: error.code } : {}),
+      });
     }
   }
 
@@ -233,7 +211,7 @@ export class DepenseControllerV2 {
    */
   static async getCategories(req: Request, res: Response): Promise<void> {
     try {
-      const categories = await depenseService.getCategories();
+      const categories = await depenseServiceV2.getCategories();
       res.json({ success: true, data: categories });
     } catch (error: any) {
       console.error('Erreur GET /api/depenses/categories:', error);
@@ -248,7 +226,7 @@ export class DepenseControllerV2 {
   static async reportByLocation(req: Request, res: Response): Promise<void> {
     try {
       const { date_debut, date_fin } = req.query;
-      const report = await depenseService.getReportByLocation(
+      const report = await depenseServiceV2.getReportByLocation(
         date_debut as string,
         date_fin as string
       );
@@ -266,7 +244,7 @@ export class DepenseControllerV2 {
   static async reportByCategorie(req: Request, res: Response): Promise<void> {
     try {
       const { date_debut, date_fin } = req.query;
-      const report = await depenseService.getReportByCategorie(
+      const report = await depenseServiceV2.getReportByCategorie(
         date_debut as string,
         date_fin as string
       );

@@ -34,12 +34,15 @@ import {
   ArrowLeftRight,
   History,
   Eye,
-  Loader2
+  Loader2,
+  AlertTriangle
 } from 'lucide-react';
 import { ListSkeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { formatFCFA as formatXOF } from '../utils/format';
+import { formatPaymentMethod } from '../utils/paymentMethod';
 import { api } from '../services/api';
+import { useAuth } from '../lib/AuthContext';
 
 interface Magasin {
   id: number;
@@ -59,6 +62,8 @@ interface SessionCaisse {
   solde_theorique: number;
   statut: 'ouverte' | 'cloturee';
   ouvert_par_username: string;
+  session_age_hours: number;
+  requires_manager_action: boolean;
 }
 
 interface MouvementCaisse {
@@ -161,6 +166,7 @@ const getEcartClasses = (ecart: number): string => {
 
 export default function CaisseV2() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [magasins, setMagasins] = useState<Magasin[]>([]);
   const [selectedMagasin, setSelectedMagasin] = useState<number | null>(null);
   const [session, setSession] = useState<SessionCaisse | null>(null);
@@ -189,6 +195,12 @@ export default function CaisseV2() {
 
   // Divers movement dialog
   const [diversDialog, setDiversDialog] = useState(false);
+  // Raccourcis clavier : la caisse est utilisée toute la journée, chaque
+  // mouvement passait par la souris. E = entrée, S = sortie, O = ouvrir.
+  const shortcutsRef = useRef<{ open: () => void; divers: (t: 'encaissement' | 'decaissement') => void }>({
+    open: () => {},
+    divers: () => {},
+  });
   const [diversType, setDiversType] = useState<'encaissement' | 'decaissement'>('encaissement');
   const [diversCategorie, setDiversCategorie] = useState('apport');
   const [diversMontant, setDiversMontant] = useState('');
@@ -209,6 +221,50 @@ export default function CaisseV2() {
 
   // Read-only views of the consolidated close-dialog state (writes go through dispatchClose)
   const { fondFinal, closurePreview, commentaireCloture } = closeState;
+  const staleSessionNeedsManager =
+    Boolean(session?.requires_manager_action) &&
+    !['admin', 'manager'].includes(user?.role || '');
+
+  // Ouvre le dialogue « mouvement divers » pré-réglé sur entrée ou sortie.
+  const openDivers = (type: 'encaissement' | 'decaissement') => {
+    if (staleSessionNeedsManager) {
+      toast.error(
+        'Session ouverte depuis plus de 24 heures. Un manager doit la contrôler et la clôturer.'
+      );
+      return;
+    }
+    resetDiversForm();
+    setDiversType(type);
+    setDiversCategorie(type === 'encaissement' ? 'apport' : 'retrait_banque');
+    setDiversDialog(true);
+  };
+
+  // Les handlers changent à chaque rendu : on les publie dans une ref pour que
+  // l'écouteur clavier reste monté une seule fois.
+  shortcutsRef.current = { open: () => setOpenDialog(true), divers: openDivers };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Jamais pendant une saisie, ni en combinaison avec un modificateur, ni
+      // quand un dialogue est déjà ouvert.
+      const target = e.target as HTMLElement | null;
+      if (
+        e.ctrlKey || e.metaKey || e.altKey ||
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable ||
+        document.querySelector('[role="dialog"]')
+      ) {
+        return;
+      }
+      const key = e.key.toLowerCase();
+      if (key === 'e') { e.preventDefault(); shortcutsRef.current.divers('encaissement'); }
+      else if (key === 's') { e.preventDefault(); shortcutsRef.current.divers('decaissement'); }
+      else if (key === 'o') { e.preventDefault(); shortcutsRef.current.open(); }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   // Load magasins on mount
   useEffect(() => {
@@ -230,7 +286,7 @@ export default function CaisseV2() {
       if (data && data.length === 1) {
         setSelectedMagasin(data[0].id);
       }
-    } catch (error) {
+    } catch {
       toast.error('Erreur lors du chargement des magasins');
     }
   };
@@ -373,7 +429,7 @@ export default function CaisseV2() {
   const handleDiversSubmit = async () => {
     if (!session?.id) return;
     if (!diversMontant || parseFloat(diversMontant) <= 0) {
-      toast.error('Montant > 0 obligatoire');
+      toast.error('Saisissez un montant supérieur à 0 FCFA');
       return;
     }
     if (!diversLibelle || diversLibelle.trim().length < 3) {
@@ -498,7 +554,7 @@ export default function CaisseV2() {
             <p className="text-muted-foreground mb-6 max-w-md">
               La caisse de ce magasin n'est pas ouverte. Pour enregistrer des transactions en espèces, vous devez d'abord ouvrir la caisse.
             </p>
-            <Button onClick={() => setOpenDialog(true)} size="lg">
+            <Button onClick={() => setOpenDialog(true)} size="lg" title="Raccourci : O">
               <Plus className="h-4 w-4 mr-2" />
               Ouvrir la caisse
             </Button>
@@ -509,6 +565,36 @@ export default function CaisseV2() {
       {/* Caisse ouverte */}
       {selectedMagasin && session && !loading && (
         <>
+          {session.requires_manager_action && (
+            <Card className="p-4 mb-4 border-danger-300 bg-danger-50 dark:border-danger-500/40 dark:bg-danger-500/10">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger-700 dark:text-danger-300" />
+                  <div>
+                    <p className="font-semibold text-danger-900 dark:text-danger-100">
+                      Session de caisse trop ancienne
+                    </p>
+                    <p className="text-sm text-danger-800 dark:text-danger-200">
+                      Ouverte depuis {Math.floor(session.session_age_hours / 24)} jour(s).
+                      {' '}Elle doit être contrôlée et clôturée avant de poursuivre les opérations courantes.
+                    </p>
+                    {staleSessionNeedsManager && (
+                      <p className="mt-1 text-sm font-medium text-danger-900 dark:text-danger-100">
+                        Demandez l’intervention d’un manager.
+                      </p>
+                    )}
+                  </div>
+                </div>
+                {!staleSessionNeedsManager && (
+                  <Button variant="warning" onClick={openCloseDialog}>
+                    <Lock className="mr-2 h-4 w-4" />
+                    Contrôler et clôturer
+                  </Button>
+                )}
+              </div>
+            </Card>
+          )}
+
           {/* Status bar */}
           <Card className="p-4 mb-6 bg-success-50 dark:bg-success-500/10 border-success-200 dark:border-success-500/30">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -607,6 +693,8 @@ export default function CaisseV2() {
               <Button
                 variant="outline"
                 onClick={() => setDiversDialog(true)}
+                disabled={staleSessionNeedsManager}
+                title="Mouvement divers — raccourcis : E (entrée) · S (sortie)"
               >
                 <Plus className="h-4 w-4 mr-2" />
                 Mouvement divers
@@ -620,6 +708,13 @@ export default function CaisseV2() {
               </Button>
             </div>
           </div>
+
+          <p className="text-xs text-muted-foreground">
+            Raccourcis :{' '}
+            <kbd className="rounded border bg-muted px-1 font-mono">E</kbd> entrée ·{' '}
+            <kbd className="rounded border bg-muted px-1 font-mono">S</kbd> sortie ·{' '}
+            <kbd className="rounded border bg-muted px-1 font-mono">Entrée</kbd> valide le formulaire
+          </p>
 
           {/* Movements table */}
           <Card>
@@ -654,7 +749,7 @@ export default function CaisseV2() {
                           {getCategorieLabel(m.categorie)}
                         </TableCell>
                         <TableCell className="text-sm">
-                          <Badge variant="outline">{m.methode_paiement}</Badge>
+                          <Badge variant="outline">{formatPaymentMethod(m.methode_paiement)}</Badge>
                         </TableCell>
                         <TableCell className="max-w-md truncate">
                           {m.libelle}
@@ -702,10 +797,14 @@ export default function CaisseV2() {
               Saisissez le fond de caisse initial (comptage physique des espèces)
             </DialogDescription>
           </DialogHeader>
+          {/* <form> : Entrée valide le dialogue (le montant est le premier champ). */}
+          <form onSubmit={(e) => { e.preventDefault(); if (fondInitial && !opening) handleOpenSession(); }}>
           <div className="space-y-4 py-4">
             <div>
-              <Label>Fond de caisse initial *</Label>
+              <Label htmlFor="caisse-fond-initial">Fond de caisse initial *</Label>
               <MoneyInput
+                id="caisse-fond-initial"
+                autoFocus
                 value={fondInitial}
                 onChange={(v) => setFondInitial(v)}
                 placeholder="50 000"
@@ -716,8 +815,9 @@ export default function CaisseV2() {
               </p>
             </div>
             <div>
-              <Label>Commentaire (optionnel)</Label>
+              <Label htmlFor="caisse-commentaire-ouverture">Commentaire (optionnel)</Label>
               <Input
+                id="caisse-commentaire-ouverture"
                 value={commentaireOuverture}
                 onChange={(e) => setCommentaireOuverture(e.target.value)}
                 placeholder="Ex: Fond de caisse standard"
@@ -728,13 +828,14 @@ export default function CaisseV2() {
           </div>
           <DialogFooter>
             <Button
+              type="button"
               variant="outline"
               onClick={() => { setOpenDialog(false); setFondInitial(''); setCommentaireOuverture(''); }}
               disabled={opening}
             >
               Annuler
             </Button>
-            <Button onClick={handleOpenSession} disabled={!fondInitial || opening}>
+            <Button type="submit" disabled={!fondInitial || opening}>
               {opening ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -745,6 +846,7 @@ export default function CaisseV2() {
               )}
             </Button>
           </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -791,7 +893,7 @@ export default function CaisseV2() {
                 </div>
                 {closurePreview.par_methode.map((p) => (
                   <div key={p.methode_paiement} className="flex justify-between">
-                    <span>{p.methode_paiement} <span className="text-xs text-muted-foreground">({p.nb})</span></span>
+                    <span>{formatPaymentMethod(p.methode_paiement)} <span className="text-xs text-muted-foreground">({p.nb})</span></span>
                     <span>
                       <span className="text-success-600 dark:text-success-300">+{formatXOF(p.total_encaissements)}</span>
                       {' / '}
@@ -821,8 +923,10 @@ export default function CaisseV2() {
 
             {/* Count input */}
             <div>
-              <Label>Comptage physique espèces *</Label>
+              <Label htmlFor="caisse-fond-final">Comptage physique espèces *</Label>
               <MoneyInput
+                id="caisse-fond-final"
+                autoFocus
                 value={fondFinal}
                 onChange={(v) => dispatchClose({ type: 'setFondFinal', value: v })}
                 placeholder="0"
@@ -847,10 +951,11 @@ export default function CaisseV2() {
 
             {/* Comment — obligatoire seulement quand un écart non nul est calculé */}
             <div>
-              <Label>
+              <Label htmlFor="caisse-commentaire-cloture">
                 Commentaire {closurePreview != null && closurePreview.ecart !== null && closurePreview.ecart !== 0 && <span className="text-danger-500">*</span>}
               </Label>
               <Input
+                id="caisse-commentaire-cloture"
                 value={commentaireCloture}
                 onChange={(e) => dispatchClose({ type: 'setCommentaire', value: e.target.value })}
                 placeholder={closurePreview != null && closurePreview.ecart !== null && closurePreview.ecart !== 0 ? "Expliquer l'écart..." : "Commentaire optionnel..."}
@@ -902,10 +1007,12 @@ export default function CaisseV2() {
               Apport, retrait banque, autre entrée/sortie. Motif obligatoire.
             </DialogDescription>
           </DialogHeader>
+          {/* <form> : Entrée valide le mouvement sans passer par la souris. */}
+          <form onSubmit={(e) => { e.preventDefault(); if (!diversSubmitting) handleDiversSubmit(); }}>
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Type</Label>
+                <Label htmlFor="divers-type">Type</Label>
                 <Select
                   value={diversType}
                   onValueChange={(value) => {
@@ -914,7 +1021,7 @@ export default function CaisseV2() {
                     setDiversCategorie(v === 'encaissement' ? 'apport' : 'retrait_banque');
                   }}
                 >
-                  <SelectTrigger className="mt-1 h-9 w-full" aria-label="Type de mouvement">
+                  <SelectTrigger id="divers-type" className="mt-1 h-9 w-full" aria-label="Type de mouvement">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -924,12 +1031,12 @@ export default function CaisseV2() {
                 </Select>
               </div>
               <div>
-                <Label>Catégorie</Label>
+                <Label htmlFor="divers-categorie">Catégorie</Label>
                 <Select
                   value={diversCategorie}
                   onValueChange={(v) => setDiversCategorie(v)}
                 >
-                  <SelectTrigger className="mt-1 h-9 w-full" aria-label="Catégorie du mouvement">
+                  <SelectTrigger id="divers-categorie" className="mt-1 h-9 w-full" aria-label="Catégorie du mouvement">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -949,12 +1056,12 @@ export default function CaisseV2() {
               </div>
             </div>
             <div>
-              <Label>Méthode</Label>
+              <Label htmlFor="divers-methode">Méthode</Label>
               <Select
                 value={diversMethode}
                 onValueChange={(v) => setDiversMethode(v)}
               >
-                <SelectTrigger className="mt-1 h-9 w-full" aria-label="Méthode de paiement">
+                <SelectTrigger id="divers-methode" className="mt-1 h-9 w-full" aria-label="Méthode de paiement">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -967,16 +1074,19 @@ export default function CaisseV2() {
               </Select>
             </div>
             <div>
-              <Label>Montant *</Label>
+              <Label htmlFor="divers-montant">Montant *</Label>
               <MoneyInput
+                id="divers-montant"
+                autoFocus
                 value={diversMontant}
                 onChange={(v) => setDiversMontant(v)}
                 placeholder="0"
               />
             </div>
             <div>
-              <Label>Motif *</Label>
+              <Label htmlFor="divers-motif">Motif *</Label>
               <Input
+                id="divers-motif"
                 value={diversLibelle}
                 onChange={(e) => setDiversLibelle(e.target.value)}
                 placeholder="Ex: Apport gérant, retrait dépôt banque..."
@@ -985,8 +1095,8 @@ export default function CaisseV2() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setDiversDialog(false); resetDiversForm(); }} disabled={diversSubmitting}>Annuler</Button>
-            <Button onClick={handleDiversSubmit} disabled={diversSubmitting}>
+            <Button type="button" variant="outline" onClick={() => { setDiversDialog(false); resetDiversForm(); }} disabled={diversSubmitting}>Annuler</Button>
+            <Button type="submit" disabled={diversSubmitting}>
               {diversSubmitting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -997,6 +1107,7 @@ export default function CaisseV2() {
               )}
             </Button>
           </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -1034,7 +1145,7 @@ export default function CaisseV2() {
                         {getCategorieLabel(m.categorie)}
                       </TableCell>
                       <TableCell className="text-sm">
-                        <Badge variant="outline">{m.methode_paiement}</Badge>
+                        <Badge variant="outline">{formatPaymentMethod(m.methode_paiement)}</Badge>
                       </TableCell>
                       <TableCell>{m.libelle}</TableCell>
                       <TableCell className="text-right font-medium">

@@ -19,7 +19,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import StatusBadge from '@/components/StatusBadge';
-import { formatXOF } from '@/utils/format';
+import { formatCurrency, formatXOF } from '@/utils/format';
+import { formatPaymentMethod } from '@/utils/paymentMethod';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DocumentPrint } from '@/components/ui/print-layout';
@@ -98,7 +99,7 @@ export default function FactureDetail() {
     }
     const maxComp = Math.min(remainingDue, soldeFourn);
     if (montant > maxComp + 0.005) {
-      toast.error(`Montant trop élevé (max compensable: ${maxComp.toFixed(2)} XOF)`);
+      toast.error(`Montant trop élevé (max compensable: ${formatCurrency(maxComp)})`);
       return;
     }
     setCompensationLoading(true);
@@ -108,7 +109,7 @@ export default function FactureDetail() {
         montant,
         notes: `Compensation sur facture ${facture.numero_facture}`,
       });
-      toast.success(`Compensation de ${montant.toFixed(2)} XOF appliquée`);
+      toast.success(`Compensation de ${formatCurrency(montant)} appliquée`);
       setShowCompensationModal(false);
       setCompensationMontant('');
       await loadFacture();
@@ -140,12 +141,12 @@ export default function FactureDetail() {
     const maxApply = acompteMaxApply;
     const montant = parseFloat(applyMontant);
     if (Number.isNaN(montant) || montant <= 0 || montant > maxApply + 0.005) {
-      toast.error(`Montant invalide (max ${maxApply.toFixed(2)})`);
+      toast.error(`Montant invalide (max ${formatCurrency(maxApply)})`);
       return;
     }
     if (!(await confirm({
       title: "Appliquer l'acompte ?",
-      description: `${montant.toFixed(2)} XOF de l'acompte #${acompteToApply.id} seront appliqués sur la facture ${facture.numero_facture}.`,
+      description: `${formatCurrency(montant)} de l'acompte #${acompteToApply.id} seront appliqués sur la facture ${facture.numero_facture}.`,
       confirmLabel: 'Appliquer',
     }))) return;
     setApplyLoading(true);
@@ -155,7 +156,7 @@ export default function FactureDetail() {
         montant,
         idempotency_key: `apply-${acompteToApply.id}-${facture.id}-${Date.now()}`,
       });
-      toast.success(`Acompte appliqué: ${montant.toFixed(2)} XOF`);
+      toast.success(`Acompte appliqué: ${formatCurrency(montant)}`);
       setAcompteToApply(null);
       setApplyMontant('');
       await loadFacture();
@@ -199,7 +200,6 @@ export default function FactureDetail() {
 
   // Calculate values before early returns to maintain hook order
   const sousTotal = facture ? parseFloat(facture.sous_total as any) || 0 : 0;
-  const tva = facture ? parseFloat(facture.tva as any) || 0 : 0;
   const total = facture ? parseFloat(facture.total as any) || 0 : 0;
   const montantPaye = facture ? parseFloat(facture.montant_paye as any) || 0 : 0;
   const remainingDue = facture ? parseFloat(facture.remaining_due as any) || total : 0;
@@ -443,13 +443,9 @@ export default function FactureDetail() {
                 <span className="text-primary-foreground/80">Sous-total</span>
                 <span className="font-semibold">{formatXOF(sousTotal)}</span>
               </div>
-              <div className="flex justify-between text-lg">
-                <span className="text-primary-foreground/80">TVA (19%)</span>
-                <span className="font-semibold">{formatXOF(tva)}</span>
-              </div>
               <div className="border-t border-primary-foreground/20 pt-3">
                 <div className="flex justify-between text-2xl font-bold">
-                  <span>Total TTC</span>
+                  <span>Total</span>
                   <span>{formatXOF(total)}</span>
                 </div>
               </div>
@@ -551,7 +547,7 @@ export default function FactureDetail() {
                       <TableCell className="text-sm">
                         {a.date_acompte ? new Date(a.date_acompte).toLocaleDateString('fr-FR') : '-'}
                       </TableCell>
-                      <TableCell className="text-sm">{a.methode_paiement}</TableCell>
+                      <TableCell className="text-sm">{formatPaymentMethod(a.methode_paiement)}</TableCell>
                       <TableCell className="text-right font-semibold text-blue-600 dark:text-blue-300">
                         {formatXOF(restant)}
                       </TableCell>
@@ -640,7 +636,7 @@ export default function FactureDetail() {
           </DialogHeader>
           <div className="space-y-1.5">
             <Label htmlFor="apply-acompte-montant">
-              Montant à appliquer (max {acompteMaxApply.toFixed(2)} XOF)
+              Montant à appliquer (max {formatCurrency(acompteMaxApply)})
             </Label>
             <Input
               id="apply-acompte-montant"

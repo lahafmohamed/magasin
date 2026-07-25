@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, caisseService } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -126,9 +126,9 @@ export default function CaisseHistorique() {
         </CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="space-y-1.5">
-            <Label>Magasin</Label>
+            <Label htmlFor="hist-magasin">Magasin</Label>
             <Select value={magasinId || 'tous'} onValueChange={v => onFilterChange(setMagasinId)(v === 'tous' ? '' : v)}>
-              <SelectTrigger aria-label="Magasin">
+              <SelectTrigger id="hist-magasin" aria-label="Magasin">
                 <SelectValue placeholder="Tous" />
               </SelectTrigger>
               <SelectContent>
@@ -143,11 +143,11 @@ export default function CaisseHistorique() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="hist-from">Du</Label>
-            <Input id="hist-from" type="date" value={dateFrom} onChange={e => onFilterChange(setDateFrom)(e.target.value)} />
+            <DatePicker id="hist-from" value={dateFrom} onChange={onFilterChange(setDateFrom)} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="hist-to">Au</Label>
-            <Input id="hist-to" type="date" value={dateTo} onChange={e => onFilterChange(setDateTo)(e.target.value)} />
+            <DatePicker id="hist-to" value={dateTo} onChange={onFilterChange(setDateTo)} />
           </div>
         </CardContent>
       </Card>

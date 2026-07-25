@@ -196,7 +196,7 @@ export default function CompanySettingsPage() {
             </div>
 
             <div className="border-t pt-4 space-y-2">
-              <Label>Logo de l'entreprise</Label>
+              <p className="text-sm font-medium">Logo de l'entreprise</p>
               <div className="flex items-center gap-4">
                 {settings.logo_url && settings.logo_url !== '' ? (
                   <div className="relative group w-24 h-24 rounded-lg border bg-muted flex items-center justify-center p-2 overflow-hidden">

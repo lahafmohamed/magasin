@@ -123,7 +123,7 @@ describe('NouvelleFacture', () => {
   });
 
   it('calculates correct totals when products are added', () => {
-    // This tests the calculation logic: sous_total + TVA (19%) = total
+    // This tests the no-tax calculation: the line subtotal is the invoice total.
     // For a product with price 50000 and quantity 2:
     // sous_total = 100000, tva = 19000, total = 119000
     const sousTotal = 50000 * 2;

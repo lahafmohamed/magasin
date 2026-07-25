@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { authService } from '../services/authService';
 import { toast } from 'sonner';
-import { Loader2, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Eye, EyeOff, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { isStrongPassword, passwordRules, PASSWORD_POLICY_MESSAGE } from '../utils/password';
 
 export default function ChangePassword() {
   const { logout } = useAuth();
@@ -22,10 +23,9 @@ export default function ChangePassword() {
     e.preventDefault();
     setErrors({});
 
-    if (newPassword.length < 6) {
-      const msg = 'Le nouveau mot de passe doit avoir au moins 6 caractères.';
-      setErrors({ newPassword: msg });
-      toast.error(msg);
+    if (!isStrongPassword(newPassword)) {
+      setErrors({ newPassword: PASSWORD_POLICY_MESSAGE });
+      toast.error(PASSWORD_POLICY_MESSAGE);
       return;
     }
     if (newPassword !== confirm) {
@@ -39,7 +39,7 @@ export default function ChangePassword() {
     try {
       await authService.changePassword(currentPassword, newPassword);
       toast.success('Mot de passe mis à jour. Veuillez vous reconnecter.');
-      logout();
+      await logout();
     } catch (err: any) {
       toast.error(err?.response?.data?.error || 'Erreur lors du changement de mot de passe.');
     } finally {
@@ -90,10 +90,11 @@ export default function ChangePassword() {
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
                   required
-                  minLength={6}
+                  minLength={8}
                   autoComplete="new-password"
                   className="pr-10"
                   aria-invalid={!!errors.newPassword}
+                  aria-describedby="new-rules"
                 />
                 <button
                   type="button"
@@ -104,6 +105,19 @@ export default function ChangePassword() {
                   {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+              <ul id="new-rules" className="space-y-0.5 pt-1">
+                {passwordRules(newPassword).map(rule => (
+                  <li
+                    key={rule.label}
+                    className={`flex items-center gap-1.5 text-xs ${
+                      rule.ok ? 'text-success-600 dark:text-success-500' : 'text-muted-foreground'
+                    }`}
+                  >
+                    {rule.ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                    {rule.label}
+                  </li>
+                ))}
+              </ul>
               {errors.newPassword && (
                 <p role="alert" className="text-xs text-danger-600">{errors.newPassword}</p>
               )}

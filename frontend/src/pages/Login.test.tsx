@@ -47,6 +47,8 @@ describe('Login', () => {
     expect(screen.getByLabelText('Identifiant')).toBeInTheDocument();
     expect(screen.getByLabelText('Mot de passe')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /se connecter/i })).toBeInTheDocument();
+    expect(screen.queryByText(/comptes de démonstration/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/manager123/i)).not.toBeInTheDocument();
   });
 
   it('shows validation error for empty form submission', async () => {

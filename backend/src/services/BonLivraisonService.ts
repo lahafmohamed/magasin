@@ -1,7 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
-import { calculateTotals } from './PricingService';
+import { assertPositiveSalePrices, calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { ClientAllocationService } from './ClientAllocationService';
 import { creditService } from './CreditService';
@@ -107,6 +107,7 @@ export class BonLivraisonService {
        ORDER BY id`,
       [blId]
     );
+    assertPositiveSalePrices(lignesRows);
 
     for (const ligne of lignesRows) {
       await client.query(
@@ -795,6 +796,15 @@ export class BonLivraisonService {
       if (devisRows[0].statut !== 'accepte') {
         throw new Error('On ne peut pas facturer sans devis confirmé');
       }
+
+      const { rows: conversionLines } = await client.query(
+        `SELECT prix_unitaire
+         FROM document_lignes
+         WHERE document_type = 'bl' AND document_id = $1
+         ORDER BY id`,
+        [id]
+      );
+      assertPositiveSalePrices(conversionLines);
 
       let factureId: number;
       let numeroFacture: string;

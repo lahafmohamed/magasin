@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { businessError } from '../utils/errors';
 import { costedStockIn } from './StockCostingService';
 
 // ============================================
@@ -45,18 +46,6 @@ export interface DemandeFilters {
     page?: number;
     limit?: number;
 }
-
-// Valid state transitions
-const VALID_TRANSITIONS: Record<string, string[]> = {
-    'brouillon': ['envoyee', 'annulee'],
-    'envoyee': ['approuvee', 'partiellement_approuvee', 'refusee'],
-    'approuvee': ['en_cours'],
-    'partiellement_approuvee': ['en_cours'],
-    'refusee': [], // Terminal
-    'en_cours': ['livree'],
-    'livree': ['cloturee'],
-    'cloturee': [], // Terminal
-};
 
 // ============================================
 // SERVICE CLASS
@@ -231,11 +220,11 @@ export class DemandeService {
 
             // Validation
             if (magasin_id === depot_id) {
-                throw new Error('Le magasin et le dépôt doivent être différents');
+                throw businessError(422, 'Le magasin et le dépôt doivent être différents');
             }
 
             if (!lignes || lignes.length === 0) {
-                throw new Error('La demande doit contenir au moins une ligne');
+                throw businessError(422, 'La demande doit contenir au moins une ligne');
             }
 
             // Verify locations exist and are correct types
@@ -245,20 +234,20 @@ export class DemandeService {
             );
 
             if (locationRows.length !== 2) {
-                throw new Error('Magasin ou dépôt invalide');
+                throw businessError(422, 'Magasin ou dépôt invalide');
             }
 
             const magasin = locationRows.find((r) => r.id === magasin_id);
             const depot = locationRows.find((r) => r.id === depot_id);
 
             if (magasin?.location_type !== 'magasin') {
-                throw new Error('La location source doit être un magasin');
+                throw businessError(422, 'La location source doit être un magasin');
             }
             if (depot?.location_type !== 'depot') {
-                throw new Error('La location destination doit être un dépôt');
+                throw businessError(422, 'La location destination doit être un dépôt');
             }
             if (!magasin.actif || !depot.actif) {
-                throw new Error('Une des locations est inactive');
+                throw businessError(422, 'Une des locations est inactive');
             }
 
             // Generate demande number
@@ -282,7 +271,7 @@ export class DemandeService {
             // Insert lines
             for (const ligne of lignes) {
                 if (!ligne.produit_id || !ligne.quantite_demandee || ligne.quantite_demandee <= 0) {
-                    throw new Error('Chaque ligne doit avoir un produit et une quantité > 0');
+                    throw businessError(422, 'Chaque ligne doit avoir un produit et une quantité > 0');
                 }
 
                 await client.query(
@@ -337,12 +326,12 @@ export class DemandeService {
             );
 
             if (checkRows.length === 0) {
-                throw new Error('Demande non trouvée');
+                throw businessError(404, 'Demande non trouvée');
             }
 
             const current = checkRows[0];
             if (current.statut !== 'brouillon') {
-                throw new Error('Une demande ne peut être modifiée qu\'en état brouillon');
+                throw businessError(409, 'Une demande ne peut être modifiée qu\'en état brouillon');
             }
 
             // Update motif if provided
@@ -406,7 +395,7 @@ export class DemandeService {
             );
 
             if (rows.length === 0) {
-                throw new Error('Demande non trouvée ou déjà envoyée');
+                throw businessError(409, 'Demande non trouvée ou déjà envoyée');
             }
 
             await client.query('COMMIT');
@@ -443,10 +432,8 @@ export class DemandeService {
             );
 
             if (demandeRows.length === 0) {
-                throw new Error('Demande non trouvée ou non envoyée');
+                throw businessError(409, 'Demande non trouvée ou non envoyée');
             }
-
-            const demande = demandeRows[0];
 
             // Get current lines
             const { rows: lignesRows } = await client.query(
@@ -481,7 +468,6 @@ export class DemandeService {
                     decisionMap.set(d.ligne_id, d.quantite_approuvee);
                 }
 
-                let totalApproved = 0;
                 let anyPartial = false;
                 let allZero = true;
 
@@ -493,7 +479,7 @@ export class DemandeService {
                         : requested; // Default to full approval if not specified
 
                     if (approved < 0 || approved > requested) {
-                        throw new Error(`Quantité approuvée invalide pour ligne ${ligneId}: ${approved}`);
+                        throw businessError(422, `Quantité approuvée invalide pour ligne ${ligneId}: ${approved}`);
                     }
 
                     await client.query(
@@ -503,7 +489,6 @@ export class DemandeService {
                         [approved, ligneId]
                     );
 
-                    totalApproved += approved;
                     if (approved < requested) anyPartial = true;
                     if (approved > 0) allZero = false;
                 }
@@ -565,7 +550,7 @@ export class DemandeService {
             );
 
             if (demandeRows.length === 0) {
-                throw new Error('Demande non trouvée ou non approuvée');
+                throw businessError(409, 'Demande non trouvée ou non approuvée');
             }
 
             const demande = demandeRows[0];
@@ -591,7 +576,7 @@ export class DemandeService {
                 .filter((l) => l.quantite > 0);
 
             if (effectiveLines.length === 0) {
-                throw new Error('Aucune ligne à transférer');
+                throw businessError(422, 'Aucune ligne à transférer');
             }
 
             // Generate transfer number
@@ -619,59 +604,97 @@ export class DemandeService {
 
             const transfertId = transferRows[0].id;
 
-            // Process each line - check stock, move, create transfer line
+            // Process lines set-based: one ordered lock pass per location,
+            // per-line validation on a running balance, then bulk writes.
+            // costedStockIn stays per line — it owns the CMP math.
+            const ligneProduitIds = [...new Set(effectiveLines.map((l: any) => l.produit_id))];
+
+            // Stable lock order (produit_id ASC), source then destination —
+            // concurrent executions can no longer deadlock on interleaved rows.
+            const { rows: depotRows } = await client.query(
+                `SELECT produit_id, quantite, COALESCE(cmp, 0) AS cmp
+                 FROM stock_par_location
+                 WHERE location_id = $2 AND produit_id = ANY($1::int[])
+                 ORDER BY produit_id
+                 FOR UPDATE`,
+                [ligneProduitIds, demande.depot_id]
+            );
+            const depotByProduit = new Map(depotRows.map((r: any) => [Number(r.produit_id), r]));
+            await client.query(
+                `SELECT produit_id FROM stock_par_location
+                 WHERE location_id = $2 AND produit_id = ANY($1::int[])
+                 ORDER BY produit_id
+                 FOR UPDATE`,
+                [ligneProduitIds, demande.magasin_id]
+            );
+
+            const runningDepot = new Map<number, number>();
+            for (const [pid, row] of depotByProduit) {
+                runningDepot.set(pid, parseInt((row as any).quantite, 10));
+            }
+
+            const tlProduits: number[] = [];
+            const tlQuantites: number[] = [];
+            const tlDemandeLigneIds: number[] = [];
+            const decrement = new Map<number, number>();
             for (const ligne of effectiveLines) {
-                // Check stock availability with FOR UPDATE lock
-                const { rows: stockRows } = await client.query(
-                    `SELECT quantite, COALESCE(cmp, 0) AS cmp FROM stock_par_location
-                     WHERE produit_id = $1 AND location_id = $2
-                     FOR UPDATE`,
-                    [ligne.produit_id, demande.depot_id]
-                );
-
-                const available = stockRows.length > 0 ? parseInt(stockRows[0].quantite, 10) : 0;
-                const depotCmp = stockRows.length > 0 ? Number(stockRows[0].cmp) : 0;
-
+                const available = runningDepot.get(ligne.produit_id) ?? 0;
                 if (available < ligne.quantite) {
-                    throw new Error(
+                    throw businessError(422,
                         `Stock dépôt insuffisant pour le produit ${ligne.produit_id}: ` +
                         `disponible ${available}, demandé ${ligne.quantite}`
                     );
                 }
+                runningDepot.set(ligne.produit_id, available - ligne.quantite);
+                decrement.set(ligne.produit_id, (decrement.get(ligne.produit_id) ?? 0) + ligne.quantite);
+                tlProduits.push(ligne.produit_id);
+                tlQuantites.push(ligne.quantite);
+                tlDemandeLigneIds.push(ligne.id);
+            }
 
-                // Create transfer line with demande_ligne_id link
+            // Transfer lines with demande_ligne_id link (one statement)
+            await client.query(
+                `INSERT INTO stock_transfer_lignes (
+                    transfer_id, produit_id, quantite_demandee, quantite_transferee, demande_ligne_id
+                ) SELECT $1, unnest($2::int[]), unnest($3::int[]), unnest($3::int[]), unnest($4::int[])`,
+                [transfertId, tlProduits, tlQuantites, tlDemandeLigneIds]
+            );
+
+            // Decrement depot stock (validated above under lock — no guard needed)
+            {
+                const ids = [...decrement.keys()];
+                const qtes = ids.map((id) => decrement.get(id)!);
                 await client.query(
-                    `INSERT INTO stock_transfer_lignes (
-                        transfer_id, produit_id, quantite_demandee, quantite_transferee, demande_ligne_id
-                    ) VALUES ($1, $2, $3, $3, $4)`,
-                    [transfertId, ligne.produit_id, ligne.quantite, ligne.id]
+                    `UPDATE stock_par_location spl
+                     SET quantite = spl.quantite - v.qte, updated_at = CURRENT_TIMESTAMP
+                     FROM (SELECT unnest($1::int[]) AS pid, unnest($2::int[]) AS qte) v
+                     WHERE spl.produit_id = v.pid AND spl.location_id = $3`,
+                    [ids, qtes, demande.depot_id]
                 );
+            }
 
-                // Decrement depot stock
-                await client.query(
-                    `UPDATE stock_par_location 
-                     SET quantite = quantite - $1, updated_at = CURRENT_TIMESTAMP
-                     WHERE produit_id = $2 AND location_id = $3`,
-                    [ligne.quantite, ligne.produit_id, demande.depot_id]
-                );
-
-                // Increment magasin stock at the depot's unit cost so the
-                // transferred value arrives with the goods (costed stock-in).
+            // Increment magasin stock at the depot's unit cost so the
+            // transferred value arrives with the goods (costed stock-in).
+            // cmp is unaffected by the decrement above, so reading it from the
+            // lock pass matches the old per-line re-read.
+            for (const ligne of effectiveLines) {
+                const depotCmp = Number((depotByProduit.get(ligne.produit_id) as any)?.cmp ?? 0);
                 await costedStockIn(client, {
                     produitId: ligne.produit_id,
                     locationId: demande.magasin_id,
                     quantite: ligne.quantite,
                     unitCost: depotCmp > 0 ? depotCmp : null,
                 });
-
-                // Update demande line with delivered quantity
-                await client.query(
-                    `UPDATE demandes_reapprovisionnement_lignes 
-                     SET quantite_livree = $1, updated_at = CURRENT_TIMESTAMP
-                     WHERE id = $2`,
-                    [ligne.quantite, ligne.id]
-                );
             }
+
+            // Delivered quantities (one statement — demande_ligne ids are unique)
+            await client.query(
+                `UPDATE demandes_reapprovisionnement_lignes dl
+                 SET quantite_livree = v.qte, updated_at = CURRENT_TIMESTAMP
+                 FROM (SELECT unnest($1::int[]) AS id, unnest($2::int[]) AS qte) v
+                 WHERE dl.id = v.id`,
+                [tlDemandeLigneIds, tlQuantites]
+            );
 
             // Update transfer to delivered
             await client.query(
@@ -732,7 +755,7 @@ export class DemandeService {
             );
 
             if (rows.length === 0) {
-                throw new Error('Demande non trouvée ou non livrée');
+                throw businessError(409, 'Demande non trouvée ou non livrée');
             }
 
             await client.query('COMMIT');
@@ -768,19 +791,17 @@ export class DemandeService {
             );
 
             if (checkRows.length === 0) {
-                throw new Error('Demande non trouvée');
+                throw businessError(404, 'Demande non trouvée');
             }
 
             const current = checkRows[0];
             if (!['brouillon', 'envoyee'].includes(current.statut)) {
-                throw new Error('Une demande ne peut être annulée qu\'en état brouillon ou envoyée');
+                throw businessError(409, 'Une demande ne peut être annulée qu\'en état brouillon ou envoyée');
             }
 
             // Ownership: only the creator or an admin may cancel.
             if (role !== 'admin' && current.created_by_user_id !== userId) {
-                const err: any = new Error('Vous ne pouvez annuler que vos propres demandes');
-                err.code = 'FORBIDDEN';
-                throw err;
+                throw businessError(403, 'Vous ne pouvez annuler que vos propres demandes', 'FORBIDDEN');
             }
 
             // Soft delete approach: mark as cancelled

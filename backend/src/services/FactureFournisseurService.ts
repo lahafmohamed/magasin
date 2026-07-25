@@ -4,6 +4,7 @@ import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { checkPeriodIsOpen } from './PeriodService';
 import { businessError } from '../utils/errors';
+import { SupplierAllocationService } from './SupplierAllocationService';
 
 export interface FactureFournisseurLigneInput {
   produit_id?: number;
@@ -359,6 +360,13 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
         [tiers_id_fourn, invoiceId, numeroFactureInterne, total, notes || null, cree_par || null]
       );
 
+      // Affecter les acomptes encore disponibles à la nouvelle facture (FIFO).
+      // Aucun nouveau mouvement de caisse : il a déjà été saisi avec l'acompte.
+      await SupplierAllocationService.allocateAvailableAdvances(tiers_id_fourn, {
+        transaction: client,
+        userId: cree_par ?? null,
+      });
+
       await client.query('COMMIT');
 
       await logAudit({
@@ -416,10 +424,10 @@ export class FactureFournisseurService extends BaseService<FactureFournisseurRec
 
       // Get fournisseur_id for ledger entry
       const { rows: ffRows } = await client.query(
-        'SELECT tiers_id, numero_facture_interne FROM factures_fournisseur WHERE id = $1',
+        'SELECT tiers_id FROM factures_fournisseur WHERE id = $1',
         [factureId]
       );
-      const { tiers_id: ff_tiers_id, numero_facture_interne } = ffRows[0];
+      const { tiers_id: ff_tiers_id } = ffRows[0];
 
       // Insert payment
       const { rows: paiementResult } = await client.query(

@@ -6,6 +6,7 @@ import { TiersPicker } from '../components/TiersPicker';
 import { Tiers } from '../types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -14,9 +15,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SortableHeader, type SortState } from '@/components/ui/sortable-header';
+import { Pagination } from '@/components/ui/pagination';
 import { LoadingState } from '@/components/ui/loading';
-import { TableSkeleton, ListSkeleton } from '@/components/ui/skeleton';
+import { ListSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { QueryState } from '@/components/ui/query-state';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import {
   Plus, Search, Trash2, ShoppingCart, CheckCircle, Clock,
@@ -41,6 +44,13 @@ export default function Commandes() {
   const [sortKey, setSortKey] = useState<string>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+
+  // Server-side pagination (list was previously fetch-all + client-sorted)
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
 
   // Form states
   const [showForm, setShowForm] = useState(false);
@@ -72,19 +82,32 @@ export default function Commandes() {
     return () => clearTimeout(t);
   }, [search]);
 
+  // Reset to page 1 whenever the filters or sort change
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter, sortKey, sortOrder]);
+
   useEffect(() => {
     loadCommandes();
-  }, [debouncedSearch, statusFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch, statusFilter, sortKey, sortOrder, page, limit]);
 
   const loadCommandes = async () => {
     setLoading(true);
+    setError(null);
     try {
       const statut = statusFilter === 'all' ? undefined : statusFilter;
-      const data = await commandeService.getAll(normalizeSearch(debouncedSearch), statut);
-      setCommandes(data);
-    } catch (error) {
+      const res = await commandeService.getAll(normalizeSearch(debouncedSearch), statut, page, limit, sortKey, sortOrder);
+      setCommandes(res.data ?? []);
+      setTotal(res.pagination?.total ?? 0);
+      setTotalPages(res.pagination?.totalPages ?? 0);
+    } catch (err) {
+      // Erreur conservée en état → QueryState propose « Réessayer » au lieu de
+      // laisser une liste vide derrière un toast qui disparaît.
+      setError(err);
+      setCommandes([]);
       toast.error('Erreur lors du chargement');
-      console.error(error);
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -244,7 +267,7 @@ export default function Commandes() {
       await commandeService.updateStatut(id, statut);
       loadCommandes();
       toast.success('Statut mis à jour');
-    } catch (error) {
+    } catch {
       toast.error('Erreur lors de la mise à jour');
     }
   };
@@ -305,25 +328,8 @@ export default function Commandes() {
 
   const ordersSort: SortState = { key: sortKey, dir: sortOrder };
 
-  const sortedCommandes = [...commandes].sort((a, b) => {
-    let aVal: any = a.date_commande;
-    let bVal: any = b.date_commande;
-
-    if (sortKey === 'montant') {
-      aVal = parseFloat(a.sous_total) || 0;
-      bVal = parseFloat(b.sous_total) || 0;
-    } else if (sortKey === 'numero') {
-      aVal = a.numero_commande;
-      bVal = b.numero_commande;
-    } else if (sortKey === 'livraison') {
-      aVal = a.date_livraison_prevue || '';
-      bVal = b.date_livraison_prevue || '';
-    }
-
-    if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
-    if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
-    return 0;
-  });
+  // Rows arrive already sorted + paginated from the server.
+  const sortedCommandes = commandes;
 
   // Catalog Drawer filters
   const filteredCatalog = catalogProducts.filter((p) => {
@@ -369,8 +375,8 @@ export default function Commandes() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label>Fournisseur *</Label>
-                  <TiersPicker role="fournisseur" value={selectedFournisseur} onChange={setSelectedFournisseur} />
+                  <Label htmlFor="cmd-fournisseur">Fournisseur *</Label>
+                  <TiersPicker id="cmd-fournisseur" role="fournisseur" value={selectedFournisseur} onChange={setSelectedFournisseur} />
                 </div>
                 {selectedFournisseur && (
                   <div className="p-3 bg-muted/40 rounded-md border text-xs space-y-1.5 animate-in slide-in-from-top-2 duration-200">
@@ -406,11 +412,10 @@ export default function Commandes() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="date_livraison">Date de livraison prévue</Label>
-                  <Input
+                  <DatePicker
                     id="date_livraison"
-                    type="date"
                     value={dateLivraison}
-                    onChange={(e) => setDateLivraison(e.target.value)}
+                    onChange={setDateLivraison}
                   />
                 </div>
                 <div className="space-y-2">
@@ -475,7 +480,7 @@ export default function Commandes() {
                               <p className="text-xs text-muted-foreground font-mono">{p.reference}</p>
                             </div>
                             <div className="text-right">
-                              <p className="text-sm font-bold text-primary">{parseFloat(p.prix_achat).toFixed(2)} XOF</p>
+                              <p className="text-sm font-bold text-primary">{formatCurrency(p.prix_achat)}</p>
                               <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
                                 Stock: {p.stock} (Min: {p.stock_min})
                               </p>
@@ -554,7 +559,7 @@ export default function Commandes() {
                                 </div>
                               </TableCell>
                               <TableCell className="font-bold text-right text-sm">
-                                {(ligne.quantite * ligne.prix_unitaire).toFixed(2)} XOF
+                                {formatCurrency(ligne.quantite * ligne.prix_unitaire)}
                               </TableCell>
                               <TableCell>
                                 <Button type="button" variant="ghost" size="sm" className="text-destructive h-8 w-8 p-0" onClick={() => removeLigne(index)} aria-label="Retirer cet article">
@@ -578,7 +583,7 @@ export default function Commandes() {
                   </div>
                   <div className="text-right">
                     <span className="text-xs text-muted-foreground block font-semibold uppercase">Total à commander</span>
-                    <span className="text-2xl font-black text-primary">{grandTotal.toFixed(2)} XOF</span>
+                    <span className="text-2xl font-black text-primary">{formatCurrency(grandTotal)}</span>
                   </div>
                 </div>
               )}
@@ -625,7 +630,7 @@ export default function Commandes() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="qc_prix">Prix d'achat (XOF)</Label>
+                  <Label htmlFor="qc_prix">Prix d'achat (FCFA)</Label>
                   <Input id="qc_prix" type="number" step="0.01" value={quickCreatePrix} onChange={e => setQuickCreatePrix(e.target.value)} placeholder="0" />
                 </div>
                 <div className="space-y-2">
@@ -704,7 +709,7 @@ export default function Commandes() {
                       <p className="text-sm font-semibold truncate">{p.nom}</p>
                       <p className="text-xs font-mono text-muted-foreground">{p.reference}</p>
                       <div className="flex gap-2 items-center mt-1">
-                        <span className="text-xs font-bold text-primary">{parseFloat(p.prix_achat).toFixed(2)} XOF</span>
+                        <span className="text-xs font-bold text-primary">{formatCurrency(p.prix_achat)}</span>
                         <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
                           Stock: {p.stock} (Min: {p.stock_min})
                         </span>
@@ -738,7 +743,7 @@ export default function Commandes() {
             <ShoppingCart className="h-8 w-8 text-primary" />
             Commandes Fournisseur
           </h1>
-          <p className="text-muted-foreground mt-1">Gerez le reapprovisionnement et le suivi des stocks</p>
+          <p className="text-muted-foreground mt-1">Gérez le réapprovisionnement et le suivi des stocks</p>
         </div>
         {canCreate && (
           <Button onClick={() => setShowForm(true)} className="gap-2 shadow-lg shadow-primary/20">
@@ -755,7 +760,7 @@ export default function Commandes() {
           <CardContent className="p-5 flex items-center justify-between">
             <div className="space-y-1">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Commande ce mois</span>
-              <h2 className="text-xl sm:text-2xl font-black text-foreground">{stats.totalMonth.toFixed(2)} XOF</h2>
+              <h2 className="text-xl sm:text-2xl font-black text-foreground">{formatCurrency(stats.totalMonth)}</h2>
             </div>
             <div className="w-12 h-12 rounded-full bg-success-500/10 flex items-center justify-center text-success-600 dark:text-success-300">
               <TrendingUp className="h-6 w-6" />
@@ -810,10 +815,10 @@ export default function Commandes() {
               <SelectContent>
                 <SelectItem value="all">Tous les statuts</SelectItem>
                 <SelectItem value="en_attente">En attente</SelectItem>
-                <SelectItem value="validee">Validee</SelectItem>
-                <SelectItem value="expediee">Expediee</SelectItem>
-                <SelectItem value="livree">Livree</SelectItem>
-                <SelectItem value="annulee">Annulee</SelectItem>
+                <SelectItem value="validee">Validée</SelectItem>
+                <SelectItem value="expediee">Expédiée</SelectItem>
+                <SelectItem value="livree">Livrée</SelectItem>
+                <SelectItem value="annulee">Annulée</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -823,18 +828,20 @@ export default function Commandes() {
       {/* Orders Table */}
       <Card className="border border-border/60 shadow-md overflow-hidden">
           <CardContent className="p-0">
+            <QueryState
+              loading={loading}
+              error={error}
+              isEmpty={sortedCommandes.length === 0}
+              onRetry={loadCommandes}
+              skeleton={<div className="px-3 pb-3 md:p-4"><ListSkeleton items={6} /></div>}
+              emptyIcon={ShoppingCart}
+              emptyTitle="Aucune commande trouvée"
+              emptyDescription="Essayez de modifier vos termes de recherche ou filtrez par un autre statut."
+            >
             <ResponsiveTable
               className="px-3 pb-3 md:p-0"
               cards={
-                loading ? (
-                  <ListSkeleton items={6} />
-                ) : sortedCommandes.length === 0 ? (
-                  <EmptyState
-                    icon={ShoppingCart}
-                    title="Aucune commande trouvee"
-                    description="Essayez de modifier vos termes de recherche ou filtrez par un autre statut."
-                  />
-                ) : (
+                (
                   sortedCommandes.map((c) => {
                     const isLate = c.statut !== 'livree' && c.statut !== 'annulee' && c.date_livraison_prevue && c.date_livraison_prevue.split('T')[0] < todayStr;
                     return (
@@ -888,20 +895,12 @@ export default function Commandes() {
                   <TableHead>Fournisseur</TableHead>
                   <SortableHeader columnKey="date" sort={ordersSort} onSort={handleSort}>Date</SortableHeader>
                   <SortableHeader columnKey="montant" sort={ordersSort} onSort={handleSort} align="right">Montant</SortableHeader>
-                  <SortableHeader columnKey="livraison" sort={ordersSort} onSort={handleSort}>Livraison prevue</SortableHeader>
+                  <SortableHeader columnKey="livraison" sort={ordersSort} onSort={handleSort}>Livraison prévue</SortableHeader>
                   <TableHead>Statut</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading ? (
-                  <TableRow>
-                    <TableCell colSpan={7} className="p-0">
-                      <TableSkeleton rows={10} columns={7} />
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                <>
                 {sortedCommandes.map((c) => {
                   const isLate = c.statut !== 'livree' && c.statut !== 'annulee' && c.date_livraison_prevue && c.date_livraison_prevue.split('T')[0] < todayStr;
                   return (
@@ -981,23 +980,21 @@ export default function Commandes() {
                     </TableRow>
                   );
                 })}
-                {sortedCommandes.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={7} className="p-0">
-                      <EmptyState
-                        icon={ShoppingCart}
-                        title="Aucune commande trouvee"
-                        description="Essayez de modifier vos termes de recherche ou filtrez par un autre statut."
-                      />
-                    </TableCell>
-                  </TableRow>
-                )}
-                </>
-                )}
               </TableBody>
             </Table>
               }
             />
+            </QueryState>
+            {!loading && total > 0 && (
+              <Pagination
+                page={page}
+                totalPages={totalPages}
+                total={total}
+                limit={limit}
+                onPageChange={setPage}
+                onLimitChange={(n) => { setLimit(n); setPage(1); }}
+              />
+            )}
           </CardContent>
         </Card>
     </div>

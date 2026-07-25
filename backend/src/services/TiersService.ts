@@ -1,5 +1,5 @@
 import pool from '../db/connection';
-import { BaseService, PaginatedResult, PaginationParams } from './BaseService';
+import { BaseService, PaginatedResult } from './BaseService';
 
 export interface TiersRecord {
   id: number;
@@ -204,7 +204,7 @@ export class TiersService extends BaseService<TiersRecord> {
       WITH
         ff AS (SELECT COALESCE(SUM(total),0) as v FROM factures_fournisseur WHERE tiers_id=$1 AND statut!='annulee'),
         pf AS (SELECT COALESCE(SUM(pf.montant),0) as v FROM paiements_fournisseur pf JOIN factures_fournisseur ff2 ON ff2.id=pf.facture_id WHERE ff2.tiers_id=$1),
-        af AS (SELECT COALESCE(SUM(montant),0) as v FROM acomptes_fournisseur WHERE tiers_id=$1 AND statut IN ('disponible','utilise'))
+        af AS (SELECT COALESCE(SUM(montant_restant),0) as v FROM acomptes_fournisseur WHERE tiers_id=$1 AND statut IN ('disponible','partiellement_utilise') AND deleted_at IS NULL)
       SELECT ff.v as total_facture_fourn, pf.v as total_paye_fourn, af.v as total_acompte_fourn,
         ROUND(ff.v - pf.v - af.v) as solde_fournisseur
       FROM ff,pf,af`;
@@ -226,8 +226,11 @@ export class TiersService extends BaseService<TiersRecord> {
         FROM factures_avoir WHERE tiers_id=$1 AND statut = 'valide' AND deleted_at IS NULL
 
         UNION ALL
-        SELECT date_acompte::timestamp, 'acompte_client', 'ACO-'||id,
-          'Acompte client', 0, montant, id, 4
+        SELECT date_acompte::timestamp,
+          CASE WHEN methode_paiement = 'compensation' THEN 'compensation_client' ELSE 'acompte_client' END,
+          COALESCE(reference_number, 'ACO-'||id),
+          CASE WHEN methode_paiement = 'compensation' THEN 'Compensation client' ELSE 'Acompte client' END,
+          0, montant, id, 4
         FROM acomptes_clients WHERE tiers_id=$1 AND statut IN ('disponible','utilise')
 
         UNION ALL
@@ -238,12 +241,16 @@ export class TiersService extends BaseService<TiersRecord> {
         UNION ALL
         SELECT pf.date_paiement::timestamp, 'paiement_fourn', COALESCE(pf.reference,'PF-'||pf.id),
           'Paiement fourn.', pf.montant, 0, pf.id, 6
-        FROM paiements_fournisseur pf JOIN factures_fournisseur ff2 ON ff2.id=pf.facture_id WHERE ff2.tiers_id=$1
+        FROM paiements_fournisseur pf JOIN factures_fournisseur ff2 ON ff2.id=pf.facture_id
+        WHERE ff2.tiers_id=$1 AND pf.source != 'acompte_application'
 
         UNION ALL
-        SELECT date_acompte::timestamp, 'acompte_fourn', 'AF-'||id,
-          'Acompte fourn.', montant, 0, id, 7
-        FROM acomptes_fournisseur WHERE tiers_id=$1 AND statut IN ('disponible','utilise')
+        SELECT date_acompte::timestamp,
+          CASE WHEN methode_paiement = 'compensation' THEN 'compensation_fourn' ELSE 'acompte_fourn' END,
+          COALESCE(reference_number, 'AF-'||id),
+          CASE WHEN methode_paiement = 'compensation' THEN 'Compensation fournisseur' ELSE 'Acompte fourn.' END,
+          montant, 0, id, 7
+        FROM acomptes_fournisseur WHERE tiers_id=$1 AND statut IN ('disponible','partiellement_utilise','utilise')
       ),
       filtered AS (
         SELECT * FROM mouvements

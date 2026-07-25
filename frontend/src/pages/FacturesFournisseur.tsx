@@ -11,6 +11,7 @@ import { MoneyInput } from '../components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -20,6 +21,7 @@ import { QueryState } from '@/components/ui/query-state';
 import { PageHeader } from '@/components/ui/page-header';
 import { Pagination } from '@/components/ui/pagination';
 import { formatCurrency, formatDateShort } from '../utils/format';
+import { formatPaymentMethod } from '../utils/paymentMethod';
 
 
 interface Reception {
@@ -58,7 +60,6 @@ interface FactureDetail extends FactureFournisseur {
     description: string | null;
     quantite: number;
     prix_unitaire: string;
-    tva_taux: string;
     total_ligne: string;
   }[];
 }
@@ -119,7 +120,7 @@ export default function FacturesFournisseur() {
     date_echeance: '',
     condition_paiement: '',
     notes: '',
-    lignes: [] as Array<{ produit_id: number | null; description: string; quantite: number; prix_unitaire: number; tva_taux: number }>,
+    lignes: [] as Array<{ produit_id: number | null; description: string; quantite: number; prix_unitaire: number }>,
   });
 
   const [paymentData, setPaymentData] = useState({
@@ -190,7 +191,7 @@ export default function FacturesFournisseur() {
   const addLine = () => {
     setFormData({
       ...formData,
-      lignes: [...formData.lignes, { produit_id: null, description: '', quantite: 1, prix_unitaire: 0, tva_taux: 19 }],
+      lignes: [...formData.lignes, { produit_id: null, description: '', quantite: 1, prix_unitaire: 0 }],
     });
   };
 
@@ -371,8 +372,8 @@ export default function FacturesFournisseur() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 space-y-1.5">
-                <Label>Fournisseur *</Label>
-                <TiersPicker role="fournisseur" value={selectedFournisseur} onChange={setSelectedFournisseur} />
+                <Label htmlFor="ff-fournisseur">Fournisseur *</Label>
+                <TiersPicker id="ff-fournisseur" role="fournisseur" value={selectedFournisseur} onChange={setSelectedFournisseur} />
               </div>
 
               <div className="space-y-1.5">
@@ -382,12 +383,12 @@ export default function FacturesFournisseur() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="ff-date">Date facture *</Label>
-                <Input id="ff-date" type="date" value={formData.date_facture} onChange={(e) => setFormData({ ...formData, date_facture: e.target.value })} required />
+                <DatePicker id="ff-date" value={formData.date_facture} onChange={(date_facture) => setFormData({ ...formData, date_facture })} required />
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="ff-ech">Date échéance</Label>
-                <Input id="ff-ech" type="date" value={formData.date_echeance} onChange={(e) => setFormData({ ...formData, date_echeance: e.target.value })} />
+                <DatePicker id="ff-ech" value={formData.date_echeance} onChange={(date_echeance) => setFormData({ ...formData, date_echeance })} />
               </div>
 
               <div className="space-y-1.5">
@@ -416,7 +417,7 @@ export default function FacturesFournisseur() {
 
             <div>
               <div className="flex justify-between items-center mb-2">
-                <Label>Lignes de facture</Label>
+                <p className="text-sm font-medium">Lignes de facture</p>
                 <Button type="button" variant="outline" size="sm" onClick={addLine} className="gap-1.5">
                   <Plus className="h-4 w-4" />
                   Ajouter
@@ -430,7 +431,7 @@ export default function FacturesFournisseur() {
                       value={ligne.produit_id ? String(ligne.produit_id) : '__none'}
                       onValueChange={(v) => updateLine(index, 'produit_id', v === '__none' ? null : parseInt(v))}
                     >
-                      <SelectTrigger className="col-span-4" aria-label="Produit">
+                      <SelectTrigger className="col-span-5" aria-label="Produit">
                         <SelectValue placeholder="Produit…" />
                       </SelectTrigger>
                       <SelectContent>
@@ -442,7 +443,7 @@ export default function FacturesFournisseur() {
                     </Select>
                     <Input
                       type="number"
-                      className="col-span-2 num"
+                      className="col-span-3 num"
                       placeholder="Qté"
                       value={ligne.quantite}
                       min={1}
@@ -450,18 +451,11 @@ export default function FacturesFournisseur() {
                     />
                     <Input
                       type="number"
-                      className="col-span-2 num"
+                      className="col-span-3 num"
                       placeholder="Prix unit."
                       value={ligne.prix_unitaire}
                       step={0.01}
                       onChange={(e) => updateLine(index, 'prix_unitaire', parseFloat(e.target.value))}
-                    />
-                    <Input
-                      type="number"
-                      className="col-span-2 num"
-                      placeholder="TVA %"
-                      value={ligne.tva_taux}
-                      onChange={(e) => updateLine(index, 'tva_taux', parseFloat(e.target.value))}
                     />
                     <Button
                       type="button"
@@ -505,8 +499,9 @@ export default function FacturesFournisseur() {
           {selectedFacture && (
             <form onSubmit={handlePayment} className="space-y-4">
               <div className="space-y-1.5">
-                <Label>Montant *</Label>
+                <Label htmlFor="ff-paiement-montant">Montant *</Label>
                 <MoneyInput
+                  id="ff-paiement-montant"
                   value={paymentData.montant}
                   onChange={(v) => setPaymentData({ ...paymentData, montant: v })}
                   required
@@ -592,15 +587,16 @@ export default function FacturesFournisseur() {
                       <SelectItem value="__none">— Sélectionner —</SelectItem>
                       {acomptesDispo.map(a => (
                         <SelectItem key={a.id} value={String(a.id)}>
-                          #{a.id} — {formatDateShort(a.date_acompte)} — restant {formatCurrency(a.montant_restant)} ({a.methode_paiement})
+                          #{a.id} — {formatDateShort(a.date_acompte)} — restant {formatCurrency(a.montant_restant)} ({formatPaymentMethod(a.methode_paiement)})
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Montant à appliquer *</Label>
+                  <Label htmlFor="ff-acompte-montant">Montant à appliquer *</Label>
                   <MoneyInput
+                    id="ff-acompte-montant"
                     value={acompteApplyForm.montant}
                     onChange={v => setAcompteApplyForm(p => ({ ...p, montant: v }))}
                     required
@@ -751,7 +747,6 @@ export default function FacturesFournisseur() {
                       <TableHead className="h-auto px-3 py-2 text-xs">Produit</TableHead>
                       <TableHead className="h-auto px-3 py-2 text-xs text-right">Qté</TableHead>
                       <TableHead className="h-auto px-3 py-2 text-xs text-right">Prix unit.</TableHead>
-                      <TableHead className="h-auto px-3 py-2 text-xs text-right">TVA %</TableHead>
                       <TableHead className="h-auto px-3 py-2 text-xs text-right">Total</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -761,7 +756,6 @@ export default function FacturesFournisseur() {
                         <TableCell className="px-3 py-2">{ligne.produit_nom || ligne.description}</TableCell>
                         <TableCell className="px-3 py-2 text-right num">{ligne.quantite}</TableCell>
                         <TableCell className="px-3 py-2 text-right num">{formatCurrency(ligne.prix_unitaire)}</TableCell>
-                        <TableCell className="px-3 py-2 text-right num">{ligne.tva_taux}%</TableCell>
                         <TableCell className="px-3 py-2 text-right font-medium num">{formatCurrency(ligne.total_ligne)}</TableCell>
                       </TableRow>
                     ))}

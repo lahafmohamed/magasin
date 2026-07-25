@@ -46,20 +46,6 @@ export class UserModel {
   }
 
   /**
-   * Find user by email
-   */
-  static async findByEmail(email: string): Promise<User | null> {
-    const result = await pool.query(
-      `SELECT u.*, r.nom as role 
-       FROM utilisateurs u 
-       LEFT JOIN roles r ON u.role_id = r.id 
-       WHERE u.email = $1`,
-      [email]
-    );
-    return result.rows[0] || null;
-  }
-
-  /**
    * Find user by ID
    */
   static async findById(id: number): Promise<User | null> {

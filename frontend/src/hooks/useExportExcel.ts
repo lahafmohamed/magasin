@@ -7,6 +7,19 @@ interface ExportColumn {
   label: string;
 }
 
+/**
+ * Neutralize CSV/Excel formula injection: a cell whose text starts with = + - @
+ * (or a leading tab/CR that shifts the first visible char) is executed as a
+ * formula by Excel/Sheets. Prefix a single quote so it's rendered as literal
+ * text. Applied to every string cell — user-entered names/notes reach exports.
+ */
+function sanitizeCell<T>(value: T): T | string {
+  if (typeof value === 'string' && /^[=+\-@\t\r]/.test(value)) {
+    return `'${value}`;
+  }
+  return value;
+}
+
 export function useExportExcel() {
   const exportToExcel = useCallback(<T extends Record<string, any>>(
     data: T[],
@@ -32,7 +45,7 @@ export function useExportExcel() {
           if (value === null || value === undefined) {
             value = '';
           }
-          row[col.label] = value;
+          row[col.label] = sanitizeCell(value);
         });
         return row;
       });

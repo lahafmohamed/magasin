@@ -119,74 +119,8 @@ export function usePermission() {
         return userPermissions.includes(permission);
     };
 
-    /**
-     * Check if user has ANY of the specified permissions
-     */
-    const hasAnyPermission = (...permissions: Permission[]): boolean => {
-        return permissions.some((p) => userPermissions.includes(p));
-    };
-
-    /**
-     * Check if user has ALL specified permissions
-     */
-    const hasAllPermissions = (...permissions: Permission[]): boolean => {
-        return permissions.every((p) => userPermissions.includes(p));
-    };
-
-    /**
-     * Check location type access
-     */
-    const canAccessLocation = (locationType: 'depot' | 'magasin', accessLevel: 'read' | 'write' = 'read'): boolean => {
-        if (userRole === 'admin') return true;
-
-        if (locationType === 'depot') {
-            if (accessLevel === 'write') {
-                return ['depot_staff', 'admin', 'manager'].includes(userRole);
-            }
-            return ['depot_staff', 'admin', 'manager', 'magasin_staff', 'viewer'].includes(userRole);
-        }
-
-        if (locationType === 'magasin') {
-            if (accessLevel === 'write') {
-                return ['magasin_staff', 'admin', 'manager', 'caissier'].includes(userRole);
-            }
-            return ['magasin_staff', 'admin', 'manager', 'caissier', 'depot_staff', 'viewer'].includes(userRole);
-        }
-
-        return false;
-    };
-
-    /**
-     * Get UI state for an action (visible, disabled, tooltip)
-     */
-    const getActionState = (permission: Permission, fallbackTooltip?: string): {
-        visible: boolean;
-        disabled: boolean;
-        tooltip: string | null;
-    } => {
-        const hasPerm = hasPermission(permission);
-
-        if (!hasPerm) {
-            return {
-                visible: true, // Show disabled rather than hiding
-                disabled: true,
-                tooltip: fallbackTooltip || 'Vous n\'avez pas les droits pour cette action',
-            };
-        }
-
-        return {
-            visible: true,
-            disabled: false,
-            tooltip: null,
-        };
-    };
-
     return {
         hasPermission,
-        hasAnyPermission,
-        hasAllPermissions,
-        canAccessLocation,
-        getActionState,
         userRole,
         userPermissions,
     };

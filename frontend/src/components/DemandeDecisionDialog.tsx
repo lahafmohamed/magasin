@@ -138,7 +138,7 @@ export function DemandeDecisionDialog({ demande, onClose, onSubmit, loading }: D
 
         {/* Line Items */}
         <div className="space-y-4">
-          <Label>Lignes de demande</Label>
+          <p className="text-sm font-medium">Lignes de demande</p>
           {demande.lignes.map((ligne) => (
             <div key={ligne.id} className="flex items-center gap-4 p-3 border rounded-lg">
               <div className="flex-1">

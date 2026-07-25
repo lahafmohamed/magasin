@@ -154,7 +154,7 @@ export default function DemandeDetail() {
     try {
       const response = await demandeService.getById(parseInt(id!, 10));
       setDemande(response.data || response);
-    } catch (error: any) {
+    } catch {
       toast.error('Erreur lors du chargement de la demande');
       navigate('/demandes');
     } finally {

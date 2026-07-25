@@ -1,4 +1,4 @@
-import { Router, Request, Response, NextFunction } from 'express';
+import { Router, Request, Response } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import pool from '../db/connection';
 import { validateBody } from '../middleware/validation';
@@ -6,17 +6,13 @@ import { createClientSchema, updateClientSchema } from '../validation/schemas';
 import { logAudit } from '../middleware/audit';
 import { AuthRequest } from '../middleware/auth';
 import { tiersService } from '../services/TiersService';
+import { deprecateRoute } from '../middleware/deprecation';
 
 const router = Router();
 
 router.use(authenticate);
 
-const deprecated = (_req: Request, res: Response, next: NextFunction) => {
-  res.setHeader('Deprecation', 'true');
-  res.setHeader('Link', '</api/tiers>; rel="successor-version"');
-  next();
-};
-router.use(deprecated);
+router.use(deprecateRoute('/api/tiers'));
 
 // GET /api/clients - paginated list of clients
 router.get('/', async (req: Request, res: Response) => {

@@ -17,8 +17,15 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { SortableHeader, SortState } from '@/components/ui/sortable-header';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
-import { Plus, Search, Pencil, Trash2, AlertCircle, XCircle, Package, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, Loader2 } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, AlertCircle, XCircle, Package, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, Loader2, MoreVertical } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatCurrency, normalizeSearch } from '@/utils/format';
 import { downloadCsv } from '@/utils/csv';
@@ -111,6 +118,12 @@ export default function Inventaire() {
   useEffect(() => {
     if (searchParams.get('low_stock') === 'true') {
       setLowStockOnly(true);
+    }
+    // Deep-link depuis la recherche globale (Ctrl+K) : ?search=<référence>
+    const q = searchParams.get('search');
+    if (q) {
+      setSearch(q);
+      setDebouncedSearch(normalizeSearch(q));
     }
   }, [searchParams]);
 
@@ -265,7 +278,7 @@ export default function Inventaire() {
       await produitService.delete(produitToDelete.id);
       loadProduits();
       toast.success('Produit supprimé avec succès');
-    } catch (error) {
+    } catch {
       toast.error('Ce produit est peut-être lié à des factures');
     } finally {
       setDeleting(null);
@@ -283,7 +296,7 @@ export default function Inventaire() {
       try {
         await produitService.delete(id);
         successCount++;
-      } catch (error) {
+      } catch {
         // Continue with others
       }
     }
@@ -486,7 +499,7 @@ export default function Inventaire() {
     const prixVente = parseFloat(p.prix_vente as any) || 0;
     const prixAchat = parseFloat(p.prix_achat as any) || 0;
     const marge = prixVente - prixAchat;
-    const margeNum = prixAchat > 0 ? (marge / prixAchat) * 100 : null;
+    const margeNum = prixVente > 0 && prixAchat > 0 ? (marge / prixAchat) * 100 : null;
     const stock = typeof p.stock === 'string' ? parseInt(p.stock) : p.stock;
     const stockMin = typeof p.stock_min === 'string' ? parseInt(p.stock_min) : p.stock_min;
 
@@ -524,10 +537,11 @@ export default function Inventaire() {
             : <span className="text-xs text-muted-foreground">—</span>}
         </TableCell>
         <TableCell className="text-right">
-          <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-            <span className="font-semibold text-right num">{prixVente.toFixed(0)}</span>
-            <span className="text-xs text-muted-foreground">XOF</span>
-          </div>
+          {prixVente > 0 ? (
+            <span className="font-semibold whitespace-nowrap num">{formatCurrency(prixVente)}</span>
+          ) : (
+            <span className="text-xs font-medium text-warning-700">Prix non renseigné</span>
+          )}
         </TableCell>
         <TableCell className="text-right whitespace-nowrap">
           {margeNum === null ? (
@@ -582,6 +596,97 @@ export default function Inventaire() {
           </div>
         </TableCell>
       </TableRow>
+    );
+  };
+
+  const renderProductCard = (p: Produit) => {
+    const prixVente = parseFloat(p.prix_vente as any) || 0;
+    const stock = typeof p.stock === 'string' ? parseInt(p.stock) : p.stock;
+    const stockMin = typeof p.stock_min === 'string' ? parseInt(p.stock_min) : p.stock_min;
+
+    return (
+      <article
+        key={p.id}
+        className={`rounded-lg border bg-card p-3 shadow-xs ${
+          selectedIds.includes(p.id) ? 'border-primary bg-primary/5' : ''
+        }`}
+      >
+        <div className="flex items-start gap-3">
+          <label className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border">
+            <input
+              type="checkbox"
+              checked={selectedIds.includes(p.id)}
+              onChange={() => toggleSelection(p.id)}
+              aria-label={`Sélectionner ${p.nom}`}
+              className="h-5 w-5 rounded border-input text-primary focus:ring-2 focus:ring-ring"
+            />
+          </label>
+
+          <div className="min-w-0 flex-1">
+            <h2 className="break-words font-semibold leading-snug">{p.nom}</h2>
+            <button
+              type="button"
+              onClick={() => openPurchaseInfo(p)}
+              className="mt-1 min-h-11 max-w-full break-all text-left font-mono text-sm text-primary underline-offset-2 hover:underline"
+            >
+              {p.reference}
+            </button>
+          </div>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-11 w-11 shrink-0"
+                aria-label={`Actions pour ${p.nom}`}
+              >
+                <MoreVertical className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem className="min-h-11 gap-2" onSelect={() => openHistory(p)}>
+                <History className="h-4 w-4" />
+                Historique du stock
+              </DropdownMenuItem>
+              <DropdownMenuItem className="min-h-11 gap-2" onSelect={() => handleEdit(p)}>
+                <Pencil className="h-4 w-4" />
+                Modifier
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="min-h-11 gap-2 text-destructive focus:text-destructive"
+                disabled={deleting === p.id}
+                onSelect={() => handleDeleteClick(p)}
+              >
+                <Trash2 className="h-4 w-4" />
+                Supprimer
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <dl className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-sm">
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">Prix de vente</dt>
+            <dd className="mt-1 break-words font-semibold">
+              {prixVente > 0 ? (
+                formatCurrency(prixVente)
+              ) : (
+                <span className="text-warning-700">Prix non renseigné</span>
+              )}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">Stock disponible</dt>
+            <dd className="mt-1">{getStockBadge(stock, stockMin)}</dd>
+          </div>
+          <div className="col-span-2 min-w-0">
+            <dt className="text-xs text-muted-foreground">Catégorie</dt>
+            <dd className="mt-1 break-words">{p.categorie || 'Non renseignée'}</dd>
+          </div>
+        </dl>
+      </article>
     );
   };
 
@@ -648,13 +753,13 @@ export default function Inventaire() {
 
             {stockLocations.length > 0 && (
               <div className="flex items-center gap-2">
-                <Label htmlFor="adjust-location" className="text-xs text-muted-foreground">Depot:</Label>
+                <Label htmlFor="adjust-location" className="text-xs text-muted-foreground">Dépôt :</Label>
                 <Select
                   value={selectedAdjustLocationId}
                   onValueChange={(v) => setSelectedAdjustLocationId(v)}
                 >
-                  <SelectTrigger id="adjust-location" className="h-9 w-auto" aria-label="Selectionner le depot">
-                    <SelectValue placeholder="Depot" />
+                  <SelectTrigger id="adjust-location" className="h-9 w-auto" aria-label="Sélectionner le dépôt">
+                    <SelectValue placeholder="Dépôt" />
                   </SelectTrigger>
                   <SelectContent>
                     {stockLocations.map((location) => (
@@ -829,16 +934,16 @@ export default function Inventaire() {
               ) : (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="location_id">Depot cible</Label>
+                    <Label htmlFor="location_id">Dépôt cible</Label>
                     <Select
                       value={formData.location_id === '' ? '__all' : formData.location_id}
                       onValueChange={(v) => setFormData({ ...formData, location_id: v === '__all' ? '' : v })}
                     >
-                      <SelectTrigger id="location_id" className="h-9 w-full" aria-label="Depot cible">
-                        <SelectValue placeholder="Selectionner..." />
+                      <SelectTrigger id="location_id" className="h-9 w-full" aria-label="Dépôt cible">
+                        <SelectValue placeholder="Sélectionner..." />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__all">Selectionner...</SelectItem>
+                        <SelectItem value="__all">Sélectionner...</SelectItem>
                         {stockLocations.map((location) => (
                           <SelectItem key={location.id} value={String(location.id)}>
                             {location.nom} ({location.code})
@@ -848,7 +953,7 @@ export default function Inventaire() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="initial_stock">Stock initial depot</Label>
+                    <Label htmlFor="initial_stock">Stock initial du dépôt</Label>
                     <Input
                       id="initial_stock"
                       type="number"
@@ -911,9 +1016,18 @@ export default function Inventaire() {
       {/* Tableau */}
       <Card>
           <CardContent className="p-0">
+            <div className="space-y-3 p-3 md:hidden">
+              {loading ? (
+                <TableSkeleton rows={6} columns={2} />
+              ) : produits?.length === 0 ? (
+                <EmptyState icon={Package} title="Aucun produit trouvé" />
+              ) : (
+                produits.map(renderProductCard)
+              )}
+            </div>
             <div
               ref={tableScrollRef}
-              className="relative w-full overflow-auto max-h-[calc(100vh-320px)]"
+              className="relative hidden w-full overflow-auto max-h-[calc(100vh-320px)] md:block"
             >
             <table className="w-full caption-bottom text-sm table-fixed [&_td]:py-2 [&_th]:py-2 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:bg-card [&_thead_th]:h-10">
               <colgroup>

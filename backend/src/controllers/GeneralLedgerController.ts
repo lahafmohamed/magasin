@@ -10,13 +10,24 @@ export class GeneralLedgerController {
    */
   static async getAll(req: Request, res: Response): Promise<void> {
     try {
-      const { journal, date_debut, date_fin, compte_id, page, limit } = req.query;
+      const {
+        journal,
+        date_debut,
+        date_fin,
+        compte_id,
+        numero_piece,
+        description,
+        page,
+        limit,
+      } = req.query;
 
       const entries = await generalLedgerService.getAll({
         journal: journal as string,
         date_debut: date_debut as string,
         date_fin: date_fin as string,
         compte_id: parseInt(compte_id as string),
+        numero_piece: numero_piece as string,
+        description: description as string,
         page: parseInt(page as string) || 1,
         limit: parseInt(limit as string) || 50,
       });

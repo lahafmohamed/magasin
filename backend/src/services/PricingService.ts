@@ -1,3 +1,5 @@
+import { businessError } from '../utils/errors';
+
 export interface PricingLigneInput {
   quantite: number;
   prix_unitaire: number;
@@ -13,6 +15,27 @@ export interface PricingTotals {
   totalLignes: number[];
 }
 
+export interface SalePriceLine {
+  prix_unitaire: number | string;
+}
+
+/**
+ * A normal sales document must never contain a free or invalid line. Products
+ * with a missing catalogue price must be corrected before they can be sold.
+ */
+export function assertPositiveSalePrices(lignes: SalePriceLine[]): void {
+  for (let index = 0; index < lignes.length; index += 1) {
+    const price = Number(lignes[index].prix_unitaire);
+    if (!Number.isFinite(price) || price <= 0) {
+      throw businessError(
+        422,
+        `Ligne ${index + 1}: le prix unitaire doit être supérieur à zéro. Corrigez le prix de vente du produit avant de continuer.`,
+        'ZERO_SALE_PRICE'
+      );
+    }
+  }
+}
+
 /**
  * Calculate totals for a sales document (facture, devis, BL, avoir).
  *
@@ -26,6 +49,8 @@ export function calculateTotals(
   remise_globale?: number,
   remise_globale_pct?: number
 ): PricingTotals {
+  assertPositiveSalePrices(lignes);
+
   let sousTotal = 0;
   const totalLignes: number[] = [];
 

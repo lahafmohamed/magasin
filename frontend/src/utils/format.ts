@@ -63,10 +63,6 @@ export function fuzzyScore(query: string, target: string): number {
   return 0;
 }
 
-export function fuzzyMatch(query: string, target: string): boolean {
-  return fuzzyScore(query, target) > 0;
-}
-
 /**
  * Format a number with dynamic currency symbol.
  * Uses stored devise from company settings (defaults to 'FCFA').

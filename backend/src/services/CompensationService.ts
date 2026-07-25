@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { checkPeriodIsOpen } from './PeriodService';
 import { logger } from '../utils/logger';
 import { ClientAllocationService } from './ClientAllocationService';
+import { SupplierAllocationService } from './SupplierAllocationService';
 
 export interface CreateCompensationInput {
   tiers_id: number;
@@ -92,14 +93,28 @@ export class CompensationService {
       ));
 
       // Create a client acompte so the FIFO engine can allocate it to invoices
-      const { rows: acompteRows } = await client.query(
+      await client.query(
         `INSERT INTO acomptes_clients
-           (tiers_id, montant, montant_restant, methode_paiement, notes, cree_par, date_acompte)
-         VALUES ($1, $2, $2, 'compensation', $3, $4, $5) RETURNING id`,
+           (tiers_id, montant, montant_restant, methode_paiement, notes, cree_par,
+            date_acompte, idempotency_key, reference_number)
+         VALUES ($1, $2, $2, 'compensation', $3, $4, $5, $6, $7) RETURNING id`,
         [input.tiers_id, input.montant,
-         `Compensation ${pieceNum}`, input.cree_par || null, input.date_compensation]
+         `Compensation ${pieceNum}`, input.cree_par || null, input.date_compensation,
+         `compensation:${compRows[0].id}:client`, pieceNum]
       );
-      const acompteId = acompteRows[0].id;
+
+      // Mirror the same amount on the supplier side. Supplier balances are
+      // computed from invoices/payments/acomptes (not from the display ledger),
+      // so omitting this row left the supplier debt unchanged after netting.
+      await client.query(
+        `INSERT INTO acomptes_fournisseur
+           (tiers_id, montant, montant_restant, methode_paiement, notes, cree_par,
+            date_acompte, idempotency_key, reference_number)
+         VALUES ($1, $2, $2, 'compensation', $3, $4, $5, $6, $7)`,
+        [input.tiers_id, input.montant,
+         `Compensation ${pieceNum}`, input.cree_par || null, input.date_compensation,
+         `compensation:${compRows[0].id}:fournisseur`, pieceNum]
+      );
 
       // Record in client ledger
       await client.query(
@@ -120,19 +135,10 @@ export class CompensationService {
          `Compensation ${pieceNum}`, input.cree_par || null]
       );
 
-      // Update compensation record with acompte reference. The column may not
-      // exist in older schemas; use a SAVEPOINT so a failure here does not abort
-      // the whole transaction (a swallowed error would otherwise poison COMMIT).
-      await client.query('SAVEPOINT sp_acompte_link');
-      try {
-        await client.query(
-          `UPDATE compensations SET acompte_client_id = $1 WHERE id = $2`,
-          [acompteId, compRows[0].id]
-        );
-        await client.query('RELEASE SAVEPOINT sp_acompte_link');
-      } catch {
-        await client.query('ROLLBACK TO SAVEPOINT sp_acompte_link');
-      }
+      await SupplierAllocationService.allocateAvailableAdvances(input.tiers_id, {
+        transaction: client,
+        userId: input.cree_par || null,
+      });
 
       await client.query('COMMIT');
       logger.info({ tiersId: input.tiers_id, montant: input.montant }, 'Compensation created');

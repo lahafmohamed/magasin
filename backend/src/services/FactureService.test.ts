@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { FactureService, CreateFactureInput } from '../services/FactureService';
 import pool from '../db/connection';
 import { TestDB } from '../test/helpers';
@@ -242,16 +242,16 @@ describe('FactureService', () => {
       expect(fetched.notes).toBe('Important test invoice');
     });
 
-    it('should handle zero-priced items', async () => {
+    it('should reject zero-priced items', async () => {
       const input: CreateFactureInput = {
         tiers_id: testClientId,
         lignes: [{ produit_id: testProduct1Id, quantite: 1, prix_unitaire: 0 }],
       };
 
-      const result = await factureService.create(input);
-      createdInvoiceIds.push(result.id);
-
-      expect(result.total).toBe(0); // 0 + 0*0.19 = 0
+      await expect(factureService.create(input)).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'ZERO_SALE_PRICE',
+      });
     });
 
     it('should reject invoice when credit limit would be exceeded', async () => {

@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { caisseService } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertTriangle, CheckCircle2, RefreshCw, Filter, ShieldCheck } from 'lucide-react';
 import { formatFCFA, formatDateShort } from '@/utils/format';
+import { formatPaymentMethod } from '@/utils/paymentMethod';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/ui/page-header';
 import { QueryState } from '@/components/ui/query-state';
@@ -162,11 +163,11 @@ export default function CaisseAudit() {
           </div>
           <div>
             <Label className="text-xs">Du</Label>
-            <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-9 text-sm w-40" />
+            <DatePicker value={dateFrom} onChange={setDateFrom} className="h-9 w-44 text-sm" aria-label="Du" />
           </div>
           <div>
             <Label className="text-xs">Au</Label>
-            <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-9 text-sm w-40" />
+            <DatePicker value={dateTo} onChange={setDateTo} className="h-9 w-44 text-sm" aria-label="Au" />
           </div>
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={orphansOnly} onChange={e => setOrphansOnly(e.target.checked)} />
@@ -223,7 +224,7 @@ export default function CaisseAudit() {
                     </TableCell>
                     <TableCell className="text-xs font-mono">#{it.source_id}</TableCell>
                     <TableCell className="text-xs">{it.tiers_id || '—'}</TableCell>
-                    <TableCell className="text-xs">{it.methode_paiement}</TableCell>
+                    <TableCell className="text-xs">{formatPaymentMethod(it.methode_paiement)}</TableCell>
                     <TableCell className="text-right text-xs font-semibold">{formatFCFA(it.montant)}</TableCell>
                     <TableCell className="text-xs">{it.session_caisse_id || '—'}</TableCell>
                     <TableCell className="text-xs">{it.mouvement_caisse_id || '—'}</TableCell>

@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import { GeneralLedgerController } from '../controllers/GeneralLedgerController';
 import { authenticate, authorize } from '../middleware/auth';
-import { validateBody } from '../middleware/validation';
-import { createManualEntrySchema } from '../validation/schemas';
+import { validateBody, validateQuery } from '../middleware/validation';
+import {
+  createManualEntrySchema,
+  generalLedgerPdfQuerySchema,
+  generalLedgerQuerySchema,
+} from '../validation/schemas';
 import { GeneralLedgerService } from '../services/GeneralLedgerService';
 import { PDFService } from '../services/PDFService';
 import { EXPORT_MAX_ROWS } from '../utils/pagination';
@@ -13,7 +17,7 @@ const router = Router();
 router.use(authenticate);
 router.use(authorize('admin', 'manager'));
 
-router.get('/', GeneralLedgerController.getAll);
+router.get('/', validateQuery(generalLedgerQuerySchema), GeneralLedgerController.getAll);
 router.get('/chart-of-accounts', GeneralLedgerController.getChartOfAccounts);
 router.get('/trial-balance', GeneralLedgerController.getTrialBalance);
 router.get('/account/:id/ledger', GeneralLedgerController.getAccountLedger);
@@ -23,15 +27,17 @@ router.get('/stats', GeneralLedgerController.getStats);
 router.get('/journal-breakdown', GeneralLedgerController.getJournalBreakdown);
 
 // Export all entries (no pagination)
-router.get('/export', async (req, res) => {
+router.get('/export', validateQuery(generalLedgerQuerySchema), async (req, res) => {
   try {
-    const { journal, date_debut, date_fin, compte_id } = req.query;
+    const { journal, date_debut, date_fin, compte_id, numero_piece, description } = req.query;
     const service = new GeneralLedgerService();
     const result = await service.getAll({
       journal: journal as string,
       date_debut: date_debut as string,
       date_fin: date_fin as string,
       compte_id: compte_id ? parseInt(compte_id as string) : undefined,
+      numero_piece: numero_piece as string,
+      description: description as string,
       page: 1,
       limit: EXPORT_MAX_ROWS,
     });
@@ -46,9 +52,17 @@ router.get('/export', async (req, res) => {
 });
 
 // Export PDF
-router.get('/export-pdf', async (req, res) => {
+router.get('/export-pdf', validateQuery(generalLedgerPdfQuerySchema), async (req, res) => {
   try {
-    const { journal, date_debut, date_fin, compte_id, type } = req.query;
+    const {
+      journal,
+      date_debut,
+      date_fin,
+      compte_id,
+      numero_piece,
+      description,
+      type,
+    } = req.query;
     const exportType = (type as string) || 'ecritures';
     const service = new GeneralLedgerService();
     let data: any[] = [];
@@ -62,6 +76,8 @@ router.get('/export-pdf', async (req, res) => {
         date_debut: dateDebut,
         date_fin: dateFin,
         compte_id: compte_id ? parseInt(compte_id as string) : undefined,
+        numero_piece: numero_piece as string,
+        description: description as string,
         page: 1,
         limit: EXPORT_MAX_ROWS,
       });

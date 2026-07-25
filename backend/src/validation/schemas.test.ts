@@ -62,13 +62,13 @@ describe('Zod Validation Schemas', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should accept zero price', () => {
+    it('should reject zero price', () => {
       const result = factureLigneSchema.safeParse({
         produit_id: 1,
         quantite: 1,
         prix_unitaire: 0,
       });
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
     });
 
     it('should coerce string numbers to integers', () => {

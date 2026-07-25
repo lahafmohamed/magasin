@@ -394,94 +394,101 @@ export class ProduitController {
 
       const defaultSupplier = supplierResult.rows[0];
 
-      // 2. Purchase price stats (min, max, avg, count)
-      const priceStatsResult = await pool.query(
-        `SELECT COUNT(*)::int as total_achats,
-                MIN(prix_unitaire) as prix_min,
-                MAX(prix_unitaire) as prix_max,
-                ROUND(AVG(prix_unitaire), 0)::numeric(15,0) as prix_moyen
-         FROM (
-           SELECT ffl.prix_unitaire
+      // Queries 2-6 are independent of each other (only keyed on productId) and
+      // run after the existence check above — fire them in parallel rather than
+      // as six sequential round-trips.
+      const [
+        priceStatsResult,
+        recentPurchaseResult,
+        purchaseHistoryResult,
+        orderHistoryResult,
+        topBuyerResult,
+      ] = await Promise.all([
+        // 2. Purchase price stats (min, max, avg, count)
+        pool.query(
+          `SELECT COUNT(*)::int as total_achats,
+                  MIN(prix_unitaire) as prix_min,
+                  MAX(prix_unitaire) as prix_max,
+                  ROUND(AVG(prix_unitaire), 0)::numeric(15,0) as prix_moyen
+           FROM (
+             SELECT ffl.prix_unitaire
+             FROM facture_fournisseur_lignes ffl
+             JOIN factures_fournisseur ff ON ffl.facture_id = ff.id AND ff.statut != 'annulee'
+             WHERE ffl.produit_id = $1
+             UNION ALL
+             SELECT cl.prix_unitaire
+             FROM commande_lignes cl
+             JOIN commandes_fournisseur cf ON cl.commande_id = cf.id AND cf.statut NOT IN ('annulee')
+             WHERE cl.produit_id = $1
+           ) all_prices`,
+          [productId],
+        ),
+        // 3. Most recent actual purchase price (from supplier invoices or orders)
+        pool.query(
+          `SELECT prix_unitaire, fournisseur_nom, source, date_achat FROM (
+             SELECT ffl.prix_unitaire, t.raison_sociale as fournisseur_nom,
+                    'facture' as source, ff.date_facture as date_achat
+             FROM facture_fournisseur_lignes ffl
+             JOIN factures_fournisseur ff ON ffl.facture_id = ff.id AND ff.statut != 'annulee'
+             LEFT JOIN tiers t ON ff.tiers_id = t.id
+             WHERE ffl.produit_id = $1
+             UNION ALL
+             SELECT cl.prix_unitaire, t.raison_sociale as fournisseur_nom,
+                    'commande' as source, cf.date_commande as date_achat
+             FROM commande_lignes cl
+             JOIN commandes_fournisseur cf ON cl.commande_id = cf.id AND cf.statut NOT IN ('annulee')
+             LEFT JOIN tiers t ON cf.tiers_id = t.id
+             WHERE cl.produit_id = $1
+           ) combined
+           ORDER BY date_achat DESC
+           LIMIT 1`,
+          [productId],
+        ),
+        // 4a. Purchase history from supplier invoices
+        pool.query(
+          `SELECT ff.numero_facture_fournisseur, ff.date_facture,
+                  ffl.prix_unitaire, ffl.quantite,
+                  t.raison_sociale as fournisseur_nom
            FROM facture_fournisseur_lignes ffl
-           JOIN factures_fournisseur ff ON ffl.facture_id = ff.id AND ff.statut != 'annulee'
-           WHERE ffl.produit_id = $1
-           UNION ALL
-           SELECT cl.prix_unitaire
-           FROM commande_lignes cl
-           JOIN commandes_fournisseur cf ON cl.commande_id = cf.id AND cf.statut NOT IN ('annulee')
-           WHERE cl.produit_id = $1
-         ) all_prices`,
-        [productId],
-      );
-
-      // 3. Most recent actual purchase price (from supplier invoices or orders)
-      const recentPurchaseResult = await pool.query(
-        `SELECT prix_unitaire, fournisseur_nom, source, date_achat FROM (
-           SELECT ffl.prix_unitaire, t.raison_sociale as fournisseur_nom,
-                  'facture' as source, ff.date_facture as date_achat
-           FROM facture_fournisseur_lignes ffl
-           JOIN factures_fournisseur ff ON ffl.facture_id = ff.id AND ff.statut != 'annulee'
+           JOIN factures_fournisseur ff ON ffl.facture_id = ff.id
+             AND ff.statut != 'annulee'
            LEFT JOIN tiers t ON ff.tiers_id = t.id
            WHERE ffl.produit_id = $1
-           UNION ALL
-           SELECT cl.prix_unitaire, t.raison_sociale as fournisseur_nom,
-                  'commande' as source, cf.date_commande as date_achat
+           ORDER BY ff.date_facture DESC
+           LIMIT 10`,
+          [productId],
+        ),
+        // 4b. Also from commandes_fournisseur for additional purchase history
+        pool.query(
+          `SELECT cl.prix_unitaire, cl.quantite,
+                  cf.numero_commande, cf.date_commande,
+                  t.raison_sociale as fournisseur_nom
            FROM commande_lignes cl
-           JOIN commandes_fournisseur cf ON cl.commande_id = cf.id AND cf.statut NOT IN ('annulee')
+           JOIN commandes_fournisseur cf ON cl.commande_id = cf.id
+             AND cf.statut NOT IN ('annulee')
            LEFT JOIN tiers t ON cf.tiers_id = t.id
            WHERE cl.produit_id = $1
-         ) combined
-         ORDER BY date_achat DESC
-         LIMIT 1`,
-        [productId],
-      );
-
-      // 4. Purchase history from supplier invoices
-      const purchaseHistoryResult = await pool.query(
-        `SELECT ff.numero_facture_fournisseur, ff.date_facture,
-                ffl.prix_unitaire, ffl.quantite,
-                t.raison_sociale as fournisseur_nom
-         FROM facture_fournisseur_lignes ffl
-         JOIN factures_fournisseur ff ON ffl.facture_id = ff.id
-           AND ff.statut != 'annulee'
-         LEFT JOIN tiers t ON ff.tiers_id = t.id
-         WHERE ffl.produit_id = $1
-         ORDER BY ff.date_facture DESC
-         LIMIT 10`,
-        [productId],
-      );
-
-      // 4. Also try from commandes_fournisseur for additional purchase history
-      const orderHistoryResult = await pool.query(
-        `SELECT cl.prix_unitaire, cl.quantite,
-                cf.numero_commande, cf.date_commande,
-                t.raison_sociale as fournisseur_nom
-         FROM commande_lignes cl
-         JOIN commandes_fournisseur cf ON cl.commande_id = cf.id
-           AND cf.statut NOT IN ('annulee')
-         LEFT JOIN tiers t ON cf.tiers_id = t.id
-         WHERE cl.produit_id = $1
-         ORDER BY cf.date_commande DESC
-         LIMIT 10`,
-        [productId],
-      );
-
-      // 5. Top buyer (client who buys this product the most)
-      const topBuyerResult = await pool.query(
-        `SELECT t.id, t.raison_sociale, t.prenom, t.telephone,
-                SUM(dl.quantite)::int as total_quantite,
-                SUM(dl.total_ligne) as total_depense,
-                COUNT(DISTINCT f.id) as nombre_factures
-         FROM document_lignes dl
-         JOIN factures f ON dl.document_id = f.id
-           AND f.deleted_at IS NULL AND f.statut != 'annulee'
-         JOIN tiers t ON f.tiers_id = t.id
-         WHERE dl.document_type = 'facture' AND dl.produit_id = $1
-         GROUP BY t.id, t.raison_sociale, t.prenom, t.telephone
-         ORDER BY total_quantite DESC
-         LIMIT 1`,
-        [productId],
-      );
+           ORDER BY cf.date_commande DESC
+           LIMIT 10`,
+          [productId],
+        ),
+        // 5. Top buyer (client who buys this product the most)
+        pool.query(
+          `SELECT t.id, t.raison_sociale, t.prenom, t.telephone,
+                  SUM(dl.quantite)::int as total_quantite,
+                  SUM(dl.total_ligne) as total_depense,
+                  COUNT(DISTINCT f.id) as nombre_factures
+           FROM document_lignes dl
+           JOIN factures f ON dl.document_id = f.id
+             AND f.deleted_at IS NULL AND f.statut != 'annulee'
+           JOIN tiers t ON f.tiers_id = t.id
+           WHERE dl.document_type = 'facture' AND dl.produit_id = $1
+           GROUP BY t.id, t.raison_sociale, t.prenom, t.telephone
+           ORDER BY total_quantite DESC
+           LIMIT 1`,
+          [productId],
+        ),
+      ]);
 
       const recentPurchase = recentPurchaseResult.rows[0];
       const priceStats = priceStatsResult.rows[0];

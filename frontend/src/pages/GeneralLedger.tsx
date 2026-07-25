@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react';
-import { Download, FileText } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Download, ExternalLink, FileText, Search } from 'lucide-react';
 import { generalLedgerService } from '../services/api';
 import { toast } from 'sonner';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
+import { Pagination } from '@/components/ui/pagination';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { downloadCsv } from '../utils/csv';
+import { Input } from '@/components/ui/input';
+import { ledgerSourceHref } from '@/utils/ledger';
 
 interface Compte {
   id: number;
@@ -34,6 +38,8 @@ interface EcritureComptable {
   debit: string;
   credit: string;
   description: string | null;
+  source_id: number | null;
+  source_type: string | null;
 }
 
 interface BalanceComptable {
@@ -77,13 +83,61 @@ export default function GeneralLedger() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [filterJournal, setFilterJournal] = useState<string>('');
+  const [filterCompte, setFilterCompte] = useState<string>('all');
+  const [pieceSearch, setPieceSearch] = useState('');
+  const [descriptionSearch, setDescriptionSearch] = useState('');
+  const [debouncedPieceSearch, setDebouncedPieceSearch] = useState('');
+  const [debouncedDescriptionSearch, setDebouncedDescriptionSearch] = useState('');
   const [dateDebut, setDateDebut] = useState<string>(new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]);
   const [dateFin, setDateFin] = useState<string>(new Date().toISOString().split('T')[0]);
+
+  // Server-side pagination for the écritures tab (a full year of journal
+  // lines was previously fetched capped at 50 with no way to page through).
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(50);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedPieceSearch(pieceSearch.trim());
+      setDebouncedDescriptionSearch(descriptionSearch.trim());
+    }, 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [pieceSearch, descriptionSearch]);
+
+  useEffect(() => {
+    generalLedgerService.getChartOfAccounts()
+      .then((data) => setChartOfAccounts(data.data || data))
+      .catch(() => setChartOfAccounts([]));
+  }, []);
+
+  // Reset to page 1 when the écritures filters change
+  useEffect(() => {
+    setPage(1);
+  }, [
+    filterJournal,
+    filterCompte,
+    debouncedPieceSearch,
+    debouncedDescriptionSearch,
+    dateDebut,
+    dateFin,
+  ]);
 
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, filterJournal, dateDebut, dateFin]);
+  }, [
+    activeTab,
+    filterJournal,
+    filterCompte,
+    debouncedPieceSearch,
+    debouncedDescriptionSearch,
+    dateDebut,
+    dateFin,
+    page,
+    limit,
+  ]);
 
   /** Recharge l'onglet actif — sert aussi de callback « Réessayer ». */
   const reload = () => {
@@ -96,8 +150,19 @@ export default function GeneralLedger() {
     setLoading(true);
     setError(null);
     try {
-      const data = await generalLedgerService.getAll(filterJournal, dateDebut, dateFin);
+      const data = await generalLedgerService.getAll({
+        journal: filterJournal || undefined,
+        date_debut: dateDebut,
+        date_fin: dateFin,
+        compte_id: filterCompte === 'all' ? undefined : Number(filterCompte),
+        numero_piece: debouncedPieceSearch || undefined,
+        description: debouncedDescriptionSearch || undefined,
+        page,
+        limit,
+      });
       setEcritures(data.data || data);
+      setTotal(data.pagination?.total ?? 0);
+      setTotalPages(data.pagination?.totalPages ?? 0);
     } catch (e) {
       setError(e);
       toast.error('Erreur chargement écritures');
@@ -140,6 +205,9 @@ export default function GeneralLedger() {
         journal: filterJournal || undefined,
         date_debut: dateDebut,
         date_fin: dateFin,
+        compte_id: filterCompte === 'all' ? undefined : Number(filterCompte),
+        numero_piece: debouncedPieceSearch || undefined,
+        description: debouncedDescriptionSearch || undefined,
         type: activeTab === 'ecritures' ? 'ecritures' : activeTab === 'chart' ? 'chart' : 'balance',
       });
       const url = URL.createObjectURL(blob);
@@ -154,10 +222,29 @@ export default function GeneralLedger() {
     }
   };
 
-  const exportToCSV = () => {
+  const exportToCSV = async () => {
     if (activeTab === 'ecritures') {
+      // Pull the full (capped) set from the dedicated export endpoint — the
+      // table only holds the current page now that écritures are paginated.
+      let allEcritures: EcritureComptable[] = ecritures;
+      try {
+        const res = await generalLedgerService.exportAll({
+          journal: filterJournal || undefined,
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          compte_id: filterCompte === 'all' ? undefined : Number(filterCompte),
+          numero_piece: debouncedPieceSearch || undefined,
+          description: debouncedDescriptionSearch || undefined,
+        });
+        allEcritures = res.data || res || ecritures;
+        if (res.truncated) {
+          toast.warning('Export limité au plafond de lignes — affinez la période.');
+        }
+      } catch {
+        toast.error('Export CSV incomplet — export de la page courante.');
+      }
       const headers = ['N° pièce', 'Date', 'Journal', 'Compte', 'Description', 'Débit', 'Crédit'];
-      const rows = ecritures.map((e) => [
+      const rows = allEcritures.map((e) => [
         e.numero_piece,
         new Date(e.date_ecriture).toLocaleDateString('fr-FR'),
         e.journal,
@@ -221,31 +308,71 @@ export default function GeneralLedger() {
       </TabsList>
 
       <div className="rounded-md border bg-card shadow-sm p-4 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           <div className="space-y-1.5">
             <Label htmlFor="gl-debut">Date début</Label>
-            <Input id="gl-debut" type="date" value={dateDebut} onChange={(e) => setDateDebut(e.target.value)} />
+            <DatePicker id="gl-debut" value={dateDebut} onChange={setDateDebut} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="gl-fin">Date fin</Label>
-            <Input id="gl-fin" type="date" value={dateFin} onChange={(e) => setDateFin(e.target.value)} />
+            <DatePicker id="gl-fin" value={dateFin} onChange={setDateFin} />
           </div>
           {activeTab === 'ecritures' && (
-            <div className="space-y-1.5">
-              <Label htmlFor="gl-journal">Journal</Label>
-              <Select value={filterJournal || '__all'} onValueChange={(v) => setFilterJournal(v === '__all' ? '' : v)}>
-                <SelectTrigger id="gl-journal" className={SELECT_CLS}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all">Tous les journaux</SelectItem>
-                  <SelectItem value="ACHATS">ACHATS</SelectItem>
-                  <SelectItem value="VENTES">VENTES</SelectItem>
-                  <SelectItem value="TRESORERIE">TRESORERIE</SelectItem>
-                  <SelectItem value="OD">OD (Opérations diverses)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor="gl-journal">Journal</Label>
+                <Select value={filterJournal || '__all'} onValueChange={(v) => setFilterJournal(v === '__all' ? '' : v)}>
+                  <SelectTrigger id="gl-journal" className={SELECT_CLS}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all">Tous les journaux</SelectItem>
+                    <SelectItem value="ACHATS">Achats</SelectItem>
+                    <SelectItem value="VENTES">Ventes</SelectItem>
+                    <SelectItem value="TRESORERIE">Trésorerie</SelectItem>
+                    <SelectItem value="OD">Opérations diverses</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gl-compte">Compte</Label>
+                <Select value={filterCompte} onValueChange={setFilterCompte}>
+                  <SelectTrigger id="gl-compte">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tous les comptes</SelectItem>
+                    {chartOfAccounts.map((compte) => (
+                      <SelectItem key={compte.id} value={String(compte.id)}>
+                        {compte.numero} — {compte.intitule}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gl-piece">Numéro de pièce</Label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="gl-piece"
+                    value={pieceSearch}
+                    onChange={(event) => setPieceSearch(event.target.value)}
+                    placeholder="Ex. FAC-2026"
+                    className="pl-9"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="gl-description">Description</Label>
+                <Input
+                  id="gl-description"
+                  value={descriptionSearch}
+                  onChange={(event) => setDescriptionSearch(event.target.value)}
+                  placeholder="Rechercher dans le libellé"
+                />
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -273,14 +400,27 @@ export default function GeneralLedger() {
                       <th className={TABLE_HEAD}>Journal</th>
                       <th className={TABLE_HEAD}>Compte</th>
                       <th className={TABLE_HEAD}>Description</th>
-                      <th className={TABLE_HEAD + ' text-right'}>Débit</th>
-                      <th className={TABLE_HEAD + ' text-right'}>Crédit</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Débit (FCFA)</th>
+                      <th className={TABLE_HEAD + ' text-right'}>Crédit (FCFA)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {ecritures.map((ecriture) => (
                       <tr key={ecriture.id} className="hover:bg-muted/30">
-                        <td className="px-3 py-2 font-medium text-xs num">{ecriture.numero_piece}</td>
+                        <td className="px-3 py-2 font-medium text-xs num">
+                          {ledgerSourceHref(ecriture) ? (
+                            <Link
+                              to={ledgerSourceHref(ecriture)!}
+                              className="inline-flex items-center gap-1 text-primary hover:underline"
+                              aria-label={`Ouvrir la pièce ${ecriture.numero_piece}`}
+                            >
+                              {ecriture.numero_piece}
+                              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                            </Link>
+                          ) : (
+                            ecriture.numero_piece
+                          )}
+                        </td>
                         <td className="px-3 py-2 text-xs num">{new Date(ecriture.date_ecriture).toLocaleDateString('fr-FR')}</td>
                         <td className="px-3 py-2">
                           <span className={`${BADGE_BASE} ${JOURNAL_BADGE[ecriture.journal] || 'bg-muted text-muted-foreground'}`}>
@@ -296,6 +436,16 @@ export default function GeneralLedger() {
                   </tbody>
                 </table>
               </div>
+              {total > 0 && (
+                <Pagination
+                  page={page}
+                  totalPages={totalPages}
+                  total={total}
+                  limit={limit}
+                  onPageChange={setPage}
+                  onLimitChange={(n) => { setLimit(n); setPage(1); }}
+                />
+              )}
             </QueryState>
           </div>
         </div>

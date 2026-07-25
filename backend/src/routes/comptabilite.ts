@@ -25,7 +25,7 @@ router.get('/plan-comptable/search', async (req: Request, res: Response) => {
     const query = req.query.q as string || '';
     const data = await comptabiliteService.chercherCompte(query);
     res.json({ success: true, data });
-  } catch (error) {
+  } catch {
     res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });

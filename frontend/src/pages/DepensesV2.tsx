@@ -5,6 +5,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import {
@@ -162,7 +163,7 @@ export default function DepensesV2() {
         // More than one magasin — user must pick one; stop spinner
         setLoading(false);
       }
-    } catch (error) {
+    } catch {
       toast.error('Erreur lors du chargement des magasins');
       setLoading(false);
     }
@@ -468,16 +469,19 @@ export default function DepensesV2() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <Label>Date *</Label>
-                      <Input
-                        type="date"
+                      <Label htmlFor="dep-date">Date *</Label>
+                      <DatePicker
+                        id="dep-date"
                         value={formData.date_depense}
-                        onChange={(e) => setFormData({...formData, date_depense: e.target.value})}
+                        onChange={(date_depense) => setFormData({ ...formData, date_depense })}
+                        required
+                        aria-label="Date de dépense"
                       />
                     </div>
                     <div>
-                      <Label>Montant *</Label>
+                      <Label htmlFor="dep-montant">Montant *</Label>
                       <MoneyInput
+                        id="dep-montant"
                         value={formData.montant}
                         onChange={(v) => setFormData({...formData, montant: v})}
                         placeholder="0"
@@ -486,12 +490,12 @@ export default function DepensesV2() {
                   </div>
 
                   <div>
-                    <Label>Catégorie *</Label>
+                    <Label htmlFor="dep-categorie">Catégorie *</Label>
                     <Select
                       value={formData.categorie_id}
                       onValueChange={(v) => setFormData({ ...formData, categorie_id: v })}
                     >
-                      <SelectTrigger aria-label="Catégorie">
+                      <SelectTrigger id="dep-categorie" aria-label="Catégorie">
                         <SelectValue placeholder="Sélectionner une catégorie" />
                       </SelectTrigger>
                       <SelectContent>
@@ -505,12 +509,12 @@ export default function DepensesV2() {
                   </div>
 
                   <div>
-                    <Label>Mode de paiement *</Label>
+                    <Label htmlFor="dep-methode">Mode de paiement *</Label>
                     <Select
                       value={formData.methode_paiement}
                       onValueChange={(v) => setFormData({ ...formData, methode_paiement: v })}
                     >
-                      <SelectTrigger aria-label="Mode de paiement">
+                      <SelectTrigger id="dep-methode" aria-label="Mode de paiement">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -524,8 +528,9 @@ export default function DepensesV2() {
                   </div>
 
                   <div>
-                    <Label>Bénéficiaire</Label>
+                    <Label htmlFor="dep-beneficiaire">Bénéficiaire</Label>
                     <Input
+                      id="dep-beneficiaire"
                       value={formData.beneficiaire_libre}
                       onChange={(e) => setFormData({...formData, beneficiaire_libre: e.target.value})}
                       placeholder="Nom du bénéficiaire (optionnel)"
@@ -534,8 +539,9 @@ export default function DepensesV2() {
                   </div>
 
                   <div>
-                    <Label>Description *</Label>
+                    <Label htmlFor="dep-description">Description *</Label>
                     <Input
+                      id="dep-description"
                       value={formData.description}
                       onChange={(e) => setFormData({...formData, description: e.target.value})}
                       placeholder="Description de la dépense"

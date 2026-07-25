@@ -1,8 +1,9 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { demandeService } from '../services/DemandeService';
 import { successResponse, paginatedResponse } from '../utils/response';
 import { AuthRequest } from '../middleware/auth';
 import { getUserLocationRole } from '../middleware/permissions';
+import { businessStatusOf } from '../utils/errors';
 import pool from '../db/connection';
 
 export class DemandeController {
@@ -268,7 +269,9 @@ export class DemandeController {
                 message: 'Demande créée avec succès',
             });
         } catch (error: any) {
-            res.status(400).json({ success: false, error: error.message });
+            const status = businessStatusOf(error);
+            if (!status) console.error('[DemandeController] Error:', error);
+            res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
         }
     }
 
@@ -298,7 +301,9 @@ export class DemandeController {
             await demandeService.update(id, { lignes, motif }, userId);
             successResponse(res, null, 'Demande mise à jour avec succès');
         } catch (error: any) {
-            res.status(400).json({ success: false, error: error.message });
+            const status = businessStatusOf(error);
+            if (!status) console.error('[DemandeController] Error:', error);
+            res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
         }
     }
 
@@ -327,7 +332,9 @@ export class DemandeController {
             await demandeService.send(id, userId, req);
             successResponse(res, null, 'Demande envoyée au dépôt avec succès');
         } catch (error: any) {
-            res.status(400).json({ success: false, error: error.message });
+            const status = businessStatusOf(error);
+            if (!status) console.error('[DemandeController] Error:', error);
+            res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
         }
     }
 
@@ -378,7 +385,9 @@ export class DemandeController {
             
             successResponse(res, null, message);
         } catch (error: any) {
-            res.status(400).json({ success: false, error: error.message });
+            const status = businessStatusOf(error);
+            if (!status) console.error('[DemandeController] Error:', error);
+            res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
         }
     }
 
@@ -414,12 +423,9 @@ export class DemandeController {
                 message: 'Transfert exécuté avec succès',
             });
         } catch (error: any) {
-            // Check for stock insufficiency message
-            if (error.message.includes('Stock dépôt insuffisant')) {
-                res.status(422).json({ success: false, error: error.message });
-                return;
-            }
-            res.status(400).json({ success: false, error: error.message });
+            const status = businessStatusOf(error);
+            if (!status) console.error('[DemandeController] Error:', error);
+            res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
         }
     }
 
@@ -450,7 +456,9 @@ export class DemandeController {
             await demandeService.close(id, userId, req);
             successResponse(res, null, 'Demande clôturée avec succès');
         } catch (error: any) {
-            res.status(400).json({ success: false, error: error.message });
+            const status = businessStatusOf(error);
+            if (!status) console.error('[DemandeController] Error:', error);
+            res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
         }
     }
 
@@ -485,7 +493,9 @@ export class DemandeController {
             await demandeService.cancel(id, userId, userRole, req);
             successResponse(res, null, 'Demande annulée avec succès');
         } catch (error: any) {
-            res.status(error.code === 'FORBIDDEN' ? 403 : 400).json({ success: false, error: error.message });
+            const status = businessStatusOf(error);
+            if (!status) console.error('[DemandeController] Error:', error);
+            res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
         }
     }
 
@@ -496,8 +506,6 @@ export class DemandeController {
     static async getDepotStock(req: AuthRequest, res: Response): Promise<void> {
         try {
             const { depot_id, search } = req.query;
-            const userRole = req.user?.role;
-
             if (!depot_id) {
                 res.status(400).json({ success: false, error: 'depot_id requis' });
                 return;

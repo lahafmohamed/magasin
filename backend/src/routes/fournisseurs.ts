@@ -5,18 +5,15 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { TiersController } from '../controllers/TiersController';
 import { authenticate, authorize } from '../middleware/auth';
+import { deprecateRoute } from '../middleware/deprecation';
+import { validateBody } from '../middleware/validation';
+import { createFournisseurSchema, updateFournisseurSchema } from '../validation/schemas';
 
 const router = Router();
 
 router.use(authenticate);
 
-const deprecated = (_req: Request, res: Response, next: NextFunction) => {
-  res.setHeader('Deprecation', 'true');
-  res.setHeader('Link', '</api/tiers>; rel="successor-version"');
-  next();
-};
-
-router.use(deprecated);
+router.use(deprecateRoute('/api/tiers'));
 
 // GET /api/fournisseurs → GET /api/tiers?role=fournisseur
 router.get('/', (req: Request, res: Response) => {
@@ -28,17 +25,24 @@ router.get('/', (req: Request, res: Response) => {
 router.get('/:id', TiersController.getById);
 
 // POST /api/fournisseurs → POST /api/tiers (with est_fournisseur=true)
-router.post('/', authorize(['admin', 'manager', 'depot_staff']), (req: Request, res: Response) => {
-  req.body.est_fournisseur = true;
-  req.body.est_client = req.body.est_client ?? false;
-  if (!req.body.raison_sociale && req.body.nom) {
-    req.body.raison_sociale = req.body.nom;
-  }
-  TiersController.create(req, res);
-});
+// Legacy-shape adaptation runs BEFORE validation so the tiers schema applies.
+router.post(
+  '/',
+  authorize(['admin', 'manager', 'depot_staff']),
+  (req: Request, _res: Response, next: NextFunction) => {
+    req.body.est_fournisseur = true;
+    req.body.est_client = req.body.est_client ?? false;
+    if (!req.body.raison_sociale && req.body.nom) {
+      req.body.raison_sociale = req.body.nom;
+    }
+    next();
+  },
+  validateBody(createFournisseurSchema),
+  TiersController.create
+);
 
 // PUT /api/fournisseurs/:id → PUT /api/tiers/:id
-router.put('/:id', authorize(['admin', 'manager', 'depot_staff']), TiersController.update);
+router.put('/:id', authorize(['admin', 'manager', 'depot_staff']), validateBody(updateFournisseurSchema), TiersController.update);
 
 // DELETE /api/fournisseurs/:id → DELETE /api/tiers/:id
 router.delete('/:id', authorize(['admin']), TiersController.delete);

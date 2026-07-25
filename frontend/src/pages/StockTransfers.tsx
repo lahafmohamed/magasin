@@ -66,7 +66,7 @@ const STATUS_CONFIG: Record<string, { label: string; variant: 'default' | 'secon
 const ALL_STATUSES = ['en_attente', 'en_transit', 'completee', 'annulee'];
 
 export default function StockTransfers() {
-  const { hasPermission, canAccessLocation: _canAccessLocation } = usePermission();
+  const { hasPermission } = usePermission();
   const confirm = useConfirm();
   
   const [transfers, setTransfers] = useState<Transfer[]>([]);
@@ -481,12 +481,12 @@ export default function StockTransfers() {
             <div className="space-y-4 py-2">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Source *</Label>
+                  <Label htmlFor="transfer-source">Source *</Label>
                   <Select
                     value={formData.location_source_id === '' ? '__none' : formData.location_source_id}
                     onValueChange={(v) => setFormData((prev) => ({ ...prev, location_source_id: v === '__none' ? '' : v }))}
                   >
-                    <SelectTrigger aria-label="Source">
+                    <SelectTrigger id="transfer-source" aria-label="Source">
                       <SelectValue placeholder="Sélectionner..." />
                     </SelectTrigger>
                     <SelectContent>
@@ -498,12 +498,12 @@ export default function StockTransfers() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Destination *</Label>
+                  <Label htmlFor="transfer-destination">Destination *</Label>
                   <Select
                     value={formData.location_destination_id === '' ? '__none' : formData.location_destination_id}
                     onValueChange={(v) => setFormData((prev) => ({ ...prev, location_destination_id: v === '__none' ? '' : v }))}
                   >
-                    <SelectTrigger aria-label="Destination">
+                    <SelectTrigger id="transfer-destination" aria-label="Destination">
                       <SelectValue placeholder="Sélectionner..." />
                     </SelectTrigger>
                     <SelectContent>
@@ -519,8 +519,9 @@ export default function StockTransfers() {
               </div>
 
               <div className="space-y-2">
-                <Label>Notes</Label>
+                <Label htmlFor="transfer-notes">Notes</Label>
                 <Input
+                  id="transfer-notes"
                   value={formData.notes}
                   onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
                   placeholder="Optionnel..."
@@ -529,7 +530,7 @@ export default function StockTransfers() {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label>Produits à transférer</Label>
+                  <p className="text-sm font-medium">Produits à transférer</p>
                   <Button type="button" variant="outline" size="sm" onClick={addLine} className="gap-1">
                     <Plus className="h-3.5 w-3.5" />
                     Ajouter ligne

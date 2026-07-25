@@ -4,6 +4,7 @@ import { formatCurrency } from '../utils/format';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -239,9 +240,9 @@ export default function ComptabilitePage() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <Calendar className="h-4 w-4 text-muted-foreground" />
-            <Input type="date" value={dateDebut} onChange={e => setDateDebut(e.target.value)} className="w-40" />
+            <DatePicker value={dateDebut} onChange={setDateDebut} className="w-44" aria-label="Date début" />
             <span className="text-muted-foreground">—</span>
-            <Input type="date" value={dateFin} onChange={e => setDateFin(e.target.value)} className="w-40" />
+            <DatePicker value={dateFin} onChange={setDateFin} className="w-44" aria-label="Date fin" />
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={exportBilan} className="gap-1" title="Télécharger le bilan (PDF)">
@@ -505,9 +506,9 @@ export default function ComptabilitePage() {
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label>Journal</Label>
+                  <Label htmlFor="piece-journal">Journal</Label>
                   <Select value={pieceJournal} onValueChange={setPieceJournal}>
-                    <SelectTrigger aria-label="Journal">
+                    <SelectTrigger id="piece-journal" aria-label="Journal">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -520,7 +521,7 @@ export default function ComptabilitePage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="piece-date">Date</Label>
-                  <Input id="piece-date" type="date" value={pieceDate} onChange={e => setPieceDate(e.target.value)} />
+                  <DatePicker id="piece-date" value={pieceDate} onChange={setPieceDate} required />
                 </div>
               </div>
               <div className="space-y-1.5">
@@ -537,7 +538,7 @@ export default function ComptabilitePage() {
               {/* Lignes */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label>Lignes</Label>
+                  <p className="text-sm font-medium">Lignes</p>
                   <Button
                     type="button"
                     variant="outline"

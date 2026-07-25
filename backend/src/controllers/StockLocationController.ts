@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { stockLocationService } from '../services/StockLocationService';
-import { successResponse, paginatedResponse } from '../utils/response';
+import { successResponse } from '../utils/response';
 
 export class StockLocationController {
   /**

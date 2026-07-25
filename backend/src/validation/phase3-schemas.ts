@@ -29,15 +29,3 @@ export const createReturnSchema = z.object({
   lignes: z.array(returnLigneSchema).min(1, 'Au moins une ligne requise'),
   notes: z.string().max(2000).optional().or(z.literal('')),
 });
-
-export const productImportSchema = z.object({
-  reference: z.string().min(1).max(50),
-  nom: z.string().min(1).max(255),
-  description: z.string().max(1000).optional(),
-  categorie: z.string().max(100).optional(),
-  prix_achat: z.coerce.number().nonnegative(),
-  prix_vente: z.coerce.number().nonnegative(),
-  stock: z.coerce.number().int().nonnegative().default(0),
-  stock_min: z.coerce.number().int().nonnegative().default(5),
-  code_barre: z.string().max(50).optional().or(z.literal('')),
-});

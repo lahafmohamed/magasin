@@ -5,6 +5,11 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    globalSetup: ['./src/test/globalSetup.ts'],
+    setupFiles: ['./src/test/setup.ts'],
+    // Integration files share one PostgreSQL database. Serial files prevent a
+    // suite's teardown from deleting another suite's fixtures.
+    fileParallelism: false,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

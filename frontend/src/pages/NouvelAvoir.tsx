@@ -5,7 +5,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { ArrowLeft, Check, Plus, X } from 'lucide-react';
-import { creditNoteService } from '@/services/api';
+import { creditNoteService, factureService } from '@/services/api';
+import { formatCurrency } from '@/utils/format';
+import { DocumentPicker, DocumentOption } from '@/components/DocumentPicker';
 import { useDraft } from '@/hooks/useDraft';
 import { TiersPicker } from '@/components/TiersPicker';
 import { Tiers } from '@/types';
@@ -35,9 +37,23 @@ const avoirSchema = z.object({
 
 type AvoirFormValues = z.infer<typeof avoirSchema>;
 
+const searchFactures = async (q: string): Promise<DocumentOption[]> => {
+  const res = await factureService.getAll(q, undefined, 1, 10);
+  const rows: any[] = res?.data ?? [];
+  return rows.map((f) => ({
+    id: f.id,
+    numero: f.numero_facture,
+    tiers_nom: `${f.client_nom || ''} ${f.client_prenom || ''}`.trim() || null,
+    montant: f.montant_total ?? f.total_ttc ?? null,
+    date: f.date_facture,
+    statut: f.statut,
+  }));
+};
+
 export default function NouvelAvoir() {
   const navigate = useNavigate();
   const [submitting, setSubmitting] = useState(false);
+  const [selectedFacture, setSelectedFacture] = useState<DocumentOption | null>(null);
 
   const {
     control,
@@ -78,7 +94,7 @@ export default function NouvelAvoir() {
 
   const { fields, append, remove } = useFieldArray({ control, name: 'lignes' });
 
-  // Total HT calculé en direct depuis les valeurs surveillées (identique).
+  // Total calculé en direct depuis les valeurs surveillées.
   const watchedLignes = watch('lignes');
   const total = (watchedLignes ?? []).reduce(
     (sum, ligne) => sum + Number(ligne.quantite || 0) * Number(ligne.prix_unitaire || 0),
@@ -177,13 +193,22 @@ export default function NouvelAvoir() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="avoir-facture-origine">Facture d origine<span className="text-destructive"> *</span></Label>
-              <Input
-                id="avoir-facture-origine"
-                type="number"
-                min={1}
-                placeholder="ID Facture d origine"
-                aria-invalid={errors.factureId ? true : undefined}
-                {...register('factureId')}
+              <Controller
+                control={control}
+                name="factureId"
+                render={({ field }) => (
+                  <DocumentPicker
+                    inputId="avoir-facture-origine"
+                    value={field.value ? selectedFacture : null}
+                    fallbackId={field.value && !selectedFacture ? field.value : undefined}
+                    onChange={(doc) => {
+                      setSelectedFacture(doc);
+                      field.onChange(doc ? String(doc.id) : '');
+                    }}
+                    search={searchFactures}
+                    placeholder="Rechercher une facture (numéro, client)..."
+                  />
+                )}
               />
               {errors.factureId && (
                 <p role="alert" className="text-xs text-danger">
@@ -298,8 +323,8 @@ export default function NouvelAvoir() {
         <Card>
           <CardContent className="pt-6 flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Montant estimé HT</p>
-              <p className="text-2xl font-bold">{total.toFixed(2)} XOF</p>
+              <p className="text-sm text-muted-foreground">Montant estimé</p>
+              <p className="text-2xl font-bold">{formatCurrency(total)}</p>
             </div>
             <Button type="submit" disabled={submitting}>
               <Check className="h-4 w-4 mr-2" />

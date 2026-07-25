@@ -44,7 +44,6 @@ export class PDFService {
     dateFin?: string
   ): PDFKit.PDFDocument {
     const doc = new PDFDocument({ margin: 40, size: 'A4' });
-    const pageWidth = doc.page.width - 80;
 
     doc.fontSize(16).font('Helvetica-Bold').text(title, { align: 'center' });
     doc.moveDown(0.5);
@@ -117,80 +116,235 @@ export class PDFService {
     return doc;
   }
 
+  /**
+   * Lignes d'un document de vente.
+   *
+   * Les quatre documents (facture / devis / BL / avoir) partagent la table
+   * unifiée `document_lignes` (043_unified_tiers) discriminée par
+   * `document_type`. Les anciennes tables par document (`facture_lignes`,
+   * `avoir_lignes`) n'existent plus, et `devis_lignes` /
+   * `bon_livraison_lignes` survivent vides — les interroger produisait soit une
+   * erreur SQL, soit un PDF sans aucune ligne et un total à 0.
+   */
+  private async getDocumentLignes(
+    documentType: 'facture' | 'devis' | 'bl' | 'avoir',
+    documentId: number
+  ): Promise<any[]> {
+    const { rows } = await pool.query(
+      `SELECT dl.*, p.nom AS produit_nom, p.reference AS produit_reference
+       FROM document_lignes dl
+       LEFT JOIN produits p ON dl.produit_id = p.id
+       WHERE dl.document_type = $1 AND dl.document_id = $2
+       ORDER BY dl.id`,
+      [documentType, documentId]
+    );
+    return rows;
+  }
+
   async generateInvoicePDF(factureId: number): Promise<Buffer> {
-    const settings = await getSettings();
     const { rows } = await pool.query(
       `SELECT f.*, t.raison_sociale as client_nom, t.adresse as client_adresse, t.telephone as client_telephone
-       FROM factures f LEFT JOIN tiers t ON f.client_id = t.id WHERE f.id = $1 AND f.deleted_at IS NULL`,
+       FROM factures f LEFT JOIN tiers t ON f.tiers_id = t.id WHERE f.id = $1 AND f.deleted_at IS NULL`,
       [factureId]
     );
     if (!rows[0]) throw new Error('Facture introuvable');
     const facture = rows[0];
 
-    const { rows: lignes } = await pool.query(
-      `SELECT fl.*, p.nom as produit_nom, p.reference as produit_reference
-       FROM facture_lignes fl LEFT JOIN produits p ON fl.produit_id = p.id WHERE fl.facture_id = $1`,
-      [factureId]
-    );
+    const lignes = await this.getDocumentLignes('facture', factureId);
 
     return this.buildDocumentPDF(facture, lignes, 'FACTURE', facture.numero_facture || facture.numero);
   }
 
   async generateDevisPDF(devisId: number): Promise<Buffer> {
-    const settings = await getSettings();
     const { rows } = await pool.query(
       `SELECT d.*, t.raison_sociale as client_nom, t.adresse as client_adresse, t.telephone as client_telephone
-       FROM devis d LEFT JOIN tiers t ON d.client_id = t.id WHERE d.id = $1 AND d.deleted_at IS NULL`,
+       FROM devis d LEFT JOIN tiers t ON d.tiers_id = t.id WHERE d.id = $1 AND d.deleted_at IS NULL`,
       [devisId]
     );
     if (!rows[0]) throw new Error('Devis introuvable');
     const doc = rows[0];
 
-    const { rows: lignes } = await pool.query(
-      `SELECT dl.*, p.nom as produit_nom, p.reference as produit_reference
-       FROM devis_lignes dl LEFT JOIN produits p ON dl.produit_id = p.id WHERE dl.devis_id = $1`,
-      [devisId]
-    );
+    const lignes = await this.getDocumentLignes('devis', devisId);
 
     return this.buildDocumentPDF(doc, lignes, 'DEVIS', doc.numero_devis || doc.numero);
   }
 
   async generateBLPDF(blId: number): Promise<Buffer> {
-    const settings = await getSettings();
     const { rows } = await pool.query(
       `SELECT bl.*, t.raison_sociale as client_nom, t.adresse as client_adresse, t.telephone as client_telephone
-       FROM bons_livraison bl LEFT JOIN tiers t ON bl.client_id = t.id WHERE bl.id = $1 AND bl.deleted_at IS NULL`,
+       FROM bons_livraison bl LEFT JOIN tiers t ON bl.tiers_id = t.id WHERE bl.id = $1 AND bl.deleted_at IS NULL`,
       [blId]
     );
     if (!rows[0]) throw new Error('Bon de livraison introuvable');
     const doc = rows[0];
 
-    const { rows: lignes } = await pool.query(
-      `SELECT bll.*, p.nom as produit_nom, p.reference as produit_reference
-       FROM bon_livraison_lignes bll LEFT JOIN produits p ON bll.produit_id = p.id WHERE bll.bon_livraison_id = $1`,
-      [blId]
-    );
+    const lignes = await this.getDocumentLignes('bl', blId);
 
     return this.buildDocumentPDF(doc, lignes, 'BON DE LIVRAISON', doc.numero_bl || doc.numero);
   }
 
   async generateAvoirPDF(avoirId: number): Promise<Buffer> {
-    const settings = await getSettings();
     const { rows } = await pool.query(
-      `SELECT a.*, t.raison_sociale as client_nom, t.adresse as client_adresse
-       FROM avoirs a LEFT JOIN tiers t ON a.client_id = t.id WHERE a.id = $1 AND a.deleted_at IS NULL`,
+      `SELECT a.*, t.raison_sociale as client_nom, t.adresse as client_adresse, t.telephone as client_telephone
+       FROM factures_avoir a LEFT JOIN tiers t ON a.tiers_id = t.id
+       WHERE a.id = $1 AND a.deleted_at IS NULL`,
       [avoirId]
     );
     if (!rows[0]) throw new Error('Avoir introuvable');
     const doc = rows[0];
 
-    const { rows: lignes } = await pool.query(
-      `SELECT al.*, p.nom as produit_nom
-       FROM avoir_lignes al LEFT JOIN produits p ON al.produit_id = p.id WHERE al.avoir_id = $1`,
-      [avoirId]
-    );
+    const lignes = await this.getDocumentLignes('avoir', avoirId);
 
     return this.buildDocumentPDF(doc, lignes, 'AVOIR', doc.numero_avoir || doc.numero);
+  }
+
+  /**
+   * Bon de commande fournisseur — le seul document que l'on **envoie** à un
+   * fournisseur. Réutilise le gabarit document standard, avec l'en-tête tiers
+   * libellé « Fournisseur » et le rappel de la date de livraison prévue.
+   */
+  async generateCommandePDF(commandeId: number): Promise<Buffer> {
+    const { rows } = await pool.query(
+      `SELECT c.*, t.raison_sociale AS client_nom, t.adresse AS client_adresse, t.telephone AS client_telephone
+       FROM commandes_fournisseur c LEFT JOIN tiers t ON c.tiers_id = t.id
+       WHERE c.id = $1 AND c.deleted_at IS NULL`,
+      [commandeId]
+    );
+    if (!rows[0]) throw new Error('Commande introuvable');
+    const cmd = rows[0];
+
+    const { rows: lignes } = await pool.query(
+      `SELECT cl.*, p.nom AS produit_nom, p.reference AS produit_reference
+       FROM commande_lignes cl LEFT JOIN produits p ON cl.produit_id = p.id
+       WHERE cl.commande_id = $1 ORDER BY cl.id`,
+      [commandeId]
+    );
+
+    const STATUT_LABELS: Record<string, string> = {
+      en_attente: 'En attente', validee: 'Validée', expediee: 'Expédiée',
+      livree: 'Livrée', annulee: 'Annulée',
+    };
+    const extraInfo: string[] = [
+      `Date de commande: ${new Date(cmd.date_commande).toLocaleDateString('fr-FR')}`,
+    ];
+    if (cmd.date_livraison_prevue) {
+      extraInfo.push(
+        `Livraison prévue: ${new Date(cmd.date_livraison_prevue).toLocaleDateString('fr-FR')}`
+      );
+    }
+    extraInfo.push(`Statut: ${STATUT_LABELS[cmd.statut] || cmd.statut}`);
+    if (cmd.notes) extraInfo.push(`Notes: ${cmd.notes}`);
+
+    return this.buildDocumentPDF(cmd, lignes, 'BON DE COMMANDE', cmd.numero_commande, {
+      counterpartyLabel: 'Fournisseur',
+      extraInfo,
+    });
+  }
+
+  /**
+   * Reçu de paiement (quittance) — remis au client qui règle une facture.
+   * Format compact : un encadré montant + le rappel du solde restant dû.
+   */
+  async generatePaiementRecuPDF(paiementId: number): Promise<Buffer> {
+    const settings = await getSettings();
+    const devise = settings.devise || 'FCFA';
+
+    const { rows } = await pool.query(
+      `SELECT p.id, p.montant, p.methode_paiement, p.date_paiement, p.reference, p.notes,
+              f.numero_facture, f.total AS facture_total, f.montant_paye, f.remaining_due,
+              t.raison_sociale AS client_nom, t.adresse AS client_adresse, t.telephone AS client_telephone,
+              u.nom_complet AS encaisse_par, u.username AS encaisse_par_username
+       FROM paiements p
+       JOIN factures f ON f.id = p.facture_id
+       LEFT JOIN tiers t ON t.id = f.tiers_id
+       LEFT JOIN utilisateurs u ON u.id = p.cree_par
+       WHERE p.id = $1 AND p.deleted_at IS NULL`,
+      [paiementId]
+    );
+    if (!rows[0]) throw new Error('Paiement introuvable');
+    const pay = rows[0];
+
+    const METHODE_LABELS: Record<string, string> = {
+      espece: 'Espèces', carte: 'Carte bancaire', cheque: 'Chèque', virement: 'Virement',
+      mobile_money: 'Mobile Money', orange_money: 'Orange Money', mtn_money: 'MTN Money', wave: 'Wave',
+    };
+    const fmt = (v: any) => Number(v || 0).toLocaleString('fr-FR');
+
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 40, size: 'A4' });
+      const chunks: Buffer[] = [];
+      doc.on('data', (c: Buffer) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc.fontSize(16).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', { align: 'center' });
+      doc.fontSize(9).font('Helvetica');
+      if (settings.adresse) doc.text(settings.adresse, { align: 'center' });
+      if (settings.telephone) doc.text(`Tel: ${settings.telephone}`, { align: 'center' });
+      if (settings.nif) {
+        doc.fontSize(7).text(`NIF: ${settings.nif} | RC: ${settings.rc || '-'}`, { align: 'center' });
+      }
+      doc.moveDown(1.5);
+
+      doc.fontSize(14).font('Helvetica-Bold').text('REÇU DE PAIEMENT', { align: 'center' });
+      doc.fontSize(9).font('Helvetica').text(`N° ${pay.id}`, { align: 'center' });
+      doc.moveDown(1.5);
+
+      doc.fontSize(10).font('Helvetica');
+      doc.text(`Reçu de: ${pay.client_nom || '-'}`);
+      if (pay.client_adresse) doc.text(`Adresse: ${pay.client_adresse}`);
+      if (pay.client_telephone) doc.text(`Tel: ${pay.client_telephone}`);
+      doc.moveDown(1);
+
+      // Encadré montant
+      const boxX = 40;
+      const boxW = 515;
+      let y = doc.y;
+      doc.rect(boxX, y, boxW, 44).fill('#f0f0f0');
+      doc.fillColor('#111').fontSize(11).font('Helvetica-Bold');
+      doc.text('MONTANT REÇU', boxX + 12, y + 8, { width: boxW - 24 });
+      doc.fontSize(18);
+      doc.text(`${fmt(pay.montant)} ${devise}`, boxX + 12, y + 22, { width: boxW - 24, align: 'right' });
+      doc.y = y + 54;
+
+      // Détail
+      const rowH = 18;
+      const labelW = 200;
+      const drawRow = (label: string, value: string, opts?: { bold?: boolean; fill?: string }) => {
+        const ry = doc.y;
+        if (opts?.fill) { doc.rect(boxX, ry, boxW, rowH).fill(opts.fill); doc.fillColor('#111'); }
+        doc.fontSize(9).font(opts?.bold ? 'Helvetica-Bold' : 'Helvetica').fillColor('#111');
+        doc.text(label, boxX + 6, ry + 5, { width: labelW });
+        doc.text(value, boxX + labelW, ry + 5, { width: boxW - labelW - 12, align: 'right' });
+        doc.y = ry + rowH;
+      };
+
+      drawRow('Détail du règlement', '', { bold: true, fill: '#f0f0f0' });
+      drawRow('Facture réglée', pay.numero_facture || '-');
+      drawRow('Date du paiement', new Date(pay.date_paiement).toLocaleDateString('fr-FR'), { fill: '#fafafa' });
+      drawRow('Mode de paiement', METHODE_LABELS[pay.methode_paiement] || pay.methode_paiement);
+      if (pay.reference) drawRow('Référence', pay.reference, { fill: '#fafafa' });
+      drawRow('Total de la facture', `${fmt(pay.facture_total)} ${devise}`);
+      drawRow('Total réglé à ce jour', `${fmt(pay.montant_paye)} ${devise}`, { fill: '#fafafa' });
+      drawRow('RESTE À PAYER', `${fmt(pay.remaining_due)} ${devise}`, { bold: true, fill: '#e8f0e8' });
+
+      if (pay.notes) {
+        doc.moveDown(1);
+        doc.fontSize(9).font('Helvetica').fillColor('#111').text(`Notes: ${pay.notes}`);
+      }
+
+      doc.moveDown(2);
+      doc.fontSize(9).font('Helvetica').fillColor('#111');
+      doc.text(`Encaissé par: ${pay.encaisse_par || pay.encaisse_par_username || '-'}`);
+
+      doc.moveDown(3);
+      doc.fontSize(9).text('Signature et cachet', 380, doc.y, { width: 175, align: 'center' });
+      doc.moveTo(380, doc.y + 34).lineTo(555, doc.y + 34).stroke('#999');
+
+      doc.fontSize(7).font('Helvetica').fillColor('#666');
+      doc.text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`, 40, 780, { align: 'center' });
+      doc.end();
+    });
   }
 
   /** Bulletin de paie (payslip) PDF for a single payslip. */
@@ -451,8 +605,14 @@ export class PDFService {
     header: any,
     lignes: any[],
     title: string,
-    numero: string
+    numero: string,
+    /**
+     * `counterpartyLabel` : « Client » pour les documents de vente, « Fournisseur »
+     * pour un bon de commande. `extraInfo` : lignes libres sous le bloc tiers.
+     */
+    options?: { counterpartyLabel?: string; extraInfo?: string[] }
   ): Promise<Buffer> {
+    const counterpartyLabel = options?.counterpartyLabel || 'Client';
     const settings = await getSettings();
     const devise = settings.devise || 'FCFA';
 
@@ -508,12 +668,18 @@ export class PDFService {
       doc.fontSize(14).font('Helvetica-Bold').text(`${title} N° ${numero}`, { align: 'center' });
       doc.moveDown(0.5);
 
-      // Client info
+      // Bloc tiers (client ou fournisseur selon le document)
       if (header.client_nom) {
         doc.fontSize(9).font('Helvetica');
-        doc.text(`Client: ${header.client_nom}`, { continued: false });
+        doc.text(`${counterpartyLabel}: ${header.client_nom}`, { continued: false });
         if (header.client_adresse) doc.text(`Adresse: ${header.client_adresse}`);
         if (header.client_telephone) doc.text(`Tel: ${header.client_telephone}`);
+        doc.moveDown(0.5);
+      }
+
+      if (options?.extraInfo?.length) {
+        doc.fontSize(9).font('Helvetica');
+        options.extraInfo.forEach((line) => doc.text(line));
         doc.moveDown(0.5);
       }
 

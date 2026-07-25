@@ -1,4 +1,6 @@
-const CACHE_NAME = 'hitek-cache-v2';
+// v3: stop caching /api responses — bump forces the activate handler to purge
+// the v2 cache, which may still hold financial API data on shared machines.
+const CACHE_NAME = 'hitek-cache-v3';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/logo.png',
@@ -33,9 +35,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // API requests → Network First (offline support)
+  // API requests → Network ONLY. Never write API responses to Cache Storage:
+  // they carry financial/account data and Cache Storage survives logout and is
+  // readable by anyone on a shared machine. Offline = a graceful JSON error.
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(networkFirst(request));
+    event.respondWith(networkOnly(request));
     return;
   }
 
@@ -50,15 +54,12 @@ self.addEventListener('fetch', (event) => {
   return;
 });
 
-async function networkFirst(request) {
+async function networkOnly(request) {
+  // Always hit the network; never read or write Cache Storage for API traffic.
+  // Offline yields a graceful JSON error instead of a stale cached response.
   try {
-    const response = await fetch(request);
-    const cache = await caches.open(CACHE_NAME);
-    cache.put(request, response.clone());
-    return response;
+    return await fetch(request);
   } catch (error) {
-    const cached = await caches.match(request);
-    if (cached) return cached;
     return new Response(
       JSON.stringify({ success: false, error: 'Hors ligne' }),
       { headers: { 'Content-Type': 'application/json' } }

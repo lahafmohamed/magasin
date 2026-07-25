@@ -1,8 +1,10 @@
-import React from 'react';
-import { X } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Receipt, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Paiement, METHODES_PAIEMENT, FALLBACK_PAIEMENT_ICON } from '../types';
 import { Button } from './ui/button';
 import { formatFCFA } from '../utils/format';
+import { paiementService } from '../services/api';
 
 interface PaymentHistoryProps {
   paiements: Paiement[];
@@ -21,6 +23,19 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export const PaymentHistory: React.FC<PaymentHistoryProps> = ({ paiements, onDelete }) => {
+  const [downloadingId, setDownloadingId] = useState<number | null>(null);
+
+  const downloadRecu = async (id: number) => {
+    setDownloadingId(id);
+    try {
+      await paiementService.downloadRecu(id);
+    } catch {
+      toast.error('Erreur lors de la génération du reçu');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('fr-FR', {
@@ -59,7 +74,7 @@ export const PaymentHistory: React.FC<PaymentHistoryProps> = ({ paiements, onDel
             <th className="px-3 py-2 font-medium text-right">Montant</th>
             <th className="px-3 py-2 font-medium">Référence</th>
             <th className="px-3 py-2 font-medium">Notes</th>
-            {onDelete && <th className="px-3 py-2 font-medium w-20">Actions</th>}
+            <th className="px-3 py-2 font-medium w-24">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y">
@@ -95,19 +110,38 @@ export const PaymentHistory: React.FC<PaymentHistoryProps> = ({ paiements, onDel
                 <td className="px-3 py-2 max-w-xs truncate text-muted-foreground">
                   {paiement.notes || '—'}
                 </td>
-                {onDelete && paiement.source !== 'acompte_application' && (
-                  <td className="px-3 py-2">
+                {/* La cellule est toujours rendue : la rendre conditionnellement
+                    décalait les colonnes sur les lignes « Acompte ». */}
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-1">
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 w-7 p-0 text-danger-600 hover:bg-danger-50 hover:text-danger-700"
-                      onClick={() => onDelete?.(paiement.id)}
-                      aria-label="Supprimer ce paiement"
+                      className="h-7 w-7 p-0"
+                      onClick={() => downloadRecu(paiement.id)}
+                      disabled={downloadingId === paiement.id}
+                      aria-label="Télécharger le reçu de paiement"
+                      title="Reçu de paiement (PDF)"
                     >
-                      <X className="h-3.5 w-3.5" />
+                      {downloadingId === paiement.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Receipt className="h-3.5 w-3.5" />
+                      )}
                     </Button>
-                  </td>
-                )}
+                    {onDelete && paiement.source !== 'acompte_application' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-danger-600 hover:bg-danger-50 hover:text-danger-700"
+                        onClick={() => onDelete?.(paiement.id)}
+                        aria-label="Supprimer ce paiement"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </td>
               </tr>
             );
           })}
