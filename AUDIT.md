@@ -1,332 +1,179 @@
-# ERP Audit Report
-
-**Repo:** `magasinProgramme` (Hitek / "magasin informatique" — French-language ERP for a retail + wholesale electronics business in West Africa, currency XOF)
-**Date:** 2026-06-21 (re-audit after the 2026-06-20 hardening pass, commits `2af4127`, `e58cde0`, `84ce1e5`)
-**Partial refresh 2026-07-18:** counts updated below; migrations now run to `088` (period lock `075`, valuation `076`, 3-way match `082`, payroll `080/081`, attachments `083`, RBAC-table drop `084`, caisse→GL `086/087`, acompte statut width `088`). A P1 security pass (CRM SET-clause injection, fail-closed sessions, error-message scrub, period checks on acomptes/paiements, caisse reversal on payment delete, Zod on money routes) landed on `fix/p0-data-integrity`.
-**Method:** Read-only audit. Every finding is backed by a file path / `file:line` reference verified by reading the code. Items that could not be confirmed from code are marked `[unverified]`.
-**Scope of this pass:** Audit + documentation only. No source, schema, migration, or config files were modified.
-
-> **What changed since the last audit:** A large hardening pass (commit `2af4127`, ~17k insertions) landed after the previous AUDIT.md was written. It resolved the two blocking schema forks, killed both SQL-injection sites, gated every mutating route, removed dead code, added a real migration runner + CI, and wired the previously-stubbed Lot / Serial / Camions modules. This report reflects the **post-hardening** reality. The previous P0 list is now largely closed; what remains is concentrated in **accounting period enforcement, inventory valuation drift, purchasing controls (TVA / 3-way match), and frontend quality (lint/tests/types)**.
-
----
-
-## 1. Architecture Map
-
-### Stack
-
-| Layer | Tech | Version |
-|---|---|---|
-| Backend runtime | Node.js + Express | express ^4.18.2 |
-| Backend language | TypeScript (strict) | ^5.3.3 |
-| Dev server | ts-node-dev (transpile-only) | ^2.0.0 |
-| DB | PostgreSQL via `pg` Pool | pg ^8.11.3 |
-| Validation | Zod | ^4.3.6 |
-| Auth | jsonwebtoken (HS256) + bcrypt (rounds 12) | jwt ^9.0.3, bcrypt ^6.0.0 |
-| Logging | pino + pino-http | ^10.3.1 |
-| PDF / Excel | pdfkit ^0.18, xlsx ^0.18.5 | |
-| Security mw | helmet ^8.1, express-rate-limit ^8.3, cors, cookie-parser | |
-| Tests (BE) | vitest ^4.1.4 + supertest ^7.2 | |
-| Frontend | React 18.3 + Vite 5 + TypeScript 5.3 | |
-| Styling | TailwindCSS ^3.4 + shadcn/ui (Radix + CVA) | |
-| FE libs | react-router-dom ^6.21, react-hook-form ^7.72, zod, recharts ^3.8, axios ^1.6, sonner, @tanstack/react-virtual | |
-| Process mgr | PM2 (`ecosystem.config.js`) | |
-| CI | GitHub Actions (`.github/workflows/ci.yml`) | |
-
-### Counts (re-verified 2026-07-18)
-
-- Backend: **30** controllers, **43** services, **35** route files, **88** numbered SQL migrations (highest `088`, number `024` duplicated) + `schema.sql`.
-- Frontend: **45** pages, ~29 `components/ui` primitives.
-- Tests: **11** backend `*.test.ts`, **6** frontend `*.test.tsx`.
-
-### Folder structure
-
-```
-backend/
-  src/
-    controllers/   30 controllers (HTTP handlers; some contain business logic inline)
-    services/      44 services (BaseService + domain services; data + business logic)
-    routes/        40 route files mounted in server.ts
-    middleware/    auth (JWT + cookie + DB session), permissions, validation, audit, idempotency, patch-router
-    models/        Client, Facture, Paiement, Produit, UserModel (thin, partial)
-    db/            74 .sql migrations (001..074) + schema.sql
-    validation/    Zod schemas (schemas.ts, phase3-schemas.ts)
-    utils/, types/, test/
-  migrate.mjs      ordered, tracked migration runner (schema_migrations table)  ← NEW
-  *.mjs            ~30 legacy ad-hoc setup/seed/fix scripts (superseded by migrate.mjs)
-frontend/
-  src/
-    pages/         45 pages (+ test files), all React.lazy code-split
-    components/     domain components + components/ui (~29 shadcn-style primitives)
-    hooks/          usePermission, useSseNotifications, useDraft, useUrlState, useExportExcel, ...
-    lib/            AuthContext, ThemeContext, utils
-    services/       api.ts (~30 service objects), authService.ts
-    validation/     schemas.ts (zod)  ← NEW
-    types/, utils/, test/
-  public/          sw.js + manifest.json (PWA assets — SW NOT registered)
-ecosystem.config.js   PM2 (backend only); secrets now read from env
-.github/workflows/ci.yml   CI (typecheck/lint/test BE; typecheck/build FE)  ← NEW
-data/, excel/, scripts/    seed data + one python xlsx importer
-```
-
-### Data layer
-
-- Raw SQL through `pg` Pool. No ORM. `BaseService.ts` provides parameterized helpers and a sort-column allow-list.
-- **Heavy reliance on DB triggers and DB functions** for business logic: stock sync, accounting auto-posting, document conversions (BL→facture), payment/status recomputation, CMP sync (`065`). App code and DB logic are tightly coupled.
-- **Unified `tiers` table** (`043_unified_tiers.sql`) is the source of truth for clients + suppliers; legacy `clients`/`fournisseurs` controllers are deprecated shims to `TiersController`. Batch/serial FKs were repointed to `tiers` in `074`.
-- **Migrations now have a real runner.** `backend/migrate.mjs` discovers all `NNN_*.sql` files, sorts by numeric prefix, records each in a **`schema_migrations`** table (filename PK + `applied_at`), runs each in its own transaction, and applies only pending ones. Supports `--status`, `--dry-run`, `--baseline`. The ~30 legacy ad-hoc `.mjs` scripts still exist but are superseded.
-
-### Auth model
-
-- JWT (HS256, 7-day expiry). `JWT_SECRET` hard-fails at boot if missing, <32 chars, or a known placeholder. Token verified with explicit `algorithms:['HS256']` (guards alg-confusion).
-- **Transport hardened:** primary transport is now an **httpOnly cookie** (`AuthController.ts:78-84`, `auth.ts:39-53` `extractToken`); `?token=` query param remains only as an SSE fallback. SSE stream enforces session revocation/expiry (`notifications.ts:25-41`).
-- DB-backed sessions with SHA-256 token hashing for revocation; `must_change_password` gate; password strength check (`isStrongPassword`, ≥8 + letter + digit).
-- **Residual (benign):** login still returns the token in the response body **intentionally** for non-browser API clients. The browser SPA never stores the token — it caches only the non-sensitive `auth_user` in localStorage and authenticates via the httpOnly cookie (`withCredentials`), including SSE. No token in localStorage → no residual XSS token surface.
-
-### API surface
-
-- ~33 route modules mounted under `/api/*` in `server.ts` (the batch/lot, serial, and camions modules were removed). Global `helmet`, CORS restricted to `FRONTEND_URL`, global rate limit + auth limit. Response envelope: `{ success, data, pagination }`.
-- Frontend talks to relative `/api` (Vite dev proxy → `localhost:6000`); no `import.meta.env`/`VITE_` usage — API origin is build/proxy-determined.
-
-### Frontend/backend split
-
-- Clean SPA + JSON API split. Frontend is a static Vite build; backend is the only PM2-managed process. PWA assets (`sw.js`, `manifest.json`) exist but the service worker is **never registered** in `main.tsx` — dead PWA. No documented static-serving/deploy for the built frontend.
-
----
-
-## 2. Module Inventory
-
-Status backed by referenced files. **Complete** = full lifecycle + transactions + auth; **Partial** = works but has correctness/coverage gaps; **Stub** = schema/scaffold only; **Missing** = expected but absent.
-
-### Sales
-
-| Module | Status | Evidence |
-|---|---|---|
-| Devis (quotes) | **Complete** | `DevisService.ts` — lifecycle, auto-BL on accept, transactional |
-| Bons de livraison | **Complete** | `BonLivraisonService.ts` — stock deduct/restore, convert→facture idempotent (single ledger insert, `:837-845`) |
-| Factures (customer invoices) | **Complete** (most mature) | `FactureService.ts` — period guard, credit-limit, race-safe stock, ledger debit, FIFO allocation; `updateStatut` now tx + enum-gated (`:477-535`) |
-| Avoirs / credit notes | **Complete** | `CreditNoteService.ts` — apply routes through acompte + `recomputeClientAllocations` (single FIFO source, `:384-390`), double-credit risk closed |
-| Retours / returns | **Partial** | `ReturnService.ts` — cancel now un-restocks transactionally (`:256-350`); **but restock still happens at create, before approval** (`:100,129-158`) |
-| Paiements | **Complete** | `PaiementController.ts` standalone `POST /` works (`:30`); enum widened (mobile money) + `idempotency_key` (`schemas.ts:190-200`) |
-| Acomptes (customer deposits) | **Complete** | `AcompteController.ts`, `CompensationService.ts` |
-| POS / quick sale | **Complete** | `POSService.ts` — server-side price re-lookup (`:152-166`), NumberingService (`:169`), session ownership enforced; routes gated (`pos.ts:13,15,22`) |
-| Pricing | **Partial** | `PricingService.ts` — discount calc only, **no TVA** (TVA removed system-wide) |
-| Numbering | **Complete** | `NumberingService.ts` — atomic `nextval()` |
-
-### Purchasing
-
-| Module | Status | Evidence |
-|---|---|---|
-| Commandes fournisseur | **Complete** (gaps) | `CommandeController.ts` — delete now transactional + cascade + audit + payment guard (`:326-381`); still no pagination on `getAll` |
-| Receptions (goods receipt) | **Complete** | `ReceptionService.ts` — stock upsert, CMP recompute (`:221-244`), period-locked; 3-way match wired via `082` |
-| Factures fournisseur | **Complete** | `FactureFournisseurService.ts` — AP ledger correct (`montant_credit=0`, `:272-275`); routes now use `validateBody` |
-| Acomptes fournisseur | **Complete** | `AcompteController.ts` — fixed to `numero_facture_interne` (`:540,571`) |
-| Compensation (AR/AP netting) | **Complete** | `CompensationService.ts` |
-| Fournisseurs | **Complete** (legacy shim) | `fournisseurs.ts` delegates to `TiersController` |
-| Demandes (internal reappro) | **Complete** | `DemandeService.ts` — full state machine, row-locked |
-| 3-way match | **Complete** | `082` + `three_way_match_config`; commande↔reception↔facture reconciliation wired, rapprochement UI on commande detail |
-
-### Inventory
-
-| Module | Status | Evidence |
-|---|---|---|
-| Produits | **Complete** | `ProduitController.ts` — `addStockMovement` arg-order fixed (`:332-334`), `location_id` in schema (`schemas.ts:80`) |
-| Stock locations | **Complete** | `StockLocationController.ts` — update (`:73`) + soft-delete (`:92`) added |
-| Stock transfers | **Complete** | `StockTransferService.ts` — FOR UPDATE both ends; cancel added (`StockTransferController.ts:88`) |
-| Mouvements stock | **Complete** | legacy `log_produits_stock` trigger dropped (`073`) → no more double-logging |
-| Batch / lot / serial tracking | **Removed** | routes/services removed 2026-06-30; dead `lots`/`numeros_serie` tables + orphan FK columns dropped in `085`; dead Zod schemas removed |
-| Serial number tracking | **Complete** | `SerialController.ts`, `SerialService.ts`, `serials.ts` mounted (`server.ts:47,137`); FKs → tiers (`074`) |
-| Camions / gasoil (fleet) | **Complete** | `camions.ts` mounted (`server.ts:45,135`) with authz |
-| Valuation (CMUP/CMP) | **Partial** | `valeur_stock` now decremented on sales/transfers and kept `= quantite × cmp` by trigger `076`; all 3 readers use `SUM(spl.valeur_stock)` (`ReportingService.ts:507`, `ComptabiliteService.ts:391`). Residual: CMP **unit cost** still recomputed on reception only (`ReceptionService.ts:221-244`, trigger `065`) |
-| Stock reservations (`quantite_reservee`) | **Stub (half-built)** | column only ever read (`StockLocationService.ts:207-226`, `DemandeService.ts:829`); no `UPDATE ... SET quantite_reservee` write path anywhere |
-
-### Accounting / Finance / Cash
-
-| Module | Status | Evidence |
-|---|---|---|
-| Plan comptable / écritures | **Complete & unified** | schema fork resolved: `071_ecritures_unify.sql` + `072_ecritures_triggers_069.sql` make **069 `compte_numero`** canonical; both `GeneralLedgerService.ts:39,54` and `ComptabiliteService.ts:82-85,120` read it |
-| General Ledger | **Complete & LIVE** | `GeneralLedgerService.ts` — manual entry balanced ±0.01, period-guarded (`:201`) |
-| Comptabilité | **Complete & LIVE** | `ComptabiliteService.ts` — SQLi fixed (parameterized, `:124-203`); dead `ecrituresFrom*` removed (`:265-267`) |
-| Compensation | **Complete** | `CompensationService.ts` |
-| Caisse (magasin) | **Complete & LIVE** | `CaisseMagasinService.ts` — sessions, variance, idempotent, FOR UPDATE; GL posting **enabled** (`CAISSE_GL_POSTING=true`), accounts seeded (`086`), legacy constraints relaxed (`087`), journal `TRESORERIE` |
-| Caisse hierarchy | **Complete & LIVE** | `CaisseHierarchyService.ts` |
-| Cash variance reports | **Complete & LIVE** | `CashVarianceService.ts` — rewritten to current columns (`:18-23`), 500s fixed; auth-gated (`cash-variance.ts:8-9`) |
-| Dépenses (expenses) | **Complete & LIVE (V2)** | `DepenseServiceV2.ts`; V1 `DepenseService.ts` still present but dead |
-| Reporting / analytics | **Complete & LIVE** | `ReportingService.ts` — COGS, aging, P&L, forecast |
-| Periods (fiscal lock) | **Complete** | `PeriodService.checkPeriodIsOpen` gives friendly app-layer errors, and `075`'s `BEFORE INSERT` trigger on `ecritures_comptables` hard-enforces closed periods on **every** posting path (072 triggers, caisse GL, `enregistrerPiece`, manual) |
-| TVA | **Removed (inert by design)** | `027_enforce_no_tax.sql` forces `tva=0`; all TVA services/controllers/routes deleted; triggers post no TVA leg (`072:16-18`). Account-number conflict moot |
-| Tax reports | **Removed** | `TaxReportController/Service` deleted |
-| Multi-currency | **Stub** | `066/067` add `taux_conversion`/`devise_paiement` columns; **never read/written** by any payment service — dead schema (company-level rate only used for PDF display) |
-
-### Auth / Admin / CRM / HR / Cross-cutting
-
-| Module | Status | Evidence |
-|---|---|---|
-| Auth | **Complete** | `AuthController.ts` — JWT+cookie+bcrypt+sessions; password strength enforced (`:167-169,183,309`); register resolves role by name (`:204-213`) |
-| RBAC | **Consolidated** | Single `authorize(roles)` mechanism app-wide (role from `roles.nom` via `utilisateurs.role_id`). The DB permission system + in-memory `ROLE_PERMISSIONS` matrix were removed (`084` drops `permissions`/`role_permissions`/`user_permissions` + `customiser_permissions`); `permissions.ts` keeps only `getUserLocationRole`. FE `usePermission` is advisory-only |
-| Admin users / allocation | **Complete** | `AdminUserService.ts`, `AdminAllocationController.ts`, `UserLocationAssignmentService.ts` |
-| Tiers (unified parties) | **Complete** | `TiersService.ts` — validated + role-gated |
-| Clients | **Complete** | `clients.ts:421,448,500` — writes now `authorize('admin','manager')` + validate + audit |
-| CRM | **Complete** | `CrmService.ts` SQLi fixed (parameterized `:57-90`); `crm.ts:8` writes gated |
-| HR / Employés | **Complete** | `employes.ts:11` — every route (incl. GETs) gated `authorize(['admin','manager'])`, salary leak closed |
-| Company settings | **Complete** | `CompanySettingsService.ts` |
-| Audit log | **Complete** | fork resolved (`070_audit_log_reconcile.sql` → canonical `user_id`); `AuditService.ts`, `middleware/audit.ts` consistent; FE `AuditLog.tsx` page |
-| Notifications (SSE) | **Complete** (minor) | `notifications.ts` — cookie-auth + revocation gate; `/status` is `authenticate`-only despite "admin-only" comment (`:46`) |
-| Import / export | **Complete** | `import-export.ts`, `export-batch.ts` |
-
-### Modules NOT present (Missing)
-
-- **Manufacturing / BOM / production** — none.
-- **Dedicated CRM pipeline / opportunities** — only interactions + tasks.
-- **Budgeting / forecasting (financial)** — only a sales forecast in reporting.
-- ~~Payroll~~ — ✅ done (`080`/`081`; runs/payslips + CNPS/ITS config).
-- ~~Multi-currency~~ — ✅ resolved: dormant `066/067` columns dropped in `077`; `XOF` only.
-- ~~3-way procurement match~~ — ✅ done (`082`).
-
----
-
-## 3. Gap Analysis (current, post-hardening)
-
-**Sales**
-- Returns: ✅ restock occurs only on approval (`updateStatut`→`traite`), not at create; guarded state machine + transactional cancel-reversal (`ReturnService.ts:283-350`).
-- ✅ Client credit-limit enforced (`CreditService`) on BL create, direct facture create, and devis-confirm auto-BL.
-- Pricing has no TVA (consistent with system-wide TVA removal — confirm this is the intended business policy).
-
-**Purchasing**
-- ✅ `factures-fournisseur` routes now use `validateBody` (`createFactureFournisseurSchema`, `recordFactureFournisseurPaiementSchema`).
-- ✅ 3-way match wired (`082`): commande↔reception↔facture reconciled with `three_way_match_config` tolerance/blocage.
-- ✅ Reorder automation live: `GET /produits/reorder-suggestions` + Réapprovisionnement page → supplier-grouped commandes; `produits.fournisseur_id` writable end-to-end.
-- TVA hardcoded `0` across commandes (`CommandeController.ts:139,141`) and factures fournisseur (`FactureFournisseurService.ts:168,174`) — consistent with TVA removal but means `tva_taux` line fields are dead.
-- `CommandeController.getAll` still unpaginated.
-
-**Inventory**
-- **Valuation drift (top remaining data-quality issue):** CMP/`valeur_stock` updated on reception only; sales and transfers never decrement it (`FactureService`/`StockTransferService` have no CMP maintenance). Three readers compute inventory value three different ways; `ReportingService.ts:506` carries a comment acknowledging the drift.
-- ✅ `quantite_reservee` reservation column dropped in `078` (was half-built); no TS refs remain.
-
-**Accounting**
-- ✅ **Period lock enforced at the DB.** `075` adds a `BEFORE INSERT` trigger on `ecritures_comptables` — a facture (or any posting) in a closed (`fermee`) period is rejected on every path: `072` auto-post triggers, `CaisseMagasinService.postMouvementToGL`, `ComptabiliteService.enregistrerPiece`, manual entries.
-- ✅ Caisse→GL posting **enabled** (`CAISSE_GL_POSTING=true`). Enabling surfaced and fixed latent schema/code debt: 8 missing chart-of-accounts entries (`086`), stale `ecritures_comptables` NOT NULL columns from a partially-applied `071` (`087`), and invalid journal codes (`'BQ'`/`'VT'` vs the `ACHATS/VENTES/TRESORERIE/OD` CHECK). Cash now posts balanced Dr/Cr legs to the ledger.
-- ✅ `compte_numero` FK on `ecritures_comptables` → `plan_comptable(numero)` now added (guarded) in `079`.
-
-**Auth/RBAC/cross-cutting**
-- ✅ RBAC consolidated onto a single `authorize(roles)` mechanism; the DB permission system and the duplicate `requirePermission` functions were removed (`084`). No competing sources of truth remain.
-- `patch-router.ts` validates only a hardcoded param-name list (`:12-21`) — novel id params (`tiersId`, etc.) bypass it.
-- Login token still returned in body (intentional, non-browser clients); the SPA does **not** store it — only `auth_user` is cached, auth via httpOnly cookie.
-
----
-
-## 4. Quality Findings
-
-### Security
-
-Net state: **strong improvement.** Both SQL-injection sites fixed, every mutating route gated, secrets removed from the repo, idempotency per-user + 2xx-only, password strength enforced, SSE cookie-auth + revocation. Residual items:
-
-1. **✅ Token not in `localStorage`** — SPA authenticates purely via the httpOnly cookie (`api.ts`/`authService.ts` `withCredentials`, SSE too); only non-sensitive `auth_user` is cached. Login body still returns the token intentionally for non-browser clients (`AuthController.ts:99`).
-2. **🟡 `notifications/status`** is `authenticate`-only despite an "admin/manager-only" comment — add `authorize` (`notifications.ts:46`). Low impact (exposes connected-client count).
-3. **🟡 `patch-router` monkey-patch** validates a hardcoded param list — replace with explicit per-route param validators.
-4. **✅ RBAC consolidated** — single `authorize(roles)` mechanism; DB permission system + duplicate `requirePermission` removed (`084`). Authz is coarse role-based by design (single-tenant).
-
-### Schema inconsistencies (data-integrity class)
-
-- ✅ `ecritures_comptables` fork resolved (`071`/`072`, canonical 069).
-- ✅ `audit_log` fork resolved (`070`).
-- ✅ Batch/lot/serial FKs repointed to `tiers` (`074`).
-- ✅ Legacy `log_produits_stock` trigger dropped (`073`).
-- ✅ `valeur_stock` decremented on sales/transfers (`076`); all three readers use `SUM(spl.valeur_stock)`. Residual: CMP unit cost still reception-driven.
-- ✅ `ecritures_comptables.compte_numero` FK to `plan_comptable` added in `079`.
-
-### Validation gaps
-
-- ✅ `factures-fournisseur` routes now use `validateBody`.
-- Some `acomptes`/`tiers` routes still rely on service-internal validation.
-
-### Tests
-
-- **Backend:** 10 `*.test.ts` (controllers Produit/Client/Facture/AcompteFournisseur; services Facture/Reporting/CompanySettings; `server.test.ts`, `schemas.test.ts`, route `company-settings.test.ts`). Thin relative to 30 controllers / 44 services.
-- **Frontend:** 6 `*.test.tsx` (Login, Dashboard, NouvelleFacture, CompanySettings, GeneralLedger, Factures) against a **60% coverage threshold** → threshold unmet.
-- **E2E:** none. `playwright` is a frontend devDep but there is no config and no spec — unused.
-- **CI:** present (`.github/workflows/ci.yml`) but partial — backend runs typecheck+lint+test (no build); **frontend runs typecheck+build only (no lint, no test)**. So FE tests never run in CI.
-
-### Tooling / config
-
-- ✅ **Migration runner** (`migrate.mjs`) with `schema_migrations` tracking — replaces the ad-hoc hardcoded-list scripts (which still linger and should be removed).
-- ✅ **Secrets** removed from `ecosystem.config.js` (reads from env).
-- ✅ **CI** added.
-- 🟡 **Frontend has no ESLint** (eslint not a devDep, no config) — FE is unlinted and CI doesn't lint it.
-- 🟡 **FE API layer** is pervasively untyped: ~131 `Promise<any>` in `api.ts`. FE zod schemas now exist (`validation/schemas.ts`) but the data boundary is still `any`.
-- 🟡 **Duplicated axios instance** in `api.ts` and `authService.ts`.
-- 🟡 **PWA dead:** `public/sw.js` + `manifest.json` present, but `main.tsx` never registers the service worker.
-
-### Dead / duplicate code
-
-- `DepenseService.ts` (V1) still present alongside `DepenseServiceV2.ts`.
-- Legacy ad-hoc `.mjs` migration/fix scripts superseded by `migrate.mjs` but not removed.
-- ✅ Previously-flagged dead files removed: `FournisseurController`, `CaisseController`/`CaisseService` (V1), `CashVarianceController`, `CompteClientController`/`Service`, `TaxReportController`/`Service`, `TauxTvaController`/`Service`, `ComptabiliteService.ecrituresFrom*`.
-
-### Performance risks
-
-- `CommandeController.getAll` unpaginated.
-- `FactureController.export` large-row pulls.
-- `getStats` averages over all rows (Reception).
-
-### Hardcoded values
-
-- TVA = 0 across all sales/purchasing (deliberate); `XOF` currency; account numbers in `ComptabiliteService`; fabricated COGS factor in some report paths.
-
----
-
-## 5. Upgrade Roadmap (prioritized, current)
-
-Effort: **S** ≤ 0.5 day · **M** ≈ 1–3 days · **L** ≈ 1+ week.
-
-### P0 — Blocking (data integrity)
-
-| # | What | Why | Effort |
+# ERP Audit — magasinProgramme (Hitek)
+
+**Date:** 2026-07-22 · **Scope:** full repo (433 tracked files; backend 25 645 src lines, frontend 30 349) · **Method:** manifest/config review, module mapping, 4 parallel scans (dead code, outdated/insecure, refactor, UI/UX) with file:line verification; cross-checked against PLAN.md (2026-07-19) fix status. Analysis only — no source changed. Prior AUDIT.md backed up to the session scratchpad.
+Findings marked † are carried from PLAN.md's 2026-07-19 tracks (still open there, not re-verified line-by-line today).
+
+## Remediation update — 2026-07-23
+
+The current UX remediation batches have been implemented after the audit:
+
+- Backend integration tests are now guarded to disposable test databases,
+  serialized, and automatically reset before and after each run.
+- Paginated purchase orders render correctly, and paginated API envelopes are
+  explicit types instead of array metadata.
+- Normal sales flows reject zero or missing unit prices on both the backend and
+  frontend.
+- Cash sessions older than 24 hours require manager action; POS cash failures
+  now roll back instead of being swallowed.
+- The audited no-TVA terminology, core French labels, mobile inventory,
+  server-paginated receivables, ledger findability, contact/payment validation,
+  chart accessibility, and global-search/dialog accessibility were corrected.
+- Disposable role fixtures now verify every supported login, first useful read
+  path, direct authorization denial, logout revocation, and protected-route
+  rejection without touching customer data.
+- Backend 321/321 tests and frontend 49/49 tests pass; both production builds
+  and both lint commands pass.
+
+Still open before customer release: approved historical-data cleanup and KPI
+reconciliation, business-owner role UAT, the wider validation/accessibility
+sweep, and release/rollback approval. See
+`UX_REMEDIATION_PLAN_2026-07-23.md` for the tracking matrix.
+
+## 1. Executive summary
+
+1. Post-hardening core is sound: zero SQL-injection sites found (all interpolation allow-listed), every mutating route gated, DB-enforced period locks and CHECKs, CI runs the full integration suite against real Postgres.
+2. Structural debt is concentrated: god services (`BonLivraisonService` 1000 / `DevisService` 926 / `DemandeService` 836 / `CaisseMagasinService` 739 lines) and fat controllers — `TiersController` carries ~300 lines of copy-pasted acompte money transactions.
+3. Top correctness risk is mirror-twin drift: client vs fournisseur acompte/allocation flows diverge — allocation recompute runs on the AR side only, and AP has no repair engine at all.
+4. The three money/stock write paths (`FactureService`, `ReceptionService`, `DemandeService.execute`) run N+1 query loops with row locks inside transactions — contention and deadlock exposure as volume grows.
+5. Runtime is past EOL: Node 20 (EOL 2026-04-30) with no `engines` pin; express 4, vite 5, tailwind 3, react 18, react-router 6 are each ≥1 major behind; npm `xlsx` is frozen at 0.18.5.
+6. Typing collapses at the boundaries: 118 `Promise<any>` in `api.ts` (1630 lines), 481 backend / 172 frontend `: any`, heaviest exactly in payroll/accounting/tiers code.
+7. Dead-code tail is small (repo already swept twice): the POS barcode vertical slice, 4 unused permission components, and ~10 unused exports/tables/seeders remain.
+8. UI/UX: 24 raw `.toFixed(2) + ' XOF'` money renders, raw-DB-id source-document inputs on avoir/BL creation, no pagination on Commandes/GeneralLedger, 5+ pages toast-and-blank on fetch errors, keyboard/a11y gaps in `TiersPicker`/`GlobalSearch`.
+9. CI gaps: coverage thresholds configured but never evaluated (`npm test` without `--coverage`), no npm audit, no dependabot/renovate, no CodeQL; prod Postgres version unpinned vs `postgres:18` in CI.
+10. Nothing found blocks daily operation; order of attack = money-correctness clusters first, then platform updates, then consistency sweeps.
+
+## 2. REFACTOR
+
+| file path | issue | why it matters | effort | priority |
+|---|---|---|---|---|
+| backend/src/controllers/TiersController.ts | ✅ **FIXED 2026-07-22** — both ~150-line inline transactions extracted to `AcompteService.createClient`/`createFournisseur` (one parametrized core); controller is now thin with `businessStatusOf` error mapping | — | Was: untestable inline money logic, drifting twins | L | P1 |
+| backend/src/services/AcompteService.ts + db/095 | ✅ **FIXED 2026-07-22** — the real defect behind the apply/refund asymmetry was worse than logged: sync triggers (048/051) recomputed `montant_restant = montant − Σ(applications)` ignoring refunds, so a partial refund was **resurrected** by any later application event (double payout). Migration `095` adds `montant_rembourse` (both tables, backfilled) into sync + cap triggers; both refund paths now write it. Trigger-level regression test added (`AcompteRefundTracking.test.ts`) | — | Was: refunded money spendable again | M | P1 |
+| (architecture note, same cluster) | Recompute-on-apply asymmetry is **by design**, now documented in code: client allocation derives from a fund pool (`recomputeClientAllocations`), supplier side is event-sourced (application rows + triggers). No supplier recompute call needed on apply/refund | — | — | — | — |
+| backend/src/services/SupplierAllocationService.ts | ✅ **FIXED 2026-07-22** — `recomputeSupplierState` repair engine added (recomputes acompte restant/statut + facture montant_paye/statut from event rows, then FIFO-allocates freed funds; idempotent); exposed on `POST /tiers/:id/recompute-allocation?role=fournisseur` (admin) | — | Was: AP drift unrepairable | M | P1 |
+| backend/src/services/FactureService.ts | ✅ **FIXED 2026-07-22** — create() batched: one ANY() pre-check query, one ordered bulk `FOR UPDATE` (produit_id ASC, spl then legacy fallback), running-balance per-line validation (duplicate-line semantics preserved), one guarded set-based deduction per store, one unnest movements insert. Stable lock order removes the deadlock exposure | — | Was: N+1 with locks held in-loop on the money path | M | P1 |
+| backend/src/services/ReceptionService.ts | ✅ **FIXED 2026-07-22** (create path) — reception_lignes + mouvements + prix_achat sync now set-based; upfront ordered lock pass; `costedStockIn` kept per line by design (owns sequential CMP compounding). Delete-reversal loop left as-is (rare op, small N) | — | Was: ~4 queries/line where CMP is set | M | P1 |
+| backend/src/services/DemandeService.ts | ✅ **FIXED 2026-07-22** — execute() batched: ordered lock pass on source+destination, running-balance validation, bulk transfer-lines insert, one depot decrement, bulk quantite_livree update; `costedStockIn` per line unchanged | — | Was: ~5 queries/line in transfer tx | M | P1 |
+| backend/src/controllers/CommandeController.ts:10-80, 176-192 | `getAll`/`getById`/`getStats` build raw SQL in the controller, bypassing `CommandeService` | Half-thin half-fat controller; read-path logic untestable, no reuse | M | P1 |
+| backend/src/controllers/DemandeController.ts:13-184 | `getAll()` is a 171-line method hand-building two near-identical query+count strings plus inline role logic | Filter lists silently drift apart → wrong pagination totals | M | P1 |
+| backend/src/services/FactureFournisseurService.ts:325-328, 344-347 | `sousTotal += totalLigne` raw float accumulation, no per-line rounding (`PricingService.calculateTotals` does it right) | Supplier-invoice totals use a less defensive math path than client invoices | S | P1 |
+| backend/src/controllers/DemandeController.ts, DepenseControllerV2.ts, CaisseMagasinController.ts, PayrollController.ts | ✅ **FIXED 2026-07-22** — all four on the `businessStatusOf` house pattern; their services' 36 plain `throw new Error` converted to `businessError(4xx)` (Demande 19, DepenseV2 9, Caisse 8); FE-consumed codes preserved (CAISSE_FERMEE + action_required, SESSION_CLOTUREE, ECART_COMMENT_REQUIRED); message-sniffing catch blocks removed | — | Was: err.message leaks + catch-all 400s | S | P1 |
+| backend/src/services/BonLivraisonService.ts (1000 lines) | `create` ~239, `updateStatut` ~228, `convertToFacture` ~137, `delete` ~118 lines — CRUD + state machine + conversion + deletion in one class | God class on a stock+money flow; every change touches a 1000-line file | L | P2 |
+| backend/src/services/DevisService.ts (926 lines) | `create` ~259 lines (largest method in repo); near method-for-method mirror of BonLivraisonService | Same god-class shape built twice — extract a shared document engine | L | P2 |
+| backend/src/services/DemandeService.ts (836 lines) | CRUD + approval workflow + transfer execution combined | God class | L | P2 |
+| backend/src/services/CaisseMagasinService.ts (739 lines) | `cloturerSession` ~217 lines; session lifecycle + GL posting + per-user reporting mixed | God class on the cash path | L | P2 |
+| backend/src/services/TiersService.ts:189-311 vs 486-576 (and 312-485) | Three independently maintained near-copies of the tiers account-statement CTE SQL | Change-one-miss-two on customer/supplier statements | M | P2 |
+| backend/src/services/ClientAllocationService.ts:275-396 | `testAllocation()` re-implements the FIFO simulation from `recomputeClientAllocations()` (~120 dup lines, same file) | FIFO rule change in one copy = silent test/prod mismatch | M | P2 |
+| frontend/src/pages/NouveauDevis.tsx:37-108, NouvelleFacture.tsx:41-136, NouveauBonLivraison.tsx:19-86, NouvelAvoir.tsx:60-76 | Four create pages share near-identical ligne zod schema + byte-identical useDraft/beforeunload dirty-guard blocks | ~20 lines ×4 duplicated; no shared hook | M | P2 |
+| frontend/src/services/api.ts (1630 lines) | 28 hand-rolled CRUD service objects, `getById` pattern ×16, 118 `Promise<any>` | Biggest FE file is boilerplate with no type safety; needs CRUD factory + response types | L | P2 |
+| frontend/src/pages/CommandeDetail.tsx (956 lines, 18 useState) | Detail view + inline edit form + 3-way-match panel + product drawer in one component | God component, 3× sibling detail pages' size | L | P2 |
+| backend/src/services/CommandeService.ts:34-36 + frontend/src/pages/CommandeDetail.tsx:315 + Commandes.tsx:339 | Identical `qty × prix_unitaire` reduce-sum in 3 places, none cents-safe | Classic money-calc duplication | S | P2 |
+| backend/src/services/PayrollService.ts (24), controllers/TiersController.ts (17), services/ComptabiliteService.ts (16), FactureFournisseurService.ts (14), DevisService.ts (13) | Worst `: any` files of 481 backend occurrences | Payroll/tiers/accounting — the money-sensitive code — has no compile-time guardrail | M | P2 |
+| frontend/src/pages/Dashboard.tsx (21), components/DashboardDemandeWidgets.tsx (14), pages/TiersDetail.tsx (13) | Worst of 172 frontend `: any`, fed by untyped api.ts | No type safety from API layer down | M | P2 |
+| frontend/src/pages/ (40 of 49 files) | Every page hand-rolls `useEffect` + fetch + loading/error state; no shared data hook, no query lib | Loading/error/retry reinvented 40×; inflates page sizes (Inventaire 1285, Dashboard 1174) | L | P2 |
+| backend/src/controllers/ProduitController.ts:373-548 | 🟡 **PARTIAL 2026-07-22** — the 5 independent analytics queries now run in one `Promise.all` after the existence check (was 6 sequential round-trips); identical output. Still lives in the controller — the move to ProduitService/ReportingService is the remaining half | Extract to a service | M | P3 |
+| backend/src/controllers/AcompteController.ts:105-206 | 4 raw-SQL read methods bypass acompteService while writes go through it | Inconsistent layering in one controller | S | P2 |
+| frontend/src/pages/FactureDetail.tsx (719), DevisDetail.tsx, BonLivraisonDetail.tsx, AvoirDetail.tsx | Four detail pages hand-roll the same header-card + lignes-table + actions + PDF shape (list pages already share DocumentListPage.tsx) | Detail-page reuse stalled halfway | L | P2 |
+| backend (12 sites) † | Payment-method list duplicated ~12× (zod enums, `PAYMENT_METHODS`, inline `VALID_METHODS`) and diverging | One canonical const + `z.enum` | S | P2 |
+| backend (11 sites) † | Inline `nextval(` document-numbering re-implementations bypass `NumberingService` | Numbering divergence risk | M | P2 |
+| backend (6 sites) † | Same `sessions_caisse … statut='ouverte'` resolver SQL copy-pasted | One shared resolver | S | P2 |
+| backend controllers † | Response-envelope drift: raw rows / `{data}` / `{message}` variants vs standard `{ success, data, pagination }`; pagination key drift (`pages` vs `totalPages`) | FE must special-case per endpoint | M | P2 |
+| backend/src/middleware/permissions.ts, services/CaisseMagasinService.ts, services/DepenseServiceV2.ts † | Three location-access helper implementations with different fallbacks; 7 repeated `'none'→403` checks | Access-rule drift | S | P2 |
+| backend/src (~150 sites) † | Logging three ways: pino, `consoleError` wrapper, bare `console.error` | Standardize on pino; console noise in prod | M | P2 |
+| frontend/src/components/ui/print-layout.tsx:93-94 | Re-sums sousTotal client-side for print instead of using stored totals | Wrong if doc edited after totals persisted | S | P3 |
+| backend/src/services/CommandeService.ts:70-96, 148-177, 249-252 | Per-ligne INSERT/DELETE loops; repo already uses `unnest()` bulk insert (FactureService.ts:422-426) | Small-N N+1, free win | S | P3 |
+| backend/src/services/AdminUserService.ts:59-62, 140-143 | INSERT-per-location loop on role assignment | Small-N N+1 | S | P3 |
+| backend/src/services/TiersService.ts:20-53 | `solde_client_actuel`/`solde_fournisseur_actuel` cached columns selectable/sortable via API but display uses live `calculer_solde_*()` | Misleading dead columns; trap for next dev | S | P3 |
+| backend/src/controllers/ClientController.test.ts | Live, passing supertest suite for `/api/clients` — but named after a controller class that never existed | Rename to `clients.routes.test.ts`; misleads navigation | S | P3 |
+| backend/src/db/ (migrations 001..094) | Duplicate `024` number pair; chain not fresh-DB-replayable (`004`, `010 CONCURRENTLY` in tx, `001` vs `043` shapes) — baseline-only by construction † | Document baseline-only status or squash a real 001 | M | P3 |
+
+## 3. UPDATE
+
+| item | current version or pattern | recommended | breaking-change risk |
 |---|---|---|---|
-| P0-1 | ✅ **DONE** — `075` adds a `BEFORE INSERT` trigger on `ecritures_comptables`; closed (`fermee`) periods are rejected on **every** GL path (072 triggers, caisse→GL, `enregistrerPiece`, manual) | Closed fiscal periods can still receive GL postings via every non-manual path | M |
-| P0-2 | 🟡 **Partial** — `076_stock_valeur_invariant` keeps `valeur_stock` in sync on sales/transfers and all 3 readers now use `SUM(spl.valeur_stock)`. Residual: CMP **unit cost** still reception-driven | Inventory value drifts on every sale/transfer; reports, GL, and product views disagree | L |
+| Node.js runtime | ✅ **DONE 2026-07-22** — CI both jobs → Node 22; `engines: { node: ">=22" }` added to both package.json (verified `npm ci` stays in sync via `--dry-run`, warn-only so local Node 20 still installs) | — | — |
+| express (backend/package.json) | ^4.18.2 (resolved 4.22.1) | 5.x | med — `req.query` getter-only, path-to-regexp v8 route syntax; 36 routers to retest |
+| tailwindcss (frontend/package.json) | 3.4.19 | 4.x | high — CSS-first `@theme` rewrite; shadcn/tailwindcss-animate setup manual port |
+| react + react-dom | 18.3.1 | 19.x | high — verify radix/recharts/react-day-picker/RHF compat first |
+| vite | 5.4.21 | 7.x | med — needs Node 20.19+/22; plugin API tweaks |
+| react-router-dom | 6.30.3 | 7.x | med — splat/relative-path semantics, ESM-only |
+| react-day-picker | 8.10.1 | 9.x | med — modifiers/style API rewrite; bundle with React 19 move |
+| xlsx / SheetJS (only import: frontend/src/hooks/useExportExcel.ts:2) | 0.18.5 — npm registry frozen since 2023 | 0.20.x via cdn.sheetjs.com dist | med — new install source, not a semver bump |
+| date-fns | 3.6.0 | 4.x | low |
+| @types/node | ^20.10.5 (resolved 20.19.39) | ^22 | low — **deferred**: bumping the declared floor desyncs the lockfile and needs `npm install` (not run this session); types-only, do it alongside the next dependency refresh |
+| typescript (declared floor) | ^5.3.3 declared, 5.9.3 resolved in both lockfiles | declare ^5.9 | low — floor is stale/misleading only |
+| frontend/public/sw.js | ✅ **FIXED 2026-07-22** — `/api` is now network-only (no `cache.put`, no cache read); `networkFirst` replaced by `networkOnly`; `CACHE_NAME` bumped v2→v3 so the activate handler purges the old cache that may still hold financial API data | — | — |
+| frontend/src/hooks/useExportExcel.ts + frontend/src/utils/csv.ts | ✅ **FIXED 2026-07-22** — formula injection neutralized at both export sinks: `sanitizeCell` in the Excel hook and a leading-char guard folded into `escapeCell` (covers every CSV exporter — GeneralLedger, ClientAnalytics, StockValuation). Cells starting `=+-@\t\r` get a `'` prefix (quoting alone doesn't stop Excel evaluating them) | — | — |
+| backend/src/controllers/DevisController.ts, BonLivraisonController.ts, CreditNoteController.ts, EmployeController.ts | ✅ **FIXED 2026-07-22** — `limit` clamped `Math.min(200, …)` in all four | — | — |
+| backend/src/routes/fournisseurs.ts | ✅ **FIXED 2026-07-22** — POST runs legacy-shape adaptation middleware then `validateBody(createFournisseurSchema)`; PUT gets `updateFournisseurSchema` (the previously-unused aliases, now live) | — | — |
+| Admin raw-body routes | ✅ **FIXED 2026-07-22** — 7 new Zod schemas wired: demandes create/update/decide, payroll cotisation/barèmes, 3-way match-config, user-location-assignments, auth admin user-update | — | — |
+| backend/src/controllers/AuthController.ts | ✅ **FIXED 2026-07-22** — user-not-found path now runs a real cost-12 `bcrypt.compare` against a static dummy hash, equalizing latency with the wrong-password path (no more username-enumeration oracle) | — | — |
+| ecosystem.config.js | ✅ **FIXED 2026-07-22** — `DB_USER` now `requiredEnv('DB_USER')` (throws instead of the hardcoded `'mohamed'` default). `DB_PASSWORD` left pass-through: an empty password is legitimate for socket peer-auth (default `DB_HOST` is a unix socket), so it's intentionally not required | — | — |
+| .github/workflows/ci.yml (both jobs) | ✅ **PARTIAL 2026-07-22** — added `npm audit --audit-level=high` (non-blocking `continue-on-error` — advisories surface without walling off merges), `.github/dependabot.yml` (npm backend+frontend + github-actions, minor/patch grouped), `.github/workflows/codeql.yml` (javascript-typescript, security-and-quality, PR + weekly). **Coverage gate still OFF**: measured backend coverage is 23% lines / 17% branches — the 60% vitest threshold would hard-fail CI. Blocked on writing tests (P3-3, L-effort), not a config toggle | Wire the coverage gate only once real tests land | low |
+| .github/workflows/ci.yml vs prod | ✅ **DONE 2026-07-22** — CI `postgres:18` annotated as the prod-parity pin (keep in sync with the deployed server); prod PG major still needs documenting in ops notes (no repo artifact records it) | Record prod PG major in ops docs | low |
+| README.md + CLAUDE.md | README stuck in "Phase 1 COMPLETED" framing, `Node >= 18` prereq, 4/36 routers documented; CLAUDE.md claims `cookie-parser` in the stack — zero refs in backend/src and not in package.json (auth parses the cookie header manually) | Refresh both; drop the cookie-parser claim | none |
 
-### P1 — Correctness & accounting/inventory truth
+## 4. DELETE
 
-| # | What | Why | Effort |
-|---|---|---|---|
-| P1-1 | ✅ **DONE** — returns restock only on approval (`updateStatut`→`traite`); guarded state machine; cancel-of-approved reverses; all transactional | Pending/unapproved returns inflate stock | M |
-| P1-2 | ✅ **DONE** — `factures-fournisseur` routes use `validateBody` (`createFactureFournisseurSchema`, `recordFactureFournisseurPaiementSchema`) | Unvalidated line amounts → NaN/garbage AP entries | S |
-| P1-3 | ✅ **DONE** — `quantite_reservee` dropped in `078` (was half-built); no TS refs remain | Half-built reservation concept | M |
-| P1-4 | ✅ **DONE** — dormant `066/067` columns dropped in `077`; `XOF` only | Dead schema; XOF hardcoded | M |
-| P1-5 | ✅ **DONE** — `079` adds the guarded `ecritures_comptables.compte_numero` → `plan_comptable(numero)` FK | Chart-of-accounts link unenforced | S |
-| P1-6 | Confirm TVA policy: if tax will ever be needed, plan the re-introduction; otherwise remove dead `tva_taux` line fields | Dead fields imply a feature that doesn't exist | S |
+| file or function path | evidence it is unused | removal risk |
+|---|---|---|
+| backend/src/routes/pos.ts:21 + controllers/POSController.ts:42 `scanBarcode` + services/POSService.ts:92 `scanBarcode` | Whole barcode vertical slice: grep of `scanBarcode`/`pos/scan`/`barcode` across frontend/src = zero hits; no UI ever calls it | Low — alternatively wire it into CaisseV2 (product decision); table below goes with it |
+| backend/src/db/014_pos_terminal.sql:41 table `barcode_scans` | Zero TS references | Needs manual confirmation — drop requires a migration |
+| frontend/src/components/RequirePermission.tsx (`RequireAnyPermission`, `RequireAllPermissions`, `RequireLocationAccess`, `withPermission`) | ✅ **DELETED 2026-07-22** — 4 unused components removed; `RequirePermission` (the one used by DemandesList) kept | — |
+| frontend/src/hooks/usePermission.ts (`hasAnyPermission`, `hasAllPermissions`, `canAccessLocation`, `getActionState`) | ✅ **DELETED 2026-07-22** — 4 unused props removed (their only callers were the deleted components); the discarded `_canAccessLocation` destructure in StockTransfers.tsx also cleaned up. `hasPermission`/`userRole`/`userPermissions` kept | — |
+| backend/src/validation/schemas.ts `paginationSchema` / `sortQuerySchema` | ✅ **DELETED 2026-07-22** — zero refs; app uses utils/pagination.ts `parsePagination` | — |
+| ~~backend/src/validation/schemas.ts:213-214 fournisseur schema aliases~~ | ✅ No longer dead — wired into routes/fournisseurs.ts POST/PUT on 2026-07-22 (the "use instead of delete" option) | — |
+| backend/src/validation/phase3-schemas.ts `productImportSchema` | ✅ **DELETED 2026-07-22** — no bulk-import route exists | — |
+| backend/src/models/UserModel.ts `findByEmail()` | ✅ **DELETED 2026-07-22** — sole importer (AuthController) never called it | — |
+| frontend/src/lib/chartColors.ts `CHART_AXIS_TICK` | ✅ **DELETED 2026-07-22** — zero refs (siblings all used) | — |
+| frontend/src/utils/format.ts `fuzzyMatch()` | ✅ **DELETED 2026-07-22** — zero callers (`fuzzyScore` kept) | — |
+| backend/src/db/043_unified_tiers.sql:277 table `allocation_audit` | Zero references in backend/src/**/*.ts; no write path exists | Needs manual confirmation — may be intended future FIFO audit trail; wiring it beats dropping it |
+| backend/src/db/014_pos_terminal.sql:28 table `pos_cart_items` | Zero TS references; POS quick-sale flow bypasses it | Needs manual confirmation — migration to drop |
+| backend/seed-fournisseurs-excel.mjs | Not in any package.json script, ci.yml, or docs (sibling seeders are documented) | Needs manual confirmation — one-off historical importer; keep if source Excel may be re-imported |
+| backend/seed-test-data.mjs | Same: no script/CI/doc wiring anywhere | Needs manual confirmation |
+| `tiers.solde_client_actuel` / `solde_fournisseur_actuel` columns (read at backend/src/services/TiersService.ts:20,22,53) | Displayed values come from live `calculer_solde_*()` functions instead; cached columns are decorative | Needs manual confirmation — API-visible sort keys; drop requires migration + FE check |
+| `tva_taux` line fields (hardcoded 0 at backend/src/controllers/CommandeController.ts:139,141; FactureFournisseurService.ts:168,174) | TVA removed system-wide (027); fields only ever carry 0 | Needs manual confirmation — explicit no-tax policy decision documented in CLAUDE.md; dropping touches document tables |
 
-### P2 — Completeness & feature gaps
+## 5. UI/UX IMPROVEMENTS
 
-| # | What | Why | Effort |
-|---|---|---|---|
-| P2-1 | ✅ **DONE** — `082` restores `commande_id` + `three_way_match_config` (tolerance/blocage); wired in `CommandeController`, `FactureFournisseurController`/`Service`, `ReceptionService`; rapprochement UI on commande detail | No procurement control / invoice fraud surface | L |
-| P2-2 | ✅ **DONE** — enabled `CAISSE_GL_POSTING`; seeded the chart of accounts (`086`), relaxed legacy NOT NULL columns (`087`), fixed invalid journal codes. Balanced posting verified | Cash isolated from accounting by default | M |
-| P2-3 | ✅ **DONE** — consolidated to a single `authorize(roles)` model; removed the DB permission system, the in-memory matrix, the duplicate `requirePermission`, and the admin permission UI (`084`) | Permission UI is misleading; security on coarse roles | L |
-| P2-4 | ✅ **DONE** — payroll runs / payslips + CNPS/ITS statutory config (`080`/`081`, `PayrollService`/`Controller`/route) | "Feature-complete ERP" gap | L |
-| P2-5 | Pagination on `CommandeController.getAll`; stream/cap large exports | Unbounded queries | S |
-| P2-6 | ✅ **DONE** — client credit-limit enforcement (`CreditService`, all 3 credit-extension paths); reorder automation live (`produits.fournisseur_id` writable end-to-end) | Credit exposure uncontrolled; reorder feature dead | M |
+| screen or component | problem | recommended fix | user impact | priority |
+|---|---|---|---|---|
+| pages/Commandes.tsx, CommandeDetail.tsx, DevisDetail.tsx, FactureDetail.tsx, NouveauBonLivraison.tsx, NouvelAvoir.tsx | ✅ **FIXED 2026-07-22** — all 25 raw `.toFixed(2)} XOF` display sites swapped to `formatCurrency()`. Bonus bug killed in the same pass: NouveauBonLivraison line totals **and** page total multiplied by 1.19 (TVA remnant in a no-TVA system) + stale "(TTC)" label | — | Was: money misread + 19% overstated BL totals | P1 |
+| pages/NouvelAvoir.tsx, NouveauBonLivraison.tsx | ✅ **FIXED 2026-07-22** — new `components/DocumentPicker.tsx` (searchable, keyboard nav + combobox ARIA, draft-restore fallback) replaces both raw-id inputs; BL picker filters devis `statut='accepte'` and the card text now says "accepté" (matches BonLivraisonService:307) | — | Was: typo links credit note / BL to wrong doc | P1 |
+| pages/Commandes.tsx | ✅ **FIXED 2026-07-22** — server pagination + server sort (Inventaire recipe): `CommandeController.getAll` now returns `{success,data,pagination}` with a count query + allow-listed sort columns; client-side `sortedCommandes` sort removed; `<Pagination>` wired, page resets on filter/sort change | — | Was: full PO set client-sorted, unbounded | P1 |
+| pages/GeneralLedger.tsx | ✅ **FIXED 2026-07-22** — écritures tab now pages through the server-paginated endpoint (was capped at 50 with no navigation); `<Pagination>` + page/limit state; CSV export rewired to the dedicated full-export endpoint so it stays complete (with truncation warning). Balance/chart tabs left as-is (bounded by account count) | — | Was: full fiscal year, only first 50 visible | P1 |
+| pages/Tiers.tsx, Employes.tsx, AuditLog.tsx, Commandes.tsx | 🟡 **PARTIAL 2026-07-22** — StockValuation fixed (own error branch, see below); these four still toast-and-blank on fetch failure. Route through `QueryState` | Wire QueryState on the 4 remaining pages | P2 |
+| components/TiersPicker.tsx | ✅ **FIXED 2026-07-22** — full keyboard nav (Arrow/Enter/Escape, Enter suppressed while open so it can't submit the parent form) + combobox ARIA (`role=combobox`/`listbox`/`option`, `aria-activedescendant`); mirrors the DocumentPicker built in #1. Fixes every sales/purchase form at once | — | — |
+| components/GlobalSearch.tsx | ✅ **FIXED 2026-07-22** — Ctrl+K palette now Arrow/Enter navigable (keydown on the input driving `selectedIndex`) + combobox ARIA; also swapped its raw `.toFixed XOF` result subtitle to `formatCurrency` | — | — |
+| pages/TiersDetail.tsx | ✅ **FIXED 2026-07-22** — `crmSubmitting` guard on both CRM handlers + `disabled`/label on both submit buttons; double-click no longer duplicates interactions/tasks | — | — |
+| pages/DepensesV2.tsx:472-539, StockTransfers.tsx:484-532, Tiers.tsx:322-383, TiersDetail.tsx (25×), CaisseV2.tsx (8 fields) | `<Label>` without `htmlFor`, inputs without `id` — labels visual-only (newer RHF pages do this correctly) | Mechanical `id`/`htmlFor` pass | Screen readers can't associate labels; expense + transfer forms fully unlabeled | P2 |
+| pages/DemandeForm.tsx | ✅ **PARTIAL 2026-07-22** — added the beforeunload guard keyed on a non-empty cart (the cart is local state, not RHF, so full useDraft autosave/restore doesn't map cleanly — deferred). Accidental tab-close/reload now warns | Add useDraft autosave for the cart | P3 |
+| pages/StockValuation.tsx | ✅ **FIXED 2026-07-22** — added an `error` state + explicit error branch with a Réessayer button; a fetch failure no longer renders header-over-blank behind a fading toast | — | — |
+| pages/CaisseV2.tsx (1058 lines) | Zero keyboard shortcuts, zero autoFocus; every cash movement is mouse-through-dialogs | Autofocus amount field, Enter-to-submit, hotkeys for encaissement/décaissement | Slowest page relative to its daily usage frequency | P2 |
+| pages/AvoirDetail.tsx:133 + FactureDetail.tsx:356-362 vs DevisDetail.tsx:179 + CommandeDetail.tsx:834/868 | Document dates long-form on facture/avoir, short-form on devis/commande; CommandeDetail shows both formats for the same date on one page | Standardize on one of `formatDate`/`formatDateShort` for document detail pages | Same doc family looks different per module | P2 |
+| pages/Commandes.tsx:546-553 | PO line-item price is a raw `<Input type=number>`, not house `MoneyInput` (6 other modules use it) | Swap to `MoneyInput` | No digit grouping while typing big prices | P2 |
+| pages/DevisDetail.tsx:211 vs FactureDetail.tsx:419 | Copy-pasted "stock dépôt (historique)" badge missing its `dark:` classes on the Devis copy | Add matching `dark:` pair | Flat badge in dark mode on quotes only | P3 |
+| pages/Tiers.tsx:254 vs :193 | Desktop table loading is plain "Chargement..." text while the same page's mobile branch uses `ListSkeleton` | `TableSkeleton` on the desktop branch | Unpolished loading flash on wide screens | P3 |
+| pages/Inventaire.tsx:681-748 | Hand-rolled non-sticky bulk toolbar instead of shared `BulkActionBar` (used by Avoirs + DocumentListPage) | Rebuild on `<BulkActionBar>` | Bulk actions behave differently per page | P3 |
+| pages/TiersDetail.tsx:198, UserManagement.tsx:361,382, Inventaire.tsx:1054 | Hardcoded `text-gray-500`/`border-gray-300` without `dark:` pair vs semantic tokens elsewhere | Swap to semantic tokens | Contrast drift in dark mode | P3 |
+| pages/StockTransfers.tsx, Receptions.tsx, DemandesList.tsx, CaisseAudit.tsx, Comptabilite.tsx, Tresorerie.tsx | No pagination on growing transactional lists (fine at today's volume) | Add pagination while lists are still short | Future scroll/perf pain | P3 |
+| Create pages (`text-destructive` span) vs Tiers.tsx/Employes.tsx (plain `"Label *"`) | Two required-field marker conventions | Pick one, apply everywhere | Cosmetic | P3 |
+| pages/StockValuation.tsx:76-82 | Custom full-page spinner instead of house `DashboardSkeleton`; on error, body hides silently behind `{valuation && …}` | `DashboardSkeleton` + wrap body in `QueryState` | Blank page after toast fades | P3 |
+| pages/Inventaire.tsx:256-296, 986 | Single delete uses a bespoke Dialog, bulk delete uses shared `useConfirm()` — two confirm patterns in one file | Standardize on `useConfirm()` | Internal consistency | P3 |
 
-### P3 — Hardening, tests, polish
+Systemic notes: money formatting forked (canonical util vs 24 raw sites); error handling forked (QueryState pages vs toast-and-blank pages); a11y is a generation gap (RHF-era pages correct, older dialog forms not); big-list handling uneven (Inventaire fully treated, Commandes/GL untreated). Already verified healthy: zero `window.confirm`, full sonner adoption, DatePicker + chart tokens fully adopted, solid mobile drawer nav, print/PDF affordances present on all detail pages.
 
-| # | What | Why | Effort |
-|---|---|---|---|
-| P3-1 | ✅ **DONE** (browser) — SPA no longer stores the token; auth via httpOnly cookie only. Body token retained intentionally for non-browser API clients | Residual XSS token exposure | M |
-| P3-2 | Add frontend ESLint (config + devDep) and run it in CI; add FE lint+test steps to `ci.yml` | FE unlinted; FE tests never run in CI | S |
-| P3-3 | Raise test coverage to meet the 60% FE threshold; add BE service/integration tests; add Playwright E2E or drop the dep | Threshold unmet, near-zero E2E | L |
-| P3-4 | Replace `Promise<any>`/`as any` in `api.ts` with shared/generated types; dedupe the two axios instances | Type safety lost at the data boundary | M |
-| P3-5 | Register the service worker in `main.tsx` (or remove the PWA assets) | Dead PWA | S |
-| P3-6 | Remove legacy ad-hoc `.mjs` migration/fix scripts now that `migrate.mjs` exists; remove dead `DepenseService` V1 | Maintenance burden / confusion | S |
-| P3-7 | Add `authorize` to `notifications/status`; replace `patch-router` monkey-patch with explicit param validators | Minor authz + validation-bypass cleanup | S |
-| P3-8 | Reconcile README + frontend deploy story (static serving / reverse proxy) | Undocumented FE deploy | S |
+## 6. Suggested execution order
+
+1. ✅ **DONE 2026-07-22 — Money-display + doc-linkage fixes (P1 UI):** 25 `.toFixed XOF` sites → `formatCurrency`; `DocumentPicker` replaces raw-id inputs in NouvelAvoir/NouveauBonLivraison; ×1.19 TVA remnant removed from BL totals. Verified: tsc clean, eslint 0 errors, 24/24 FE tests.
+2. ✅ **DONE 2026-07-22 — Acompte cluster:** extraction into AcompteService; refund-resurrection trigger bug found and fixed (migration 095 + `montant_rembourse` writes); `recomputeSupplierState` AP repair engine + admin endpoint role param; ci-baseline regenerated. Verified: tsc clean, eslint 0 errors, **289/289 backend tests** incl. new trigger regression + service unit tests.
+3. ✅ **DONE 2026-07-22 — Money-path line loops batched:** FactureService.create, ReceptionService.create, DemandeService.execute now use ordered bulk locks + set-based writes (CMP math untouched, per-line `costedStockIn` preserved). Verified: tsc clean, eslint 0 errors, 289/289 backend tests.
+4. ✅ **DONE 2026-07-22 — Validation/error seams closed:** 7 new Zod schemas + 8 routes wired (incl. fournisseurs shim with pre-validation shape adaptation); businessError rollout to the last 4 controllers (36 service throws converted, FE error codes preserved); 4 `limit` params clamped. Verified: tsc clean, eslint 0 errors, 289/289 backend tests.
+5. ✅ **DONE 2026-07-22 — Pagination for Commandes + GeneralLedger** (server pagination + sort on the commandes endpoint; écritures paging + full CSV export). The six P3 list pages remain opportunistic. Verified: tsc clean, eslint 0 errors, 289/289 BE + 24/24 FE tests.
+6. ✅ **DONE 2026-07-22 — Platform floor (mostly):** Node 22 (CI + engines pin, npm-ci sync verified); dependabot.yml; CodeQL workflow; non-blocking npm audit; PG-pin annotation. **Deferred with reason:** @types/node bump (needs `npm install`), coverage gate (BE coverage 23% — needs tests first).
+7. ✅ **DONE 2026-07-22 — Quick security/consistency wins:** sw.js `/api` network-only + cache purge; formula-injection escaping at both export sinks (Excel hook + shared CSV `escapeCell`); ecosystem DB_USER fail-hard; timing-equalized login. Verified: tsc clean, eslint 0 errors, 289/289 BE + 24/24 FE tests, ecosystem load/throw checked.
+8. ✅ **DONE 2026-07-22 — Dead-code deletion wave:** all verified-unused §4 rows deleted (4 permission components + 4 hook props + StockTransfers discard, paginationSchema/sortQuerySchema, productImportSchema, findByEmail, CHART_AXIS_TICK, fuzzyMatch). Each re-grepped for current usage first (fournisseur schemas revived in #4 were correctly excluded). Verified: tsc clean, eslint 0 errors, 289/289 BE + 24/24 FE tests. **Still decide-first (NOT deleted):** barcode slice (wire into CaisseV2 vs delete), allocation_audit + pos_cart_items tables (wire vs migration-drop), tva_taux fields, cached solde columns, 2 seed scripts.
+9. 🟡 **PARTIAL 2026-07-22 — FE resilience + a11y:** DONE — TiersPicker + GlobalSearch keyboard/ARIA (fixes every doc-creation form), TiersDetail double-submit guards, DemandeForm beforeunload guard, StockValuation error branch. Verified: tsc clean, eslint 0 errors, 24/24 FE tests. REMAINING — QueryState on Tiers/Employes/AuditLog/Commandes; the `htmlFor`/`id` mechanical pass on DepensesV2/StockTransfers/Tiers/TiersDetail/CaisseV2; DemandeForm useDraft autosave. These are broad mechanical sweeps, best done as a focused follow-up.
+10. 🟡 **STARTED 2026-07-22 — Structural refactors, staged:** DONE — `ProduitController.getPurchaseInfo` 6 sequential queries → parallel `Promise.all` (verified 289/289 BE). REMAINING (each a distinct effort, intentionally NOT done on the current uncommitted pile): controller reads → services (Commande getById/getStats, Demande getAll, Acompte reads); the BL/Devis shared document engine (L, money-path god-services — needs a clean baseline); api.ts CRUD factory + typing; **major-version upgrades (express 5 → vite 7/router 7 → react 19 → tailwind 4) are blocked this session — they need `npm install`, which is disabled here — and must each be a separate, individually-tested effort.**
 
 ---
-
-## 6. Verification notes / `[unverified]`
-
-- Which `ecritures_comptables` columns exist in a given **deployed** DB depends on apply order; `071` reconciles forward but live state is `[unverified]` without DB access.
-- DB-trigger "keeps X in sync" claims (acompte `montant_restant`, supplier-invoice paid amounts, CMP via `065`) are asserted in migrations but not runtime-verified `[unverified]`.
-- `CAISSE_GL_POSTING` posted-leg balance verified via transactional insert (Dr/Cr equal, FK + journal CHECK satisfied); full session→movement→GL UI flow still worth a live smoke test.
-- Multi-currency conversion math `[unverified]` (columns exist, no logic to verify).
-
-*No application source, schema, migration, or config files were modified in this pass.*
+*Analysis-only audit, 2026-07-22. Prior audit content (2026-07-20 refresh) superseded by this report; working-tree copy preserved in session scratchpad. Companion docs: PLAN.md (sprint tracking), CLAUDE.md (conventions — update its cookie-parser claim per §3).*

@@ -66,8 +66,8 @@ Indexes (all verified missing post-`043` rebuild, matched to live query predicat
 - Bug: `023:114` created `idx_sessions_caisse_id` on the **wrong table** (dup of `idx_caisses_parent`) — `sessions_caisse(caisse_id)` still unindexed.
 
 Migration hygiene:
-- Fold orphan `backend/migrations/002_fuzzy_search.sql` (pg_trgm + GIN) into a tracked migration — fresh DB currently silently degrades fuzzy search to ILIKE. Delete dead `001_fifo_allocation.sql` + `scripts/run_fifo_migration.js`.
-- `src/db/schema.sql` is dead (stale since 2026-05-16: still has `clients`, TVA seeds) — delete or replace with generated `pg_dump --schema-only`.
+- ✅ Orphan fuzzy/FIFO migrations and their runners removed; `089` is now the only tracked owner of pg_trgm/index setup.
+- ✅ Dead `src/db/schema.sql` snapshot removed; CI continues to use the generated `ci-baseline.sql` dump.
 - Chain is **not fresh-DB replayable** (`004` alters `clients` no migration creates; `010` uses `CREATE INDEX CONCURRENTLY` inside a tx; `001` contradicts 043 shapes) — document baseline-only, or squash a real baseline `001`.
 - Drop orphan functions: `expire_old_lots()` (references dropped `lots`), `update_client_solde()`, `log_mouvement_stock()`.
 - `065` cmp→`prix_achat` sync is last-location-writer-wins — make weighted global average or stop syncing.
@@ -86,14 +86,14 @@ Migration hygiene:
 ### Backend refactoring (in order of payoff)
 
 1. **Extract `TiersController` acompte transactions** — two ~145-line copy-pasted inline transactions (idempotency, session resolution, acompte INSERT, caisse mouvement, ledger insert) → `AcompteService.createClient/createFournisseur` (service already owns the identical apply/refund flows). (`TiersController.ts:153-296,298-440`) — M
-2. **Single source for payment methods** — list duplicated **12×** and diverging (6 identical Zod enums + 1 divergent, `PAYMENT_METHODS` in PaiementService, 3 inline `VALID_METHODS`, stale unions in `models/Paiement.ts`/DepenseV2/CaisseMagasin). Export one const + `z.enum`. — S
+2. **Single source for payment methods** — list duplicated **12×** and diverging (6 identical Zod enums + 1 divergent, `PAYMENT_METHODS` in PaiementService, 3 inline `VALID_METHODS`, and unions in DepenseV2/CaisseMagasin). Export one const + `z.enum`. — S
 3. **NumberingService adoption** — 11 inline `nextval(` sites reimplementing `PREFIX-YYYY-#####` (two even format `transfer_numero_seq` independently — divergence risk). Extend the type map, delete the inlines. — M
 4. **Shared open-session resolver** — same `sessions_caisse ... statut='ouverte'` SQL in 6 places. — S
 5. **Move remaining reads to services**: `CommandeController` getAll/getById/getMatch/getStats, `PaiementController` reads, `AcompteController` 4 reads, `DemandeController.getAll` (~90 lines dynamic SQL ×2 for count), `ProduitController.getPurchaseInfo` (6 sequential queries → `Promise.all`), `CaisseMagasinController.recordMouvementDivers`, inline SQL in route files (`caisse.ts:50-101`, `tiers.ts:36-75`). — M
 6. **Response envelope normalization** — standard is `{ success, data, pagination }`; Paiement/Acompte/Commande/Produit controllers return raw rows/`{data}`/`{message}` variants; error envelope drift (`{error}` without `success:false`); pagination key drift (`pages` vs `totalPages`). Normalize + fix FE consumers in same pass. — M
 7. **Unify location-access helpers** (3 implementations, different fallbacks: `CaisseMagasinService.getUserMagasinRole`, `permissions.getUserLocationRole`, `DepenseServiceV2.canAccessMagasin`); move the repeated 7-site `'none'→403` check into middleware. — S
 8. **Logging**: 3-way inconsistent (pino / `consoleError` wrapper / ~150 bare `console.error`) — standardize on pino. — M
-9. **Dead code**: `services/ClientService.ts` (zero imports), `models/Paiement.ts` (never imported), unwired root `.mjs` scripts (`backfill-*`, `detect-*`, `generate-hashes`, `reset-db`, `reset-users`, `wipe-and-seed-info`), ~15 ad-hoc `backend/scripts/` check/test scripts. Delete. — S
+9. ✅ **Dead code cleanup complete (2026-07-20):** removed `ClientService`, the unused Paiement model, stale schema/docs, six unwired root tools, obsolete `db:*` repair commands, the orphan migration directory, and 15 ad-hoc check/test/fix scripts. — S
 
 ### Frontend UI/UX
 

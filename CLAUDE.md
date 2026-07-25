@@ -36,12 +36,11 @@ backend/src/
   services/      ~39 domain + data services. Extend BaseService (parameterized helpers, sort allow-list)
   routes/        33 Express routers, mounted in server.ts under /api/*
   middleware/    auth (JWT + httpOnly cookie + DB session), permissions, validation (Zod), audit, patch-router (global ID-param validation)
-  models/        Thin partial models (Paiement, UserModel)
-  db/            88 numbered .sql migrations (001..088, `024` duplicated) + schema.sql. Triggers/functions hold core logic
-                 ⚠ backend/migrations/ (001_fifo, 002_fuzzy) is a SECOND dir migrate.mjs never runs — applied out-of-band (db:fuzzy-search / scripts/run_fifo_migration.js)
+  models/        Thin UserModel
+  db/            96 numbered migration files (001..095, `024` duplicated) + CI baseline/reference dumps. Triggers/functions hold core logic
   validation/    Zod schemas (schemas.ts, phase3-schemas.ts)
 backend/migrate.mjs   ordered, tracked migration runner (schema_migrations table)
-backend/*.mjs         ~30 LEGACY ad-hoc setup/seed/fix scripts (superseded by migrate.mjs)
+backend/*.mjs         tracked migration runner + supported seed/import tools
 frontend/src/
   pages/         45 pages, all React.lazy code-split
   components/     domain components + components/ui (~29 shadcn-style primitives)
@@ -65,7 +64,7 @@ Database: PostgreSQL. Backend reads `DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME
 ```bash
 npm install
 npm run dev            # ts-node-dev, http://localhost:<PORT> (dev 6000, prod 6100)
-npm run build          # tsc → dist/
+npm run build          # clean dist/ then tsc → dist/
 npm start              # node dist/server.js
 npm run lint           # eslint src/ (backend only)
 npm run format         # prettier
@@ -78,7 +77,7 @@ node migrate.mjs --dry-run       # preview
 node migrate.mjs --baseline      # mark existing as applied without running
 node seed-data.mjs               # / seed-hitek-demo.mjs, seed-clients-excel.mjs, ...
 ```
-> `migrate.mjs` is now a real ordered, transactional runner with a `schema_migrations` tracking table. The legacy ad-hoc setup/fix `.mjs` scripts (`setup-db.mjs`, `run-migrations.mjs`, `fix-*.mjs`, ...) are **superseded** — prefer `migrate.mjs`. Highest migration is `091`. `089` = schema-integrity (financial FKs → RESTRICT, `commissions_ventes` recreated, ledger/money CHECKs, hot indexes, pg_trgm tracked); `090` = re-applies 070's audit_log reconcile (the live DB had been **baselined without executing it** — audit inserts write `user_id` and were failing silently against the legacy `utilisateur_id` column; beware other baselined-but-never-run migrations); `091` = retour/commande line-qty CHECKs + period-lock extended to INSERT/UPDATE/DELETE.
+> `migrate.mjs` is the ordered, transactional runner with a `schema_migrations` tracking table. Obsolete out-of-band migration/fix scripts and the stale `schema.sql` snapshot were removed; use `migrate.mjs` and regenerate `ci-baseline.sql` after schema changes. Highest migration is `095`. `089` = schema-integrity (financial FKs → RESTRICT, `commissions_ventes` recreated, ledger/money CHECKs, hot indexes, pg_trgm tracked); `090` = re-applies 070's audit_log reconcile (the live DB had been **baselined without executing it** — audit inserts write `user_id` and were failing silently against the legacy `utilisateur_id` column; beware other baselined-but-never-run migrations); `091` = retour/commande line-qty CHECKs + period-lock extended to INSERT/UPDATE/DELETE; `092/093` = compensation client/fournisseur symétrique et rattrapage historique; `094` = affectation FIFO automatique des acomptes fournisseur, statuts de facture et reliquats sans double comptage; `095` = colonne `montant_rembourse` (clients + fournisseurs) intégrée aux triggers de synchro/plafond des acomptes — un remboursement partiel ne peut plus être « ressuscité » par une application ultérieure (le bug pré-095 recalculait `montant_restant = montant − Σ(applications)` en ignorant les remboursements).
 
 **Frontend** (`cd frontend`)
 ```bash
@@ -130,7 +129,7 @@ Legend: ✅ Complete · 🟡 Partial · 🟥 Stub/Dead · ➖ Missing. Full evid
 - **Transactions:** multi-step writes use `pool.connect()` + `BEGIN/COMMIT/ROLLBACK`; lock contended rows with `SELECT ... FOR UPDATE`. Follow `FactureService`/`StockTransferService`/`ReturnService.updateStatut`.
 - **Numbering:** use `NumberingService` (atomic `nextval()`); don't call `nextval()` inline.
 - **Money:** stored `NUMERIC(15,2)`; round to 2 decimals; prefer SQL-side aggregation over JS float accumulation.
-- **Migrations:** add a new `NNN_*.sql` (next number after `091`) and apply with `migrate.mjs`. Don't add new ad-hoc `.mjs` fix scripts.
+- **Migrations:** add a new `NNN_*.sql` (next number after `095`) and apply with `migrate.mjs`. Don't add new ad-hoc `.mjs` fix scripts.
 - **Periods:** financial writes should call `PeriodService.checkPeriodIsOpen` for a friendly app-layer error, but the hard guarantee is the DB trigger from `075` on `ecritures_comptables` — closed periods are rejected on **every** posting path (see Known Issues).
 - **Frontend:** functional components + hooks; data fetched per-page via `useState`/`useEffect` through `services/api.ts`; no global store (Context for auth/theme only). UI from `components/ui` (shadcn-style). Toasts via `sonner` (`toast.error('Erreur ...')`). Permission-gate UI with `usePermission`/`<RequirePermission>` — treat client gating as advisory; **enforce on the server**.
 - **Audit:** mutations log via `AuditService`/`audit` middleware (writes are fire-and-forget / non-fatal).
@@ -152,7 +151,7 @@ See [AUDIT.md](AUDIT.md) for the full prioritized roadmap. Top current items (po
 - **✅ RBAC consolidated** onto the single `authorize(roles)` mechanism (role string from `roles.nom` via `utilisateurs.role_id`). The DB permission system (`056/057/058`: `permissions`/`role_permissions`/`user_permissions` + `customiser_permissions`) and the in-memory `ROLE_PERMISSIONS` matrix were removed (`084` drops the tables); `permissions.ts` retains only the `getUserLocationRole` location helper. FE `usePermission` remains as **advisory** UI gating (role-based, no server dependency).
 - **✅ Token handling** — auth is the httpOnly `auth_token` cookie (`withCredentials`); the FE caches only the non-sensitive `auth_user` in localStorage (no token). Login still returns the token in the body **intentionally** for non-browser API clients.
 - **🟡 Frontend quality** — ESLint now present and FE lint+tests run in CI, but FE tests still far below the 60% threshold; `api.ts` ~131 `Promise<any>`; duplicated axios instance (`api.ts` vs `authService.ts` — intentionally divergent interceptors); PWA service worker unregistered.
-- **🟡 Leftover** — `DepenseService` V1 CRUD pruned (only its report/category helpers remain); some legacy root `.mjs`/`.js` fix scripts removed, but the wired `db:*` fix scripts and `backend/scripts/` ad-hoc set still remain.
+- **✅ Legacy cleanup** — the V1 `DepenseService` helpers were merged into `DepenseServiceV2`; unused models/services, stale schema/docs, the orphan migration directory, and ad-hoc repair/check scripts were removed. `backend/scripts/` now contains only CI bootstrap and database backup tooling.
 
 ## Commands Reference
 
