@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict KTf2TXqmdJwE0Lng2ZabcdTeejPU0fAPkivg1mBfmYIMseuQSHCJCGeKm7z02u9
+\restrict jhxdCEUMik4hwxUOek30WTjcFS9fPBiYOstHHRyX8GVyRnrL7TAKyaqMzjGXXnh
 
 -- Dumped from database version 18.3
 -- Dumped by pg_dump version 18.3
@@ -156,12 +156,26 @@ CREATE FUNCTION public.calculer_solde_fournisseur(p_tiers_id integer) RETURNS nu
 DECLARE v_solde NUMERIC(15,2);
 BEGIN
   SELECT
-    COALESCE(SUM(ff.total),0)
-    - COALESCE((SELECT SUM(pf.montant) FROM paiements_fournisseur pf JOIN factures_fournisseur ff2 ON ff2.id = pf.facture_id WHERE ff2.tiers_id = p_tiers_id),0)
-    - COALESCE((SELECT SUM(af.montant) FROM acomptes_fournisseur af WHERE af.tiers_id = p_tiers_id AND af.statut IN ('disponible','utilise')),0)
+    COALESCE(SUM(ff.total), 0)
+    - COALESCE((
+        SELECT SUM(pf.montant)
+        FROM paiements_fournisseur pf
+        JOIN factures_fournisseur ff2 ON ff2.id = pf.facture_id
+        WHERE ff2.tiers_id = p_tiers_id
+          AND pf.deleted_at IS NULL
+      ), 0)
+    - COALESCE((
+        SELECT SUM(af.montant_restant)
+        FROM acomptes_fournisseur af
+        WHERE af.tiers_id = p_tiers_id
+          AND af.statut IN ('disponible', 'partiellement_utilise')
+          AND af.deleted_at IS NULL
+      ), 0)
   INTO v_solde
   FROM factures_fournisseur ff
-  WHERE ff.tiers_id = p_tiers_id AND ff.statut != 'annulee';
+  WHERE ff.tiers_id = p_tiers_id
+    AND ff.statut != 'annulee';
+
   RETURN COALESCE(v_solde, 0);
 END;
 $$;
@@ -576,13 +590,15 @@ CREATE FUNCTION public.enforce_acompte_application_cap() RETURNS trigger
 DECLARE
   v_total_applied NUMERIC(15,2);
   v_montant_acompte NUMERIC(15,2);
+  v_rembourse NUMERIC(15,2);
 BEGIN
   SELECT COALESCE(SUM(montant),0) INTO v_total_applied
     FROM acompte_applications WHERE acompte_id = NEW.acompte_id;
-  SELECT montant INTO v_montant_acompte
+  SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant_acompte, v_rembourse
     FROM acomptes_clients WHERE id = NEW.acompte_id;
-  IF v_total_applied > v_montant_acompte THEN
-    RAISE EXCEPTION 'Application dÃ©passe le montant de l''acompte (%/%)', v_total_applied, v_montant_acompte;
+  IF v_total_applied > v_montant_acompte - v_rembourse THEN
+    RAISE EXCEPTION 'Application dépasse le montant disponible de l''acompte (%/% dont % remboursé)',
+      v_total_applied, v_montant_acompte, v_rembourse;
   END IF;
   RETURN NEW;
 END;
@@ -599,16 +615,17 @@ CREATE FUNCTION public.enforce_acompte_fournisseur_application_cap() RETURNS tri
 DECLARE
   v_total_applied   NUMERIC(15,2);
   v_montant_acompte NUMERIC(15,2);
+  v_rembourse       NUMERIC(15,2);
 BEGIN
   SELECT COALESCE(SUM(montant),0) INTO v_total_applied
     FROM acompte_applications_fournisseur WHERE acompte_id = NEW.acompte_id;
-  SELECT montant INTO v_montant_acompte
+  SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant_acompte, v_rembourse
     FROM acomptes_fournisseur WHERE id = NEW.acompte_id;
 
-  IF v_total_applied > v_montant_acompte + 0.005 THEN
+  IF v_total_applied > v_montant_acompte - v_rembourse + 0.005 THEN
     RAISE EXCEPTION
-      'Σ(applications)=%, dépasse acompte_fournisseur #%=%',
-      v_total_applied, NEW.acompte_id, v_montant_acompte;
+      'Σ(applications)=%, dépasse le disponible de l''acompte_fournisseur #% (montant=%, remboursé=%)',
+      v_total_applied, NEW.acompte_id, v_montant_acompte, v_rembourse;
   END IF;
   RETURN NEW;
 END;
@@ -945,20 +962,21 @@ DECLARE
   v_acompte_id INTEGER;
   v_total_applied NUMERIC(15,2);
   v_montant NUMERIC(15,2);
+  v_rembourse NUMERIC(15,2);
   v_new_restant NUMERIC(15,2);
   v_new_statut VARCHAR(30);
 BEGIN
   v_acompte_id := COALESCE(NEW.acompte_id, OLD.acompte_id);
   SELECT COALESCE(SUM(montant),0) INTO v_total_applied
     FROM acompte_applications WHERE acompte_id = v_acompte_id;
-  SELECT montant INTO v_montant
+  SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant, v_rembourse
     FROM acomptes_clients WHERE id = v_acompte_id;
 
-  v_new_restant := v_montant - v_total_applied;
-  IF v_new_restant <= 0 THEN
+  v_new_restant := GREATEST(v_montant - v_total_applied - v_rembourse, 0);
+  IF v_new_restant <= 0.005 THEN
     v_new_statut := 'utilise';
     v_new_restant := 0;
-  ELSIF v_total_applied = 0 THEN
+  ELSIF v_total_applied <= 0.005 THEN
     v_new_statut := 'disponible';
   ELSE
     v_new_statut := 'partiellement_utilise';
@@ -986,27 +1004,28 @@ DECLARE
   v_acompte_id      INTEGER;
   v_total_applied   NUMERIC(15,2);
   v_montant_total   NUMERIC(15,2);
+  v_rembourse       NUMERIC(15,2);
   v_montant_restant NUMERIC(15,2);
   v_statut          VARCHAR(30);
-  v_rembourse       BOOLEAN;
+  v_deja_rembourse  BOOLEAN;
 BEGIN
   v_acompte_id := COALESCE(NEW.acompte_id, OLD.acompte_id);
 
   SELECT COALESCE(SUM(montant),0) INTO v_total_applied
     FROM acompte_applications_fournisseur WHERE acompte_id = v_acompte_id;
 
-  SELECT montant, statut = 'rembourse'
-    INTO v_montant_total, v_rembourse
+  SELECT montant, COALESCE(montant_rembourse, 0), statut = 'rembourse'
+    INTO v_montant_total, v_rembourse, v_deja_rembourse
     FROM acomptes_fournisseur WHERE id = v_acompte_id;
 
-  v_montant_restant := GREATEST(v_montant_total - v_total_applied, 0);
+  v_montant_restant := GREATEST(v_montant_total - v_total_applied - v_rembourse, 0);
 
-  IF v_rembourse THEN
+  IF v_deja_rembourse THEN
     v_statut := 'rembourse';
-  ELSIF v_total_applied <= 0.005 THEN
-    v_statut := 'disponible';
   ELSIF v_montant_restant <= 0.005 THEN
     v_statut := 'utilise';
+  ELSIF v_total_applied <= 0.005 THEN
+    v_statut := 'disponible';
   ELSE
     v_statut := 'partiellement_utilise';
   END IF;
@@ -1150,7 +1169,9 @@ BEGIN
   v_facture_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.facture_id ELSE NEW.facture_id END;
   SELECT total INTO total_due FROM factures_fournisseur WHERE id = v_facture_id;
   SELECT COALESCE(SUM(montant), 0) INTO total_paid
-  FROM paiements_fournisseur WHERE facture_id = v_facture_id;
+  FROM paiements_fournisseur
+  WHERE facture_id = v_facture_id
+    AND deleted_at IS NULL;
   UPDATE factures_fournisseur SET
     montant_paye = total_paid,
     reste_due    = total_due - total_paid,
@@ -1501,8 +1522,10 @@ CREATE TABLE public.acomptes_clients (
     date_remboursement timestamp without time zone,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     deleted_at timestamp without time zone,
+    montant_rembourse numeric(15,2) DEFAULT 0 NOT NULL,
     CONSTRAINT acomptes_clients_methode_paiement_check CHECK (((methode_paiement)::text = ANY (ARRAY[('espece'::character varying)::text, ('carte'::character varying)::text, ('cheque'::character varying)::text, ('virement'::character varying)::text, ('mobile_money'::character varying)::text, ('orange_money'::character varying)::text, ('mtn_money'::character varying)::text, ('wave'::character varying)::text, ('compensation'::character varying)::text]))),
     CONSTRAINT acomptes_clients_statut_check CHECK (((statut)::text = ANY (ARRAY[('disponible'::character varying)::text, ('partiellement_utilise'::character varying)::text, ('utilise'::character varying)::text, ('rembourse'::character varying)::text]))),
+    CONSTRAINT chk_acompte_client_rembourse CHECK (((montant_rembourse >= (0)::numeric) AND (montant_rembourse <= montant))),
     CONSTRAINT chk_acomptes_clients_montant_pos CHECK ((montant > (0)::numeric))
 );
 
@@ -1567,8 +1590,10 @@ CREATE TABLE public.acomptes_fournisseur (
     date_remboursement timestamp without time zone,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     deleted_at timestamp without time zone,
+    montant_rembourse numeric(15,2) DEFAULT 0 NOT NULL,
     CONSTRAINT acomptes_fournisseur_methode_paiement_check CHECK (((methode_paiement)::text = ANY (ARRAY[('espece'::character varying)::text, ('carte'::character varying)::text, ('cheque'::character varying)::text, ('virement'::character varying)::text, ('mobile_money'::character varying)::text, ('orange_money'::character varying)::text, ('mtn_money'::character varying)::text, ('wave'::character varying)::text, ('compensation'::character varying)::text]))),
     CONSTRAINT acomptes_fournisseur_statut_check CHECK (((statut)::text = ANY (ARRAY[('disponible'::character varying)::text, ('partiellement_utilise'::character varying)::text, ('utilise'::character varying)::text, ('rembourse'::character varying)::text]))),
+    CONSTRAINT chk_acompte_fourn_rembourse CHECK (((montant_rembourse >= (0)::numeric) AND (montant_rembourse <= montant))),
     CONSTRAINT chk_acomptes_fournisseur_montant_pos CHECK ((montant > (0)::numeric))
 );
 
@@ -3426,7 +3451,7 @@ CREATE TABLE public.paiements_fournisseur (
     deleted_at timestamp without time zone,
     CONSTRAINT chk_paiements_fournisseur_montant_pos CHECK ((montant > (0)::numeric)),
     CONSTRAINT chk_pf_source CHECK (((source)::text = ANY (ARRAY[('direct'::character varying)::text, ('acompte_application'::character varying)::text, ('reversal'::character varying)::text]))),
-    CONSTRAINT paiements_fournisseur_methode_paiement_check CHECK (((methode_paiement)::text = ANY (ARRAY[('espece'::character varying)::text, ('carte'::character varying)::text, ('cheque'::character varying)::text, ('virement'::character varying)::text, ('mobile_money'::character varying)::text, ('orange_money'::character varying)::text, ('mtn_money'::character varying)::text, ('wave'::character varying)::text])))
+    CONSTRAINT paiements_fournisseur_methode_paiement_check CHECK (((methode_paiement)::text = ANY ((ARRAY['espece'::character varying, 'carte'::character varying, 'cheque'::character varying, 'virement'::character varying, 'mobile_money'::character varying, 'orange_money'::character varying, 'mtn_money'::character varying, 'wave'::character varying, 'compensation'::character varying])::text[])))
 );
 
 
@@ -9744,8 +9769,16 @@ ALTER TABLE ONLY public.utilisateurs
 
 
 --
+-- Name: TABLE audit_log; Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON TABLE public.audit_log FROM postgres;
+GRANT SELECT,INSERT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.audit_log TO postgres;
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict KTf2TXqmdJwE0Lng2ZabcdTeejPU0fAPkivg1mBfmYIMseuQSHCJCGeKm7z02u9
+\unrestrict jhxdCEUMik4hwxUOek30WTjcFS9fPBiYOstHHRyX8GVyRnrL7TAKyaqMzjGXXnh
 

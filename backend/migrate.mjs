@@ -41,11 +41,11 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'magasin_db',
 });
 
-/** All migration files, sorted by leading numeric prefix then name. schema.sql is excluded. */
+/** All migration files, sorted by leading numeric prefix then name. */
 function listMigrations() {
   return fs
     .readdirSync(DB_DIR)
-    .filter((f) => /^\d+.*\.sql$/.test(f)) // NNN_*.sql only (skips schema.sql)
+    .filter((f) => /^\d+.*\.sql$/.test(f))
     .sort((a, b) => {
       const na = parseInt(a, 10);
       const nb = parseInt(b, 10);
