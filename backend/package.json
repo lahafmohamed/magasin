@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "description": "Backend API for magasin informatique - facturation et suivi de stock",
   "main": "dist/server.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "build": "tsc",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc",
     "start": "node dist/server.js",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --ext .ts --fix",
@@ -16,11 +20,7 @@
     "test:ci": "vitest run --coverage --reporter=verbose",
     "migrate": "node migrate.mjs",
     "migrate:status": "node migrate.mjs --status",
-    "migrate:baseline": "node migrate.mjs --baseline",
-    "db:fix-accounting-triggers": "node fix-accounting-triggers.mjs",
-    "db:fix-bl-conversion": "node fix-bl-conversion-function.mjs",
-    "db:fix-invoice-remaining-due": "node fix-invoice-remaining-due.mjs",
-    "db:fuzzy-search": "node scripts/apply-fuzzy-migration.mjs"
+    "migrate:baseline": "node migrate.mjs --baseline"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -33,7 +33,6 @@
     "pdfkit": "^0.18.0",
     "pg": "^8.11.3",
     "pino": "^10.3.1",
-    "xlsx": "^0.18.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {

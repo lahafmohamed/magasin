@@ -2,7 +2,7 @@
  * CI database bootstrap.
  *
  * The migration chain is NOT fresh-DB replayable (early migrations alter
- * tables only the long-dead schema.sql created; 010 uses CREATE INDEX
+ * tables only the former legacy schema snapshot created; 010 uses CREATE INDEX
  * CONCURRENTLY; 001's shapes contradict 043). CI therefore loads a
  * pg_dump --schema-only baseline of the real database (src/db/ci-baseline.sql,
  * regenerate after adding a migration), the reference data every code path
@@ -12,6 +12,8 @@
  *
  * Usage:  node scripts/ci-db-setup.mjs   (reads DB_* from the environment)
  * Local:  safe to point at a scratch database only — it assumes empty.
+ * Tests:  --reset-test-db drops/recreates public only after the strict test
+ *         environment/database-name guard passes.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -21,13 +23,28 @@ import bcrypt from 'bcrypt';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbDir = path.join(__dirname, '..', 'src', 'db');
+const resetTestDb = process.argv.includes('--reset-test-db');
+const databaseName = process.env.DB_NAME || 'magasin_ci';
+
+if (
+  resetTestDb &&
+  (
+    process.env.NODE_ENV !== 'test' ||
+    !(databaseName === 'magasin_ci' || databaseName.toLowerCase().endsWith('_test'))
+  )
+) {
+  console.error(
+    `ci-db-setup: refusing --reset-test-db for NODE_ENV=${process.env.NODE_ENV || '(empty)'} DB_NAME=${databaseName}`
+  );
+  process.exit(1);
+}
 
 const client = new pg.Client({
   host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT || 5432),
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
-  database: process.env.DB_NAME || 'magasin_ci',
+  database: databaseName,
 });
 
 /** Strip psql meta-commands (\restrict et al. from pg_dump 18) — not SQL. */
@@ -38,10 +55,15 @@ function loadSql(file) {
     .join('\n');
 }
 
-const { rows: guard } = await (async () => {
-  await client.connect();
-  return client.query("SELECT to_regclass('public.utilisateurs') AS t");
-})();
+await client.connect();
+
+if (resetTestDb) {
+  console.log(`Resetting disposable test schema in ${databaseName}...`);
+  await client.query('DROP SCHEMA IF EXISTS public CASCADE');
+  await client.query('CREATE SCHEMA public');
+}
+
+const { rows: guard } = await client.query("SELECT to_regclass('public.utilisateurs') AS t");
 if (guard[0].t !== null) {
   console.error('ci-db-setup: target database is not empty (utilisateurs exists) — refusing to load the baseline over it.');
   process.exit(1);

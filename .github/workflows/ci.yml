@@ -15,6 +15,8 @@ jobs:
         working-directory: backend
     services:
       postgres:
+        # Pin to the production PostgreSQL major (keep in sync with the deployed
+        # server — see ecosystem.config.js / ops docs). CI parity guard.
         image: postgres:18
         env:
           POSTGRES_USER: postgres
@@ -39,10 +41,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      # Surface known-vulnerable dependencies. Non-blocking: a fresh upstream
+      # advisory should not wall off unrelated merges — dependabot opens the fix
+      # PRs. Review the audit output in the run log.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+        continue-on-error: true
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Lint
@@ -64,10 +72,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+        continue-on-error: true
       - name: Typecheck
         run: npx tsc -b
       - name: Lint
