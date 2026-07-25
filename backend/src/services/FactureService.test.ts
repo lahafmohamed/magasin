@@ -45,8 +45,12 @@ describe('FactureService', () => {
   });
 
   afterAll(async () => {
-    // Cleanup: soft-delete test invoices, products, and client
+    // Cleanup: soft-delete test invoices, products, and client.
+    // Invoices created through FactureService are numbered FAC-YYYY-##### and so
+    // are invisible to cleanupInvoices' TEST-FAC% pattern — delete them by id or
+    // they leak into every later suite as unsettled receivables.
     await TestDB.cleanupInvoices();
+    await TestDB.deleteInvoicesByIds(createdInvoiceIds);
     await TestDB.cleanupProducts();
     await TestDB.cleanupClients();
   });

@@ -125,4 +125,34 @@ export class TestDB {
     // Delete test invoices
     await pool.query("DELETE FROM factures WHERE numero_facture LIKE 'TEST-FAC%'");
   }
+
+  /**
+   * Remove specific invoices and everything pointing at them.
+   *
+   * `cleanupInvoices` only matches the hand-written `TEST-FAC%` numbers, so
+   * invoices produced through FactureService — which numbers them `FAC-YYYY-#####`
+   * via NumberingService — were never deleted. They survived into every later
+   * suite, and any assertion about global receivables then depended on whether
+   * those leftovers happened to be settled: a suite that asserts "3 debtors"
+   * silently relied on it. Suites that create invoices through the service must
+   * pass their tracked ids here.
+   *
+   * Deletion order follows the ON DELETE RESTRICT chain from migration 089.
+   */
+  static async deleteInvoicesByIds(ids: number[]): Promise<void> {
+    if (!ids.length) return;
+
+    await pool.query('DELETE FROM acompte_applications WHERE facture_id = ANY($1::int[])', [ids]);
+    await pool.query('UPDATE acomptes_clients SET facture_id_applique = NULL WHERE facture_id_applique = ANY($1::int[])', [ids]);
+    await pool.query('DELETE FROM paiements WHERE facture_id = ANY($1::int[])', [ids]);
+    await pool.query('DELETE FROM commissions_ventes WHERE facture_id = ANY($1::int[])', [ids]);
+    await pool.query('DELETE FROM retour_lignes WHERE facture_id = ANY($1::int[])', [ids]);
+    await pool.query('UPDATE bons_livraison SET facture_id = NULL WHERE facture_id = ANY($1::int[])', [ids]);
+    await pool.query('UPDATE devis SET facture_id = NULL WHERE facture_id = ANY($1::int[])', [ids]);
+    await pool.query(
+      `DELETE FROM document_lignes WHERE document_type = 'facture' AND document_id = ANY($1::int[])`,
+      [ids]
+    );
+    await pool.query('DELETE FROM factures WHERE id = ANY($1::int[])', [ids]);
+  }
 }

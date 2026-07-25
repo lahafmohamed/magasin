@@ -3,7 +3,7 @@ import { businessError } from '../utils/errors';
 import { checkPeriodIsOpen } from './PeriodService';
 import { caisseMagasinService } from './CaisseMagasinService';
 import { ClientAllocationService } from './ClientAllocationService';
-import { PAYMENT_METHODS, PaymentMethod } from './PaiementService';
+import { PAYMENT_METHODS, PaymentMethod, toPaiementMethod } from '../utils/paymentMethods';
 import { SupplierAllocationService, SupplierAllocationResult } from './SupplierAllocationService';
 
 const CASH_METHODS: PaymentMethod[] = ['espece'];
@@ -333,7 +333,7 @@ export class AcompteService {
           reference, notes, magasin_id, source, idempotency_key, cree_par
         ) VALUES ($1,$2,$3,CURRENT_TIMESTAMP,$4,$5,$6,'acompte_application',$7,$8)
         RETURNING id`,
-        [factureId, montantNum, acompte.methode_paiement || 'espece',
+        [factureId, montantNum, toPaiementMethod(acompte.methode_paiement),
           `ACO-APP-${acompteId}`, `Application acompte #${acompteId}`,
           magasinId, idempotency_key || null, userId]
       );
@@ -352,7 +352,7 @@ export class AcompteService {
           `Application acompte #${acompteId} sur facture #${factureId}`, userId]
       );
 
-      await ClientAllocationService.recomputeClientAllocations(acompte.tiers_id, { transaction: client });
+      await ClientAllocationService.recomputeClientAllocations(acompte.tiers_id, { transaction: client, userId });
 
       await client.query('COMMIT');
       return {
@@ -434,7 +434,7 @@ export class AcompteService {
           `Remboursement acompte #${acompteId}`, userId]
       );
 
-      await ClientAllocationService.recomputeClientAllocations(acompte.tiers_id, { transaction: client });
+      await ClientAllocationService.recomputeClientAllocations(acompte.tiers_id, { transaction: client, userId });
 
       await client.query('COMMIT');
       return {
@@ -523,7 +523,7 @@ export class AcompteService {
           reference, notes, magasin_id, source, idempotency_key, effectue_par
         ) VALUES ($1,$2,$3,CURRENT_TIMESTAMP,$4,$5,$6,'acompte_application',$7,$8)
         RETURNING id`,
-        [factureId, montantNum, acompte.methode_paiement || 'espece',
+        [factureId, montantNum, toPaiementMethod(acompte.methode_paiement),
           `ACOF-APP-${acompteId}`, `Application acompte fournisseur #${acompteId}`,
           acompte.magasin_id, idempotency_key || null, userId]
       );

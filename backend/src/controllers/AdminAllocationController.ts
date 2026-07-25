@@ -1,4 +1,5 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
+import { AuthRequest } from '../middleware/auth';
 import { ClientAllocationService } from '../services/ClientAllocationService';
 import { logger } from '../utils/logger';
 
@@ -7,11 +8,11 @@ export class AdminAllocationController {
   /**
    * Recompute FIFO allocations for all clients (admin endpoint)
    */
-  static async recomputeAll(req: Request, res: Response): Promise<void> {
+  static async recomputeAll(req: AuthRequest, res: Response): Promise<void> {
     try {
       logger.info('Starting full FIFO allocation recompute (admin endpoint)');
 
-      const result = await ClientAllocationService.recomputeAllAllocations();
+      const result = await ClientAllocationService.recomputeAllAllocations(req.user?.id ?? null);
 
       logger.info('Full FIFO allocation recompute completed', { 
         clientsProcessed: result.clientsProcessed,
@@ -42,7 +43,7 @@ export class AdminAllocationController {
   /**
    * Test FIFO allocation for a specific client (dry run)
    */
-  static async testClient(req: Request, res: Response): Promise<void> {
+  static async testClient(req: AuthRequest, res: Response): Promise<void> {
     try {
       const clientId = parseInt(req.params.clientId);
       
@@ -70,7 +71,7 @@ export class AdminAllocationController {
   /**
    * Recompute FIFO allocation for a specific client (live)
    */
-  static async recomputeClient(req: Request, res: Response): Promise<void> {
+  static async recomputeClient(req: AuthRequest, res: Response): Promise<void> {
     try {
       const clientId = parseInt(req.params.clientId);
       
@@ -79,7 +80,7 @@ export class AdminAllocationController {
         return;
       }
 
-      const result = await ClientAllocationService.recomputeClientAllocations(clientId);
+      const result = await ClientAllocationService.recomputeClientAllocations(clientId, { userId: req.user?.id ?? null });
 
       res.json({
         success: true,

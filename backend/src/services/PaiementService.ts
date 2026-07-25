@@ -5,13 +5,12 @@ import { caisseMagasinService } from './CaisseMagasinService';
 import { ClientAllocationService } from './ClientAllocationService';
 import { logger } from '../utils/logger';
 import { logAudit } from '../middleware/audit';
+import { PAYMENT_METHODS, PaymentMethod } from '../utils/paymentMethods';
 
-/** Single source of truth for accepted payment methods (was duplicated 4×). */
-export const PAYMENT_METHODS = [
-  'espece', 'carte', 'cheque', 'virement',
-  'mobile_money', 'orange_money', 'mtn_money', 'wave',
-] as const;
-export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+// Payment methods now live in utils/paymentMethods so non-service layers can
+// import them without a cycle. Re-exported here for existing importers.
+export { PAYMENT_METHODS };
+export type { PaymentMethod };
 
 export interface CreatePaiementInput {
   factureId: number;
