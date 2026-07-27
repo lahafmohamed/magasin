@@ -309,6 +309,86 @@ describe('BonLivraisonService (intégration)', () => {
     expect(rows[0].n).toBe(1);
   });
 
+  // ---- Read paths, now served by the shared SalesDocumentQuery engine ----
+
+  it('liste, filtre et compte de façon cohérente', async () => {
+    const produitId = await stockedProduct(30);
+    const a = await makeBl(produitId, 1);
+    const b = await makeBl(produitId, 2);
+    await makeBl(produitId, 3);
+    await bonLivraisonService.updateStatut(a, 'livre');
+    await bonLivraisonService.updateStatut(b, 'annule');
+
+    const all = await bonLivraisonService.getAll(undefined, undefined, tiersId);
+    expect(all.data).toHaveLength(3);
+    expect(all.pagination.total).toBe(3);
+
+    const livres = await bonLivraisonService.getAll(undefined, 'livre', tiersId);
+    expect(livres.data).toHaveLength(1);
+    expect(livres.pagination.total).toBe(1);
+
+    // Le total doit suivre le filtre : c'est exactement la dérive que le moteur
+    // partagé rend impossible (une seule clause WHERE pour page et comptage).
+    const annules = await bonLivraisonService.getAll(undefined, 'annule', tiersId);
+    expect(annules.pagination.total).toBe(1);
+  });
+
+  it('pagine sans fausser le total', async () => {
+    const produitId = await stockedProduct(30);
+    await makeBl(produitId, 1);
+    await makeBl(produitId, 2);
+    await makeBl(produitId, 3);
+
+    const page1 = await bonLivraisonService.getAll(undefined, undefined, tiersId, 1, 2);
+    expect(page1.data).toHaveLength(2);
+    expect(page1.pagination).toMatchObject({ page: 1, limit: 2, total: 3, totalPages: 2 });
+
+    const page2 = await bonLivraisonService.getAll(undefined, undefined, tiersId, 2, 2);
+    expect(page2.data).toHaveLength(1);
+    expect(page2.pagination.total).toBe(3);
+  });
+
+  it('recherche par numéro de bon', async () => {
+    const produitId = await stockedProduct(10);
+    const blId = await makeBl(produitId, 1);
+    const { rows } = await pool.query('SELECT numero_bl FROM bons_livraison WHERE id = $1', [blId]);
+
+    const found = await bonLivraisonService.getAll(rows[0].numero_bl, undefined, tiersId);
+    expect(found.data).toHaveLength(1);
+    expect(found.pagination.total).toBe(1);
+    expect(found.data[0].id).toBe(blId);
+  });
+
+  it('expose le numéro de devis lié dans la liste', async () => {
+    const produitId = await stockedProduct(10);
+    await makeBl(produitId, 1);
+
+    const list = await bonLivraisonService.getAll(undefined, undefined, tiersId);
+    expect(list.data[0].numero_devis).toMatch(/^DEV-TEST-/);
+    expect(list.data[0].client_nom).toContain('TEST BL CLIENT');
+  });
+
+  it('ignore une clé de tri hors liste blanche', async () => {
+    const produitId = await stockedProduct(10);
+    await makeBl(produitId, 1);
+
+    // Ne doit pas lever : la clé inconnue retombe sur la date du document.
+    const list = await bonLivraisonService.getAll(undefined, undefined, tiersId, 1, 20, 'DROP TABLE', 'asc');
+    expect(list.data).toHaveLength(1);
+  });
+
+  it('getStats renvoie les compteurs du bon de livraison', async () => {
+    const produitId = await stockedProduct(30);
+    const a = await makeBl(produitId, 1);
+    await makeBl(produitId, 2);
+    await bonLivraisonService.updateStatut(a, 'livre');
+
+    const stats = await bonLivraisonService.getStats();
+    expect(stats.total.count).toBeGreaterThanOrEqual(2);
+    expect(stats.a_facturer.count).toBeGreaterThanOrEqual(1);
+    expect(stats.mois).toHaveProperty('montant');
+  });
+
   it('la conversion ne re-sort pas le stock', async () => {
     const produitId = await stockedProduct(10);
     const blId = await makeBl(produitId, 4);

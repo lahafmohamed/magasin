@@ -5,6 +5,7 @@ import { assertPositiveSalePrices, calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { resolveSalesLocationId } from './StockMagasinService';
 import { creditService } from './CreditService';
+import { listSalesDocuments, salesDocumentStats, SalesDocumentConfig } from './SalesDocumentQuery';
 
 export interface DevisLigneInput {
   produit_id?: number;
@@ -28,6 +29,14 @@ export interface CreateDevisInput {
   cree_par?: number;
   req?: any;
 }
+
+const DEVIS_QUERY_CONFIG: SalesDocumentConfig = {
+  table: 'devis',
+  alias: 'd',
+  numeroColumn: 'numero_devis',
+  dateColumn: 'date_devis',
+  sortColumns: ['numero_devis', 'date_devis', 'total', 'statut', 'client_nom', 'date_validite'],
+};
 
 export class DevisService {
   private normalizeStatutInput(statut: string): string {
@@ -290,91 +299,19 @@ export class DevisService {
     sort: string = 'date_devis',
     order: string = 'DESC'
   ): Promise<any> {
-    const validSortColumns = ['numero_devis', 'date_devis', 'total', 'statut', 'client_nom', 'date_validite'];
-    const sortColumn = validSortColumns.includes(sort) ? sort : 'date_devis';
-    // client_nom is a joined alias (tiers), not a devis column — qualify accordingly.
-    const sortExpr = sortColumn === 'client_nom' ? 't.raison_sociale' : `d.${sortColumn}`;
-    const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
-    const offset = (page - 1) * limit;
-
-    let query = `
-      SELECT d.*, t.raison_sociale as client_nom, t.prenom as client_prenom, sl.nom as location_nom
-      FROM devis d
-      LEFT JOIN tiers t ON d.tiers_id = t.id
-      LEFT JOIN stock_locations sl ON d.location_id = sl.id
-      WHERE d.deleted_at IS NULL
-    `;
-    const params: any[] = [];
-
-    if (search) {
-      query += ' AND (d.numero_devis ILIKE $' + (params.length + 1) + ' OR t.raison_sociale ILIKE $' + (params.length + 2) + ')';
-      params.push(`%${search}%`, `%${search}%`);
-    }
-
-    if (statut) {
-      query += ' AND d.statut = $' + (params.length + 1);
-      params.push(statut);
-    }
-
-    if (client_id) {
-      query += ' AND d.tiers_id = $' + (params.length + 1);
-      params.push(client_id);
-    }
-
-    query += ` ORDER BY ${sortExpr} ${sortOrder} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
-
-    const { rows } = await pool.query(query, params);
-
-    // Get total count
-    let countQuery = `SELECT COUNT(*) FROM devis d LEFT JOIN tiers t ON d.tiers_id = t.id WHERE d.deleted_at IS NULL`;
-    const countParams: any[] = [];
-    if (search) {
-      countQuery += ' AND (d.numero_devis ILIKE $' + (countParams.length + 1) + ' OR t.raison_sociale ILIKE $' + (countParams.length + 2) + ')';
-      countParams.push(`%${search}%`, `%${search}%`);
-    }
-    if (statut) {
-      countQuery += ' AND d.statut = $' + (countParams.length + 1);
-      countParams.push(statut);
-    }
-    if (client_id) {
-      countQuery += ' AND d.tiers_id = $' + (countParams.length + 1);
-      countParams.push(client_id);
-    }
-    const { rows: countRows } = await pool.query(countQuery, countParams);
-    const total = parseInt(countRows[0].count);
-
-    return {
-      data: rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+    return listSalesDocuments(DEVIS_QUERY_CONFIG, { search, statut, client_id, page, limit, sort, order });
   }
 
   /**
    * Aggregate KPIs for the quotes list header.
    */
   async getStats(): Promise<any> {
-    const { rows } = await pool.query(`
-      SELECT
-        COUNT(*)::int AS total_count,
-        COALESCE(SUM(total), 0) AS total_montant,
-        COUNT(*) FILTER (WHERE statut IN ('brouillon', 'envoye'))::int AS en_cours_count,
-        COUNT(*) FILTER (WHERE date_trunc('month', date_devis) = date_trunc('month', CURRENT_DATE))::int AS mois_count,
-        COALESCE(SUM(total) FILTER (WHERE date_trunc('month', date_devis) = date_trunc('month', CURRENT_DATE)), 0) AS mois_montant
-      FROM devis
-      WHERE deleted_at IS NULL
-    `);
-    const r = rows[0];
-    return {
-      total: { count: r.total_count, montant: Number(r.total_montant) },
-      en_cours: { count: r.en_cours_count },
-      mois: { count: r.mois_count, montant: Number(r.mois_montant) },
-    };
+    return salesDocumentStats({
+      table: 'devis',
+      dateColumn: 'date_devis',
+      highlightFilter: "statut IN ('brouillon', 'envoye')",
+      highlightKey: 'en_cours',
+    });
   }
 
   /**

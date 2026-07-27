@@ -5,6 +5,7 @@ import { assertPositiveSalePrices, calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { ClientAllocationService } from './ClientAllocationService';
 import { creditService } from './CreditService';
+import { listSalesDocuments, salesDocumentStats, SalesDocumentConfig } from './SalesDocumentQuery';
 
 export interface BonLivraisonLigneInput {
   produit_id?: number;
@@ -26,6 +27,16 @@ export interface CreateBonLivraisonInput {
   cree_par?: number;
   req?: any;
 }
+
+const BL_QUERY_CONFIG: SalesDocumentConfig = {
+  table: 'bons_livraison',
+  alias: 'bl',
+  numeroColumn: 'numero_bl',
+  dateColumn: 'date_bl',
+  sortColumns: ['numero_bl', 'date_bl', 'total', 'statut', 'client_nom'],
+  extraSelect: 'd.numero_devis',
+  extraJoins: 'LEFT JOIN devis d ON bl.devis_id = d.id',
+};
 
 export class BonLivraisonService {
   private normalizeStatutInput(statut: string): string {
@@ -149,93 +160,19 @@ export class BonLivraisonService {
     sort: string = 'date_bl',
     order: string = 'DESC'
   ): Promise<any> {
-    const validSortColumns = ['numero_bl', 'date_bl', 'total', 'statut', 'client_nom'];
-    const sortColumn = validSortColumns.includes(sort) ? sort : 'date_bl';
-    // client_nom is a joined alias (tiers), not a bons_livraison column — qualify accordingly.
-    const sortExpr = sortColumn === 'client_nom' ? 't.raison_sociale' : `bl.${sortColumn}`;
-    const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
-    const offset = (page - 1) * limit;
-
-    let query = `
-      SELECT bl.*, t.raison_sociale as client_nom, t.prenom as client_prenom,
-             sl.nom as location_nom, d.numero_devis
-      FROM bons_livraison bl
-      LEFT JOIN tiers t ON bl.tiers_id = t.id
-      LEFT JOIN stock_locations sl ON bl.location_id = sl.id
-      LEFT JOIN devis d ON bl.devis_id = d.id
-      WHERE bl.deleted_at IS NULL
-    `;
-    const params: any[] = [];
-
-    if (search) {
-      query += ' AND (bl.numero_bl ILIKE $' + (params.length + 1) + ' OR t.raison_sociale ILIKE $' + (params.length + 2) + ')';
-      params.push(`%${search}%`, `%${search}%`);
-    }
-
-    if (statut) {
-      query += ' AND bl.statut = $' + (params.length + 1);
-      params.push(statut);
-    }
-
-    if (client_id) {
-      query += ' AND bl.tiers_id = $' + (params.length + 1);
-      params.push(client_id);
-    }
-
-    query += ` ORDER BY ${sortExpr} ${sortOrder} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
-
-    const { rows } = await pool.query(query, params);
-
-    // Get total count
-    let countQuery = `SELECT COUNT(*) FROM bons_livraison bl LEFT JOIN tiers t ON bl.tiers_id = t.id WHERE bl.deleted_at IS NULL`;
-    const countParams: any[] = [];
-    if (search) {
-      countQuery += ' AND (bl.numero_bl ILIKE $' + (countParams.length + 1) + ' OR t.raison_sociale ILIKE $' + (countParams.length + 2) + ')';
-      countParams.push(`%${search}%`, `%${search}%`);
-    }
-    if (statut) {
-      countQuery += ' AND bl.statut = $' + (countParams.length + 1);
-      countParams.push(statut);
-    }
-    if (client_id) {
-      countQuery += ' AND bl.tiers_id = $' + (countParams.length + 1);
-      countParams.push(client_id);
-    }
-    const { rows: countRows } = await pool.query(countQuery, countParams);
-    const total = parseInt(countRows[0].count);
-
-    return {
-      data: rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
+    return listSalesDocuments(BL_QUERY_CONFIG, { search, statut, client_id, page, limit, sort, order });
   }
 
   /**
    * Aggregate KPIs for the delivery-notes list header.
    */
   async getStats(): Promise<any> {
-    const { rows } = await pool.query(`
-      SELECT
-        COUNT(*)::int AS total_count,
-        COALESCE(SUM(total), 0) AS total_montant,
-        COUNT(*) FILTER (WHERE statut = 'livre')::int AS a_facturer_count,
-        COUNT(*) FILTER (WHERE date_trunc('month', date_bl) = date_trunc('month', CURRENT_DATE))::int AS mois_count,
-        COALESCE(SUM(total) FILTER (WHERE date_trunc('month', date_bl) = date_trunc('month', CURRENT_DATE)), 0) AS mois_montant
-      FROM bons_livraison
-      WHERE deleted_at IS NULL
-    `);
-    const r = rows[0];
-    return {
-      total: { count: r.total_count, montant: Number(r.total_montant) },
-      a_facturer: { count: r.a_facturer_count },
-      mois: { count: r.mois_count, montant: Number(r.mois_montant) },
-    };
+    return salesDocumentStats({
+      table: 'bons_livraison',
+      dateColumn: 'date_bl',
+      highlightFilter: "statut = 'livre'",
+      highlightKey: 'a_facturer',
+    });
   }
 
   /**

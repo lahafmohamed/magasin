@@ -222,6 +222,68 @@ describe('DevisService (intégration)', () => {
     await expect(devisService.updateStatut(99999999, 'accepte')).rejects.toThrow(/non trouvé/);
   });
 
+  // ---- Read paths, now served by the shared SalesDocumentQuery engine ----
+
+  it('liste et compte de façon cohérente sous filtre', async () => {
+    const produitId = await product('magasin', 30);
+    const a = await makeDevis(produitId, 1);
+    await makeDevis(produitId, 2);
+    await makeDevis(produitId, 3);
+    await devisService.updateStatut(a, 'envoye');
+
+    const all = await devisService.getAll(undefined, undefined, tiersId);
+    expect(all.data).toHaveLength(3);
+    expect(all.pagination.total).toBe(3);
+
+    const envoyes = await devisService.getAll(undefined, 'envoye', tiersId);
+    expect(envoyes.data).toHaveLength(1);
+    expect(envoyes.pagination.total).toBe(1);
+  });
+
+  it('pagine sans fausser le total', async () => {
+    const produitId = await product('magasin', 30);
+    await makeDevis(produitId, 1);
+    await makeDevis(produitId, 2);
+    await makeDevis(produitId, 3);
+
+    const page1 = await devisService.getAll(undefined, undefined, tiersId, 1, 2);
+    expect(page1.data).toHaveLength(2);
+    expect(page1.pagination).toMatchObject({ page: 1, limit: 2, total: 3, totalPages: 2 });
+  });
+
+  it('recherche par numéro de devis', async () => {
+    const produitId = await product('magasin');
+    const devisId = await makeDevis(produitId, 1);
+    const { rows } = await pool.query('SELECT numero_devis FROM devis WHERE id = $1', [devisId]);
+
+    const found = await devisService.getAll(rows[0].numero_devis, undefined, tiersId);
+    expect(found.data).toHaveLength(1);
+    expect(found.data[0].id).toBe(devisId);
+    expect(found.data[0].client_nom).toContain('TEST DEVIS CLIENT');
+  });
+
+  it('accepte date_validite comme clé de tri et ignore les autres', async () => {
+    const produitId = await product('magasin', 30);
+    await makeDevis(produitId, 1);
+    await makeDevis(produitId, 2);
+
+    const sorted = await devisService.getAll(undefined, undefined, tiersId, 1, 20, 'date_validite', 'asc');
+    expect(sorted.data).toHaveLength(2);
+
+    const bogus = await devisService.getAll(undefined, undefined, tiersId, 1, 20, 'nope; DROP', 'asc');
+    expect(bogus.data).toHaveLength(2);
+  });
+
+  it('getStats renvoie les compteurs du devis', async () => {
+    const produitId = await product('magasin', 30);
+    await makeDevis(produitId, 1);
+
+    const stats = await devisService.getStats();
+    expect(stats.total.count).toBeGreaterThanOrEqual(1);
+    expect(stats.en_cours.count).toBeGreaterThanOrEqual(1);
+    expect(stats.mois).toHaveProperty('montant');
+  });
+
   it('getById renvoie le devis avec ses lignes', async () => {
     const produitId = await product('magasin');
     const devisId = await makeDevis(produitId, 3);
