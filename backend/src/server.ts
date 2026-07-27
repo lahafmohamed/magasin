@@ -150,15 +150,16 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-// 404 handler
+// 404 handler — same `{ success, error }` envelope as every other failure, so
+// the client can read one shape instead of special-casing framework-level errors.
 app.use((_req, res) => {
-  res.status(404).json({ error: 'Route non trouvée' });
+  res.status(404).json({ success: false, error: 'Route non trouvée' });
 });
 
 // Error handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error({ err }, 'Unhandled error');
-  res.status(500).json({ error: 'Erreur interne du serveur' });
+  res.status(500).json({ success: false, error: 'Erreur interne du serveur' });
 });
 
 if (process.env.NODE_ENV !== 'test') {

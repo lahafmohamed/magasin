@@ -5,6 +5,7 @@ import { businessStatusOf } from '../utils/errors';
 import { commandeService } from '../services/CommandeService';
 import { factureFournisseurService } from '../services/FactureFournisseurService';
 import { pdfService } from '../services/PDFService';
+import { successResponse } from '../utils/response';
 
 export class CommandeController {
 
@@ -69,7 +70,7 @@ export class CommandeController {
       });
     } catch (error) {
       console.error('Erreur GET /api/commandes:', error);
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -86,7 +87,7 @@ export class CommandeController {
       );
 
       if (commandeRows.length === 0) {
-        res.status(404).json({ error: 'Commande non trouvée' });
+        res.status(404).json({ success: false, error: 'Commande non trouvée' });
         return;
       }
 
@@ -98,13 +99,13 @@ export class CommandeController {
         [id]
       );
 
-      res.json({
+      successResponse(res, {
         ...commandeRows[0],
-        lignes: lignesRows
+        lignes: lignesRows,
       });
     } catch (error) {
       console.error('Erreur GET /api/commandes/:id:', error);
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -121,18 +122,18 @@ export class CommandeController {
     } catch (error: any) {
       console.error('Erreur POST /api/commandes:', error);
       const status = businessStatusOf(error);
-      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
   static async updateStatut(req: Request, res: Response): Promise<void> {
     try {
       await commandeService.updateStatut(Number(req.params.id), req.body.statut);
-      res.json({ message: 'Statut mis à jour' });
+      successResponse(res, null, 'Statut mis à jour');
     } catch (error: any) {
       console.error('Erreur PUT /api/commandes/:id/statut:', error);
       const status = businessStatusOf(error);
-      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -144,22 +145,22 @@ export class CommandeController {
         notes: req.body.notes,
         date_livraison_prevue: req.body.date_livraison_prevue,
       });
-      res.json({ message: 'Commande mise à jour avec succès' });
+      successResponse(res, null, 'Commande mise à jour avec succès');
     } catch (error: any) {
       console.error('Erreur PUT /api/commandes/:id:', error);
       const status = businessStatusOf(error);
-      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur lors de la mise à jour' });
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur lors de la mise à jour' });
     }
   }
 
   static async delete(req: Request, res: Response): Promise<void> {
     try {
       await commandeService.delete(Number(req.params.id), (req as AuthRequest).user?.id || null, req);
-      res.json({ message: 'Commande supprimée' });
+      successResponse(res, null, 'Commande supprimée');
     } catch (error: any) {
       console.error('Erreur DELETE /api/commandes/:id:', error);
       const status = businessStatusOf(error);
-      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -179,13 +180,13 @@ export class CommandeController {
         [id]
       );
       if (cmdRows.length === 0) {
-        res.status(404).json({ error: 'Commande non trouvée' });
+        res.status(404).json({ success: false, error: 'Commande non trouvée' });
         return;
       }
 
       const match = await factureFournisseurService.computeMatch(parseInt(id));
 
-      res.json({
+      successResponse(res, {
         commande_id: cmdRows[0].id,
         numero_commande: cmdRows[0].numero_commande,
         statut: cmdRows[0].statut,
@@ -198,7 +199,7 @@ export class CommandeController {
       });
     } catch (error) {
       console.error('Erreur GET /api/commandes/:id/match:', error);
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -213,10 +214,10 @@ export class CommandeController {
           COUNT(*) FILTER (WHERE statut = 'annulee') as annulee
          FROM commandes_fournisseur`
       );
-      res.json(rows[0]);
+      successResponse(res, rows[0]);
     } catch (error) {
       console.error('Erreur GET /api/commandes/stats:', error);
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 

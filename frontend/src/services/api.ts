@@ -372,11 +372,11 @@ export const tiersService = {
 export const acompteService = {
   getById: async (id: number): Promise<any> => {
     const { data } = await api.get(`/acomptes/${id}`);
-    return data?.data || data;
+    return data;
   },
   listApplications: async (id: number): Promise<any[]> => {
     const { data } = await api.get(`/acomptes/${id}/applications`);
-    return data?.data || [];
+    return data ?? [];
   },
   apply: async (id: number, payload: { facture_id: number; montant: number; idempotency_key?: string }): Promise<any> => {
     const { data } = await api.post(`/acomptes/${id}/apply`, payload);
@@ -393,9 +393,12 @@ export const acompteService = {
     return data;
   },
   listForClient: async (tiersId: number): Promise<any[]> => {
-    // Reuses /api/comptes/:id/acomptes/disponibles for active-only list
+    // Reuses /api/comptes/:id/acomptes/disponibles for active-only list.
+    // The endpoint returns the standard envelope, so the response interceptor
+    // has already unwrapped it to the array — reading `.data` again yielded
+    // undefined and silently emptied the list.
     const { data } = await api.get(`/comptes/${tiersId}/acomptes/disponibles`);
-    return data?.data || [];
+    return data ?? [];
   },
 };
 
@@ -403,11 +406,11 @@ export const acompteService = {
 export const acompteFournisseurService = {
   getById: async (id: number): Promise<any> => {
     const { data } = await api.get(`/acomptes/fournisseur/${id}`);
-    return data?.data || data;
+    return data;
   },
   listApplications: async (id: number): Promise<any[]> => {
     const { data } = await api.get(`/acomptes/fournisseur/${id}/applications`);
-    return data?.data || [];
+    return data ?? [];
   },
   apply: async (id: number, payload: { facture_id: number; montant: number; idempotency_key?: string }): Promise<any> => {
     const { data } = await api.post(`/acomptes/fournisseur/${id}/apply`, payload);
@@ -425,7 +428,7 @@ export const acompteFournisseurService = {
   },
   listForFournisseur: async (tiersId: number): Promise<any[]> => {
     const { data } = await api.get(`/tiers/${tiersId}/acomptes-fournisseur/disponibles`);
-    return data?.data || [];
+    return data ?? [];
   },
 };
 

@@ -311,7 +311,7 @@ export class ProduitController {
     try {
       const { page, limit } = parsePagination(req.query);
       const result = await produitService.getAll(undefined, undefined, true, { page, limit, sort: 'p.nom', order: 'ASC' });
-      res.json(result);
+      successResponse(res, result.data, undefined, result.pagination);
     } catch (error) {
       loggerError('GET /api/produits/alertes-stock', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });

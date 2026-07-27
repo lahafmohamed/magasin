@@ -4,6 +4,7 @@ import { acompteService } from '../services/AcompteService';
 import { businessStatusOf } from '../utils/errors';
 import { AuthRequest } from '../middleware/auth';
 import { logger } from '../utils/logger';
+import { successResponse } from '../utils/response';
 
 /**
  * Thin HTTP layer over AcompteService (client + fournisseur apply/refund).
@@ -14,7 +15,7 @@ export class AcompteController {
   private static respondError(res: Response, err: any, context: string): void {
     logger.error({ err }, context);
     const status = businessStatusOf(err);
-    res.status(status ?? 500).json({ error: status ? err.message : 'Erreur serveur' });
+    res.status(status ?? 500).json({ success: false, error: status ? err.message : 'Erreur serveur' });
   }
 
   /**
@@ -113,10 +114,10 @@ export class AcompteController {
          ORDER BY app.date_application ASC`,
         [acompteId]
       );
-      res.json({ data: rows });
+      successResponse(res, rows);
     } catch (err: any) {
       logger.error({ err }, 'Erreur lecture acompte');
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -134,10 +135,10 @@ export class AcompteController {
          ORDER BY app.date_application ASC`,
         [acompteId]
       );
-      res.json({ data: rows });
+      successResponse(res, rows);
     } catch (err: any) {
       logger.error({ err }, 'Erreur lecture acompte');
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -155,7 +156,7 @@ export class AcompteController {
         [id]
       );
       if (rows.length === 0) {
-        res.status(404).json({ error: 'Acompte fournisseur introuvable' });
+        res.status(404).json({ success: false, error: 'Acompte fournisseur introuvable' });
         return;
       }
       const { rows: apps } = await pool.query(
@@ -166,10 +167,10 @@ export class AcompteController {
          ORDER BY app.date_application ASC`,
         [id]
       );
-      res.json({ data: { ...rows[0], applications: apps } });
+      successResponse(res, { ...rows[0], applications: apps });
     } catch (err: any) {
       logger.error({ err }, 'Erreur lecture acompte');
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -187,7 +188,7 @@ export class AcompteController {
         [id]
       );
       if (rows.length === 0) {
-        res.status(404).json({ error: 'Acompte introuvable' });
+        res.status(404).json({ success: false, error: 'Acompte introuvable' });
         return;
       }
       const { rows: apps } = await pool.query(
@@ -198,10 +199,10 @@ export class AcompteController {
          ORDER BY app.date_application ASC`,
         [id]
       );
-      res.json({ data: { ...rows[0], applications: apps } });
+      successResponse(res, { ...rows[0], applications: apps });
     } catch (err: any) {
       logger.error({ err }, 'Erreur lecture acompte');
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

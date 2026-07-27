@@ -6,6 +6,7 @@ import { logger } from '../utils/logger';
 import { paiementService } from '../services/PaiementService';
 import { pdfService } from '../services/PDFService';
 import { AuthRequest } from '../middleware/auth';
+import { successResponse } from '../utils/response';
 
 /**
  * Thin HTTP layer over PaiementService: parse the request, call the service,
@@ -22,7 +23,7 @@ export class PaiementController {
       // Support both /factures/:factureId/paiements and standalone /paiements (facture_id in body)
       const factureId = req.params.factureId ?? (req.body.facture_id != null ? String(req.body.facture_id) : undefined);
       if (!factureId || Number.isNaN(Number(factureId))) {
-        res.status(400).json({ error: 'facture_id requis' });
+        res.status(400).json({ success: false, error: 'facture_id requis' });
         return;
       }
 
@@ -48,7 +49,7 @@ export class PaiementController {
     } catch (error: any) {
       logger.error({ err: error }, 'Erreur POST /api/factures/:factureId/paiements');
       const status = businessStatusOf(error);
-      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -66,7 +67,7 @@ export class PaiementController {
       );
 
       if (factureRows.length === 0) {
-        res.status(404).json({ error: 'Facture non trouvée' });
+        res.status(404).json({ success: false, error: 'Facture non trouvée' });
         return;
       }
 
@@ -75,10 +76,10 @@ export class PaiementController {
         [factureId]
       );
 
-      res.json(rows);
+      successResponse(res, rows);
     } catch (error) {
       logger.error({ err: error }, 'Erreur GET /api/factures/:factureId/paiements');
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -146,18 +147,15 @@ export class PaiementController {
       const { rows: countRows } = await pool.query(countQuery, countParams);
       const total = parseInt(countRows[0].count);
 
-      res.json({
-        data: rows,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          totalPages: Math.ceil(total / limitNum),
-        }
+      successResponse(res, rows, undefined, {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum),
       });
     } catch (error) {
       logger.error({ err: error }, 'Erreur GET /api/paiements');
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -195,15 +193,15 @@ export class PaiementController {
          FROM paiements`
       );
 
-      res.json({
+      successResponse(res, {
         par_methode: parMethode,
         mois_actuel: moisActuel[0],
         aujourdhui: aujourdhui[0],
-        moyenne: moyenne[0]
+        moyenne: moyenne[0],
       });
     } catch (error) {
       logger.error({ err: error }, 'Erreur GET /api/paiements/stats');
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -220,11 +218,11 @@ export class PaiementController {
         notes: req.body.notes,
         date_paiement: req.body.date_paiement,
       }, userId);
-      res.json({ message: 'Paiement mis à jour et allocation FIFO recalculée' });
+      successResponse(res, null, 'Paiement mis à jour et allocation FIFO recalculée');
     } catch (error: any) {
       logger.error({ err: error }, 'Erreur PUT /api/paiements/:id');
       const status = businessStatusOf(error);
-      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
@@ -235,11 +233,11 @@ export class PaiementController {
     try {
       const userId = (req as AuthRequest).user?.id || null;
       await paiementService.delete(Number(req.params.id), userId);
-      res.json({ message: 'Paiement supprimé et allocation FIFO recalculée' });
+      successResponse(res, null, 'Paiement supprimé et allocation FIFO recalculée');
     } catch (error: any) {
       logger.error({ err: error }, 'Erreur DELETE /api/paiements/:id');
       const status = businessStatusOf(error);
-      res.status(status ?? 500).json({ error: status ? error.message : 'Erreur serveur' });
+      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
     }
   }
 
