@@ -61,10 +61,14 @@ export class ReturnService {
 
         // Check previously returned quantity
         const { rows: returnedRows } = await client.query(
+          // facture_id lives on retour_lignes, not retours. Filtering `r.facture_id`
+          // raised "column r.facture_id does not exist" on every single create —
+          // customer returns could never be recorded. The join is inner in effect
+          // (the WHERE requires the parent row), so it is written as one.
           `SELECT COALESCE(SUM(rl.quantite), 0) as total_retour
            FROM retour_lignes rl
-           LEFT JOIN retours r ON rl.retour_id = r.id
-           WHERE rl.produit_id = $1 AND r.tiers_id = $2 AND r.facture_id = $3 AND r.statut != 'annule'`,
+           JOIN retours r ON rl.retour_id = r.id
+           WHERE rl.produit_id = $1 AND r.tiers_id = $2 AND rl.facture_id = $3 AND r.statut != 'annule'`,
           [ligne.produit_id, client_id, ligne.facture_id]
         );
 
@@ -266,11 +270,16 @@ export class ReturnService {
         } else {
           // Cancel-of-approved: removal at cmp — plain decrement keeps cmp,
           // 076 keeps valeur_stock in sync.
+          //
+          // Must be a straight UPDATE, not an upsert: the row always exists
+          // (approval created it), and the upsert's proposed tuple carried the
+          // negative delta as an absolute quantity, tripping
+          // stock_par_location_quantite_check before the conflict could resolve.
+          // Cancelling an approved return therefore always failed.
           await client.query(
-            `INSERT INTO stock_par_location (produit_id, location_id, quantite)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (produit_id, location_id)
-             DO UPDATE SET quantite = stock_par_location.quantite + $3`,
+            `UPDATE stock_par_location
+             SET quantite = quantite + $3
+             WHERE produit_id = $1 AND location_id = $2`,
             [ligne.produit_id, locationId, qty]
           );
         }
