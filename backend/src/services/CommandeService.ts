@@ -25,12 +25,140 @@ export interface UpdateCommandeInput {
   date_livraison_prevue?: string;
 }
 
+export interface CommandeListOptions {
+  statut?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+  sort?: string;
+  order?: string;
+}
+
 /**
- * Commande fournisseur transaction orchestration: order + auto-created draft
- * facture fournisseur are written together and kept in sync while the invoice
- * is still 'en_attente'. Business rules throw businessError (4xx).
+ * Commande fournisseur orchestration: reads (list/detail/match/stats) plus the
+ * transactional writes — order and auto-created draft facture fournisseur are
+ * written together and kept in sync while the invoice is still 'en_attente'.
+ * Business rules throw businessError (4xx).
  */
 export class CommandeService {
+
+  /** Allow-listed sort keys (frontend key → SQL column). Never interpolate raw input. */
+  private static readonly SORT_COLUMNS: Record<string, string> = {
+    numero: 'c.numero_commande',
+    date: 'c.date_commande',
+    montant: 'c.sous_total',
+    livraison: 'c.date_livraison_prevue',
+  };
+
+  /**
+   * Paginated order list. The read paths used to live in CommandeController as
+   * raw pool.query calls, so the list, detail, match and stats reads bypassed
+   * this service entirely and could not be reused or tested.
+   */
+  async getAll(options: CommandeListOptions = {}): Promise<{
+    data: any[]; total: number; page: number; limit: number;
+  }> {
+    const limit = Math.min(200, Math.max(1, options.limit || 20));
+    const page = Math.max(1, options.page || 1);
+    const offset = (page - 1) * limit;
+
+    const sortColumn = CommandeService.SORT_COLUMNS[options.sort || ''] || 'c.date_commande';
+    const sortOrder = options.order?.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+
+    const filters: string[] = ['1=1'];
+    const params: any[] = [];
+
+    if (options.statut) {
+      filters.push(`c.statut = $${params.length + 1}`);
+      params.push(options.statut);
+    }
+    if (options.search) {
+      filters.push(
+        `(c.numero_commande ILIKE $${params.length + 1} OR t.raison_sociale ILIKE $${params.length + 2})`
+      );
+      params.push(`%${options.search}%`, `%${options.search}%`);
+    }
+    const whereClause = filters.join(' AND ');
+
+    const dataParams = [...params, limit, offset];
+    const [{ rows: countRows }, { rows }] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*)::int AS total
+         FROM commandes_fournisseur c
+         LEFT JOIN tiers t ON c.tiers_id = t.id
+         WHERE ${whereClause}`,
+        params
+      ),
+      pool.query(
+        `SELECT c.*, t.raison_sociale as fournisseur_nom
+         FROM commandes_fournisseur c
+         LEFT JOIN tiers t ON c.tiers_id = t.id
+         WHERE ${whereClause}
+         ORDER BY ${sortColumn} ${sortOrder} NULLS LAST, c.id DESC
+         LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+        dataParams
+      ),
+    ]);
+
+    return { data: rows, total: countRows[0]?.total ?? 0, page, limit };
+  }
+
+  /** One order with its lines, or null when it does not exist. */
+  async getById(id: number): Promise<any | null> {
+    const { rows: commandeRows } = await pool.query(
+      `SELECT c.*, t.raison_sociale as fournisseur_nom, t.telephone as fournisseur_telephone, t.email as fournisseur_email
+       FROM commandes_fournisseur c
+       LEFT JOIN tiers t ON c.tiers_id = t.id
+       WHERE c.id = $1`,
+      [id]
+    );
+    if (commandeRows.length === 0) return null;
+
+    const { rows: lignesRows } = await pool.query(
+      `SELECT cl.*, p.nom as produit_nom, p.reference as produit_reference, p.stock as stock, p.stock_min as stock_min
+       FROM commande_lignes cl
+       LEFT JOIN produits p ON cl.produit_id = p.id
+       WHERE cl.commande_id = $1`,
+      [id]
+    );
+
+    return { ...commandeRows[0], lignes: lignesRows };
+  }
+
+  /** Order header fields needed alongside a 3-way match result. */
+  async getMatchHeader(id: number): Promise<any | null> {
+    const { rows } = await pool.query(
+      `SELECT c.id, c.numero_commande, c.statut, t.raison_sociale as fournisseur_nom
+       FROM commandes_fournisseur c
+       LEFT JOIN tiers t ON c.tiers_id = t.id
+       WHERE c.id = $1`,
+      [id]
+    );
+    return rows[0] ?? null;
+  }
+
+  /** Order number for a live (non-deleted) order — used for the PDF filename. */
+  async getNumero(id: number): Promise<string | null> {
+    const { rows } = await pool.query(
+      'SELECT numero_commande FROM commandes_fournisseur WHERE id = $1 AND deleted_at IS NULL',
+      [id]
+    );
+    return rows[0]?.numero_commande ?? null;
+  }
+
+  /** Order counts per status. */
+  async getStats(): Promise<any> {
+    const { rows } = await pool.query(
+      `SELECT
+        COUNT(*) FILTER (WHERE statut = 'en_attente') as en_attente,
+        COUNT(*) FILTER (WHERE statut = 'validee') as validee,
+        COUNT(*) FILTER (WHERE statut = 'expediee') as expediee,
+        COUNT(*) FILTER (WHERE statut = 'livree') as livree,
+        COUNT(*) FILTER (WHERE statut = 'annulee') as annulee
+       FROM commandes_fournisseur`
+    );
+    return rows[0];
+  }
 
   /**
    * Rounded per-line totals and their sum.

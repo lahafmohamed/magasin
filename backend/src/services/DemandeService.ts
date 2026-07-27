@@ -38,9 +38,20 @@ export interface DemandeDecisionInput {
 
 export interface DemandeFilters {
     statut?: string;
+    /** Any-of status filter (depot staff default to the actionable states). */
+    statuts?: string[];
     magasin_id?: number;
     depot_id?: number;
+    /** Restrict to a set of stores — a user's assigned magasins. */
+    magasin_ids?: number[];
+    /** Restrict to a set of depots — a user's assigned depots. */
+    depot_ids?: number[];
     created_by_user_id?: number;
+    /**
+     * Store staff see their own requests OR anything for their stores; the two
+     * are OR-ed, so they cannot be expressed as separate filters.
+     */
+    created_by_or_magasin_ids?: { userId: number; magasinIds: number[] };
     date_from?: Date;
     date_to?: Date;
     page?: number;
@@ -57,12 +68,56 @@ export class DemandeService {
     // QUERIES
     // ============================================
 
+    /**
+     * Build the WHERE clause once, for both the page query and its count.
+     *
+     * These were two hand-maintained lists that had already diverged: the data
+     * query filtered on date_creation and the count query did not, so any
+     * date-filtered page reported a total for the *unfiltered* set — too many
+     * pages, the surplus ones empty. DemandeController then hand-built a third
+     * copy that honoured no dates at all. One builder makes the two provably
+     * agree.
+     */
+    private buildFilterClause(options: DemandeFilters): { clause: string; params: any[] } {
+        const params: any[] = [];
+        let clause = '';
+        const add = (sql: string, ...values: any[]) => {
+            clause += ` AND ${sql}`;
+            params.push(...values);
+        };
+
+        if (options.statut) add(`d.statut = $${params.length + 1}`, options.statut);
+        if (options.statuts?.length) add(`d.statut = ANY($${params.length + 1})`, options.statuts);
+        if (options.magasin_id) add(`d.magasin_id = $${params.length + 1}`, options.magasin_id);
+        if (options.magasin_ids?.length) add(`d.magasin_id = ANY($${params.length + 1})`, options.magasin_ids);
+        if (options.depot_id) add(`d.depot_id = $${params.length + 1}`, options.depot_id);
+        if (options.depot_ids?.length) add(`d.depot_id = ANY($${params.length + 1})`, options.depot_ids);
+
+        if (options.created_by_or_magasin_ids) {
+            const { userId, magasinIds } = options.created_by_or_magasin_ids;
+            add(
+                `(d.created_by_user_id = $${params.length + 1} OR d.magasin_id = ANY($${params.length + 2}))`,
+                userId,
+                magasinIds
+            );
+        } else if (options.created_by_user_id) {
+            add(`d.created_by_user_id = $${params.length + 1}`, options.created_by_user_id);
+        }
+
+        if (options.date_from) add(`d.date_creation >= $${params.length + 1}`, options.date_from);
+        if (options.date_to) add(`d.date_creation <= $${params.length + 1}`, options.date_to);
+
+        return { clause, params };
+    }
+
     async getAll(options: DemandeFilters = {}): Promise<{ data: any[]; total: number }> {
         const page = options.page || 1;
         const limit = options.limit || 20;
         const offset = (page - 1) * limit;
 
-        let query = `
+        const { clause, params } = this.buildFilterClause(options);
+
+        const query = `
             SELECT d.*,
                    m.nom AS magasin_nom, m.code AS magasin_code,
                    dp.nom AS depot_nom, dp.code AS depot_code,
@@ -79,76 +134,25 @@ export class DemandeService {
             LEFT JOIN utilisateurs u3 ON d.executed_by_user_id = u3.id
             LEFT JOIN utilisateurs u4 ON d.closed_by_user_id = u4.id
             LEFT JOIN stock_transfers st ON d.transfert_id = st.id
-            WHERE 1=1
+            WHERE 1=1${clause}
+            ORDER BY d.date_creation DESC
+            LIMIT $${params.length + 1} OFFSET $${params.length + 2}
         `;
-        
-        const params: any[] = [];
 
-        if (options.statut) {
-            query += ` AND d.statut = $${params.length + 1}`;
-            params.push(options.statut);
-        }
-
-        if (options.magasin_id) {
-            query += ` AND d.magasin_id = $${params.length + 1}`;
-            params.push(options.magasin_id);
-        }
-
-        if (options.depot_id) {
-            query += ` AND d.depot_id = $${params.length + 1}`;
-            params.push(options.depot_id);
-        }
-
-        if (options.created_by_user_id) {
-            query += ` AND d.created_by_user_id = $${params.length + 1}`;
-            params.push(options.created_by_user_id);
-        }
-
-        if (options.date_from) {
-            query += ` AND d.date_creation >= $${params.length + 1}`;
-            params.push(options.date_from);
-        }
-
-        if (options.date_to) {
-            query += ` AND d.date_creation <= $${params.length + 1}`;
-            params.push(options.date_to);
-        }
-
-        query += ' ORDER BY d.date_creation DESC';
-        query += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-        params.push(limit, offset);
-
-        const { rows } = await pool.query(query, params);
-
-        // Get total count
-        let countQuery = `
-            SELECT COUNT(*) as total 
+        // The count needs no joins: magasin_id and depot_id are NOT NULL foreign
+        // keys, so the inner joins above can never drop a row.
+        const countQuery = `
+            SELECT COUNT(*) AS total
             FROM demandes_reapprovisionnement d
-            WHERE 1=1
+            WHERE 1=1${clause}
         `;
-        const countParams: any[] = [];
 
-        if (options.statut) {
-            countQuery += ` AND d.statut = $${countParams.length + 1}`;
-            countParams.push(options.statut);
-        }
-        if (options.magasin_id) {
-            countQuery += ` AND d.magasin_id = $${countParams.length + 1}`;
-            countParams.push(options.magasin_id);
-        }
-        if (options.depot_id) {
-            countQuery += ` AND d.depot_id = $${countParams.length + 1}`;
-            countParams.push(options.depot_id);
-        }
-        if (options.created_by_user_id) {
-            countQuery += ` AND d.created_by_user_id = $${countParams.length + 1}`;
-            countParams.push(options.created_by_user_id);
-        }
+        const [{ rows }, { rows: countRows }] = await Promise.all([
+            pool.query(query, [...params, limit, offset]),
+            pool.query(countQuery, params),
+        ]);
 
-        const { rows: countRows } = await pool.query(countQuery, countParams);
-        const total = parseInt(countRows[0].total, 10);
-
-        return { data: rows, total };
+        return { data: rows, total: parseInt(countRows[0].total, 10) };
     }
 
     async getById(id: number): Promise<any | null> {

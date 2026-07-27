@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { demandeService } from '../services/DemandeService';
+import { demandeService, DemandeFilters } from '../services/DemandeService';
 import { successResponse, paginatedResponse } from '../utils/response';
 import { AuthRequest } from '../middleware/auth';
 import { getUserLocationRole } from '../middleware/permissions';
@@ -7,6 +7,16 @@ import { businessStatusOf } from '../utils/errors';
 import pool from '../db/connection';
 
 export class DemandeController {
+    /** Location ids this user holds one of the given roles at. */
+    private static async assignedLocations(userId: number, roles: string[]): Promise<number[]> {
+        const { rows } = await pool.query(
+            `SELECT location_id FROM user_location_roles
+             WHERE utilisateur_id = $1 AND role_at_location = ANY($2)`,
+            [userId, roles]
+        );
+        return rows.map((r) => r.location_id);
+    }
+
     // ============================================
     // LIST - Role-based filtering
     // ============================================
@@ -22,162 +32,47 @@ export class DemandeController {
                 return;
             }
 
-            // Build filters based on role
-            let filters: any = {
+            const filters: DemandeFilters = {
                 statut: statut as string | undefined,
                 page: page ? parseInt(page as string, 10) : 1,
                 limit: limit ? parseInt(limit as string, 10) : 20,
             };
 
+            // The previous inline version parsed these and then referenced them in
+            // neither the data nor the count query — the API accepted a date range
+            // and silently ignored it.
             if (date_from) filters.date_from = new Date(date_from as string);
             if (date_to) filters.date_to = new Date(date_to as string);
 
-            // Role-based filtering
+            // Role decides what the user is allowed to see; the query itself
+            // belongs to the service.
             if (userRole === 'admin') {
-                // Admin sees all, can filter by magasin/depot explicitly
                 if (magasin_id) filters.magasin_id = parseInt(magasin_id as string, 10);
                 if (depot_id) filters.depot_id = parseInt(depot_id as string, 10);
             } else if (userRole === 'magasin_staff') {
-                // Magasin staff: see demandes they created or for their assigned magasin
-                const assignedMagasins = await pool.query(
-                    `SELECT location_id FROM user_location_roles 
-                     WHERE utilisateur_id = $1 AND role_at_location IN ('magasin_staff', 'both')`,
-                    [userId]
-                );
-                
-                if (assignedMagasins.rows.length > 0) {
-                    const magasinIds = assignedMagasins.rows.map((r) => r.location_id);
-                    // Filter by their magasins OR their created demandes
-                    filters.magasin_id_override = magasinIds;
-                    filters.created_by_user_id = userId;
+                const magasinIds = await DemandeController.assignedLocations(userId, ['magasin_staff', 'both']);
+                if (magasinIds.length > 0) {
+                    // Their own requests OR anything for their stores.
+                    filters.created_by_or_magasin_ids = { userId, magasinIds };
                 } else {
-                    // Fallback: only see their own demandes
                     filters.created_by_user_id = userId;
                 }
             } else if (userRole === 'depot_staff') {
-                // Depot staff: see demandes sent to their assigned depot
-                const assignedDepots = await pool.query(
-                    `SELECT location_id FROM user_location_roles 
-                     WHERE utilisateur_id = $1 AND role_at_location IN ('depot_staff', 'both')`,
-                    [userId]
-                );
-                
-                if (assignedDepots.rows.length > 0) {
-                    const depotIds = assignedDepots.rows.map((r) => r.location_id);
-                    // Default filter: only 'envoyee' and later states (not brouillon)
-                    if (!statut) {
-                        // If no explicit statut filter, default to actionable ones
-                        filters.statut_in = ['envoyee', 'approuvee', 'partiellement_approuvee', 'en_cours', 'livree'];
-                    }
-                    filters.depot_id_override = depotIds;
-                } else {
-                    // No depot access - empty result
+                const depotIds = await DemandeController.assignedLocations(userId, ['depot_staff', 'both']);
+                if (depotIds.length === 0) {
                     paginatedResponse(res, [], 0, 1, 20, 'Demandes récupérées avec succès');
                     return;
                 }
+                filters.depot_ids = depotIds;
+                // Without an explicit filter, depot staff see only actionable states.
+                if (!statut) {
+                    filters.statuts = ['envoyee', 'approuvee', 'partiellement_approuvee', 'en_cours', 'livree'];
+                }
             }
 
-            // For depot staff, handle the override
-            let query = `
-                SELECT d.*,
-                       m.nom AS magasin_nom, m.code AS magasin_code,
-                       dp.nom AS depot_nom, dp.code AS depot_code,
-                       u1.username AS created_by_username, u1.nom_complet AS created_by_nom,
-                       u2.username AS decided_by_username, u2.nom_complet AS decided_by_nom,
-                       st.numero_transfer
-                FROM demandes_reapprovisionnement d
-                JOIN stock_locations m ON d.magasin_id = m.id
-                JOIN stock_locations dp ON d.depot_id = dp.id
-                LEFT JOIN utilisateurs u1 ON d.created_by_user_id = u1.id
-                LEFT JOIN utilisateurs u2 ON d.decided_by_user_id = u2.id
-                LEFT JOIN stock_transfers st ON d.transfert_id = st.id
-                WHERE 1=1
-            `;
-            const params: any[] = [];
+            const { data, total } = await demandeService.getAll(filters);
 
-            // Apply filters
-            if (filters.statut) {
-                query += ` AND d.statut = $${params.length + 1}`;
-                params.push(filters.statut);
-            }
-            if (filters.statut_in) {
-                query += ` AND d.statut = ANY($${params.length + 1})`;
-                params.push(filters.statut_in);
-            }
-            if (filters.magasin_id) {
-                query += ` AND d.magasin_id = $${params.length + 1}`;
-                params.push(filters.magasin_id);
-            }
-            if (filters.magasin_id_override && !filters.created_by_user_id) {
-                query += ` AND d.magasin_id = ANY($${params.length + 1})`;
-                params.push(filters.magasin_id_override);
-            }
-            if (filters.depot_id) {
-                query += ` AND d.depot_id = $${params.length + 1}`;
-                params.push(filters.depot_id);
-            }
-            if (filters.depot_id_override) {
-                query += ` AND d.depot_id = ANY($${params.length + 1})`;
-                params.push(filters.depot_id_override);
-            }
-            if (filters.created_by_user_id && filters.magasin_id_override) {
-                // Both: OR condition
-                query += ` AND (d.created_by_user_id = $${params.length + 1} OR d.magasin_id = ANY($${params.length + 2}))`;
-                params.push(filters.created_by_user_id, filters.magasin_id_override);
-            } else if (filters.created_by_user_id) {
-                query += ` AND d.created_by_user_id = $${params.length + 1}`;
-                params.push(filters.created_by_user_id);
-            }
-
-            // Count query
-            let countQuery = `SELECT COUNT(*) as total FROM demandes_reapprovisionnement d WHERE 1=1`;
-            const countParams: any[] = [];
-            
-            if (filters.statut) {
-                countQuery += ` AND d.statut = $${countParams.length + 1}`;
-                countParams.push(filters.statut);
-            }
-            if (filters.statut_in) {
-                countQuery += ` AND d.statut = ANY($${countParams.length + 1})`;
-                countParams.push(filters.statut_in);
-            }
-            if (filters.magasin_id) {
-                countQuery += ` AND d.magasin_id = $${countParams.length + 1}`;
-                countParams.push(filters.magasin_id);
-            }
-            if (filters.magasin_id_override && !filters.created_by_user_id) {
-                countQuery += ` AND d.magasin_id = ANY($${countParams.length + 1})`;
-                countParams.push(filters.magasin_id_override);
-            }
-            if (filters.depot_id) {
-                countQuery += ` AND d.depot_id = $${countParams.length + 1}`;
-                countParams.push(filters.depot_id);
-            }
-            if (filters.depot_id_override) {
-                countQuery += ` AND d.depot_id = ANY($${countParams.length + 1})`;
-                countParams.push(filters.depot_id_override);
-            }
-            if (filters.created_by_user_id && filters.magasin_id_override) {
-                countQuery += ` AND (d.created_by_user_id = $${countParams.length + 1} OR d.magasin_id = ANY($${countParams.length + 2}))`;
-                countParams.push(filters.created_by_user_id, filters.magasin_id_override);
-            } else if (filters.created_by_user_id) {
-                countQuery += ` AND d.created_by_user_id = $${countParams.length + 1}`;
-                countParams.push(filters.created_by_user_id);
-            }
-
-            // Pagination
-            query += ' ORDER BY d.date_creation DESC';
-            query += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-            params.push(filters.limit, (filters.page - 1) * filters.limit);
-
-            const [{ rows }, { rows: countRows }] = await Promise.all([
-                pool.query(query, params),
-                pool.query(countQuery, countParams),
-            ]);
-
-            const total = parseInt(countRows[0].total, 10);
-
-            paginatedResponse(res, rows, total, filters.page, filters.limit, 'Demandes récupérées avec succès');
+            paginatedResponse(res, data, total, filters.page!, filters.limit!, 'Demandes récupérées avec succès');
         } catch (error: any) {
             console.error('[DemandeController.getAll] Error:', error);
             res.status(500).json({ success: false, error: 'Erreur serveur' });
