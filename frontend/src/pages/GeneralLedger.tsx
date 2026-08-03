@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { downloadCsv } from '../utils/csv';
 import { Input } from '@/components/ui/input';
 import { ledgerSourceHref } from '@/utils/ledger';
+import { getErrorMessage } from '@/utils/errors';
 
 interface Compte {
   id: number;
@@ -165,7 +166,10 @@ export default function GeneralLedger() {
       setTotalPages(data.pagination?.totalPages ?? 0);
     } catch (e) {
       setError(e);
-      toast.error('Erreur chargement écritures');
+      setEcritures([]);
+      setTotal(0);
+      setTotalPages(0);
+      toast.error(getErrorMessage(e, 'Erreur chargement écritures'));
     } finally {
       setLoading(false);
     }
@@ -179,7 +183,8 @@ export default function GeneralLedger() {
       setChartOfAccounts(data.data || data);
     } catch (e) {
       setError(e);
-      toast.error('Erreur chargement plan comptable');
+      setChartOfAccounts([]);
+      toast.error(getErrorMessage(e, 'Erreur chargement plan comptable'));
     } finally {
       setLoading(false);
     }
@@ -193,7 +198,8 @@ export default function GeneralLedger() {
       setTrialBalance(data.data || data);
     } catch (e) {
       setError(e);
-      toast.error('Erreur chargement balance comptable');
+      setTrialBalance([]);
+      toast.error(getErrorMessage(e, 'Erreur chargement balance comptable'));
     } finally {
       setLoading(false);
     }
@@ -217,8 +223,8 @@ export default function GeneralLedger() {
       a.click();
       URL.revokeObjectURL(url);
       toast.success('Export PDF réussi');
-    } catch {
-      toast.error('Erreur lors de l\'export PDF');
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Erreur lors de l'export PDF"));
     }
   };
 
@@ -240,8 +246,8 @@ export default function GeneralLedger() {
         if (res.truncated) {
           toast.warning('Export limité au plafond de lignes — affinez la période.');
         }
-      } catch {
-        toast.error('Export CSV incomplet — export de la page courante.');
+      } catch (err) {
+        toast.error(getErrorMessage(err, 'Export CSV incomplet — export de la page courante.'));
       }
       const headers = ['N° pièce', 'Date', 'Journal', 'Compte', 'Description', 'Débit', 'Crédit'];
       const rows = allEcritures.map((e) => [
@@ -514,8 +520,8 @@ export default function GeneralLedger() {
               isEmpty={trialBalance.length === 0}
               onRetry={reload}
               skeleton={<TableSkeleton rows={8} columns={5} />}
-              emptyTitle="Aucune donnée"
-              emptyDescription="Aucune donnée pour la période sélectionnée."
+              emptyTitle="Aucun mouvement comptable"
+              emptyDescription="Aucune écriture sur la période sélectionnée."
               emptyIcon={FileText}
             >
               <div className="overflow-x-auto rounded-md border">

@@ -37,62 +37,40 @@ export class CreditNoteService {
     page: number = 1,
     limit: number = 20,
     sort: string = 'date_avoir',
-    order: string = 'DESC'
+    order: string = 'DESC',
+    avoir_type?: string
   ): Promise<any> {
-    const validSortColumns = ['numero_avoir', 'date_avoir', 'total', 'statut', 'client_nom'];
-    const sortColumn = validSortColumns.includes(sort) ? sort : 'date_avoir';
+    const sortColumn = CreditNoteService.SORT_COLUMNS[sort] ?? 'fa.date_avoir';
     const sortOrder = order.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
     const offset = (page - 1) * limit;
 
-    let query = `
-      SELECT fa.*, t.raison_sociale as client_nom, t.prenom as client_prenom,
-             sl.nom as location_nom, f.numero_facture as facture_origine_numero,
-             r.numero_retour
+    const { where, params } = CreditNoteService.buildFilters({ search, statut, client_id, avoir_type });
+
+    // La recherche porte sur `tiers`, donc le COUNT doit faire la même jointure
+    // que le SELECT — sans elle, tout appel avec `search` échoue en 42P01.
+    const from = `
       FROM factures_avoir fa
       LEFT JOIN tiers t ON fa.tiers_id = t.id
-      LEFT JOIN stock_locations sl ON fa.location_id = sl.id
-      LEFT JOIN factures f ON fa.facture_origine_id = f.id
-      LEFT JOIN retours r ON fa.retour_id = r.id
-      WHERE fa.deleted_at IS NULL
     `;
-    const params: any[] = [];
 
-    if (search) {
-      query += ' AND (fa.numero_avoir ILIKE $' + (params.length + 1) + ' OR t.raison_sociale ILIKE $' + (params.length + 2) + ')';
-      params.push(`%${search}%`, `%${search}%`);
-    }
+    const { rows } = await pool.query(
+      `SELECT fa.*, t.raison_sociale as client_nom, t.prenom as client_prenom,
+              sl.nom as location_nom, f.numero_facture as facture_origine_numero,
+              r.numero_retour
+       ${from}
+       LEFT JOIN stock_locations sl ON fa.location_id = sl.id
+       LEFT JOIN factures f ON fa.facture_origine_id = f.id
+       LEFT JOIN retours r ON fa.retour_id = r.id
+       ${where}
+       ORDER BY ${sortColumn} ${sortOrder}, fa.id DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
 
-    if (statut) {
-      query += ' AND fa.statut = $' + (params.length + 1);
-      params.push(statut);
-    }
-
-    if (client_id) {
-      query += ' AND fa.tiers_id = $' + (params.length + 1);
-      params.push(client_id);
-    }
-
-    query += ` ORDER BY fa.${sortColumn} ${sortOrder} LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
-
-    const { rows } = await pool.query(query, params);
-
-    // Get total count
-    let countQuery = `SELECT COUNT(*) FROM factures_avoir fa WHERE fa.deleted_at IS NULL`;
-    const countParams: any[] = [];
-    if (search) {
-      countQuery += ' AND (fa.numero_avoir ILIKE $' + (countParams.length + 1) + ' OR t.raison_sociale ILIKE $' + (countParams.length + 2) + ')';
-      countParams.push(`%${search}%`, `%${search}%`);
-    }
-    if (statut) {
-      countQuery += ' AND fa.statut = $' + (countParams.length + 1);
-      countParams.push(statut);
-    }
-    if (client_id) {
-      countQuery += ' AND fa.tiers_id = $' + (countParams.length + 1);
-      countParams.push(client_id);
-    }
-    const { rows: countRows } = await pool.query(countQuery, countParams);
+    const { rows: countRows } = await pool.query(
+      `SELECT COUNT(*) ${from} ${where}`,
+      params
+    );
     const total = parseInt(countRows[0].count);
 
     return {
@@ -104,6 +82,89 @@ export class CreditNoteService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Totaux par statut sur l'ensemble du jeu filtré — alimente les tuiles KPI
+   * sans que le client ait à rapatrier toutes les pages.
+   */
+  async getStats(client_id?: number): Promise<any> {
+    const { where, params } = CreditNoteService.buildFilters({ client_id });
+    const { rows } = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE fa.statut = 'brouillon')                    AS brouillon_count,
+         COALESCE(SUM(fa.total) FILTER (WHERE fa.statut = 'brouillon'), 0)  AS brouillon_total,
+         COUNT(*) FILTER (WHERE fa.statut = 'valide')                       AS valide_count,
+         COALESCE(SUM(fa.total) FILTER (WHERE fa.statut = 'valide'), 0)     AS valide_total,
+         COUNT(*) FILTER (
+           WHERE fa.statut = 'utilise'
+             AND fa.date_avoir >= date_trunc('month', CURRENT_DATE)
+         ) AS utilise_mois_count,
+         COALESCE(SUM(fa.total) FILTER (
+           WHERE fa.statut = 'utilise'
+             AND fa.date_avoir >= date_trunc('month', CURRENT_DATE)
+         ), 0) AS utilise_mois_total,
+         COUNT(*) FILTER (WHERE fa.date_avoir >= date_trunc('month', CURRENT_DATE))                   AS mois_count,
+         COALESCE(SUM(fa.total) FILTER (WHERE fa.date_avoir >= date_trunc('month', CURRENT_DATE)), 0) AS mois_total
+       FROM factures_avoir fa
+       LEFT JOIN tiers t ON fa.tiers_id = t.id
+       ${where}`,
+      params
+    );
+    const r = rows[0];
+    return {
+      brouillonCount: parseInt(r.brouillon_count),
+      brouillonTotal: parseFloat(r.brouillon_total),
+      valideCount: parseInt(r.valide_count),
+      valideTotal: parseFloat(r.valide_total),
+      utiliseMoisCount: parseInt(r.utilise_mois_count),
+      utiliseMoisTotal: parseFloat(r.utilise_mois_total),
+      moisCount: parseInt(r.mois_count),
+      moisTotal: parseFloat(r.mois_total),
+    };
+  }
+
+  /** Clés de tri exposées → colonnes qualifiées (allow-list). */
+  private static readonly SORT_COLUMNS: Record<string, string> = {
+    numero_avoir: 'fa.numero_avoir',
+    date_avoir: 'fa.date_avoir',
+    total: 'fa.total',
+    statut: 'fa.statut',
+    avoir_type: 'fa.avoir_type',
+    // `client_nom` est un alias de projection : trier sur `fa.client_nom` échouerait.
+    client_nom: 't.raison_sociale',
+  };
+
+  /** Clause WHERE + paramètres partagés par le SELECT, le COUNT et les stats. */
+  private static buildFilters(filters: {
+    search?: string;
+    statut?: string;
+    client_id?: number;
+    avoir_type?: string;
+  }): { where: string; params: any[] } {
+    const clauses = ['fa.deleted_at IS NULL'];
+    const params: any[] = [];
+
+    if (filters.search) {
+      params.push(`%${filters.search}%`);
+      clauses.push(
+        `(fa.numero_avoir ILIKE $${params.length} OR t.raison_sociale ILIKE $${params.length})`
+      );
+    }
+    if (filters.statut) {
+      params.push(filters.statut);
+      clauses.push(`fa.statut = $${params.length}`);
+    }
+    if (filters.client_id) {
+      params.push(filters.client_id);
+      clauses.push(`fa.tiers_id = $${params.length}`);
+    }
+    if (filters.avoir_type) {
+      params.push(filters.avoir_type);
+      clauses.push(`fa.avoir_type = $${params.length}`);
+    }
+
+    return { where: `WHERE ${clauses.join(' AND ')}`, params };
   }
 
   /**

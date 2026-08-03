@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { formatFCFA as formatXOF } from '../utils/format';
-import { ArrowLeft, FileCheck, Truck, Printer, Download, Loader2 } from 'lucide-react';
+import { getErrorMessage } from '@/utils/errors';
+import { AlertCircle, ArrowLeft, FileCheck, Truck, Printer, Download, RefreshCw } from 'lucide-react';
 import { bonLivraisonService } from '@/services/api';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import StatusBadge from '@/components/StatusBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -18,35 +18,41 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DocumentPrint } from '@/components/ui/print-layout';
+import { PrintPreview, usePrintFormat } from '@/components/ui/print-preview';
 import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
+import { PageLoading } from '@/components/ui/loading';
 
 export default function BonLivraisonDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [bon, setBon] = useState<any>(null);
   const [showPrint, setShowPrint] = useState(false);
   const [showDeliverDialog, setShowDeliverDialog] = useState(false);
   const [showConvertDialog, setShowConvertDialog] = useState(false);
-  const [printFormat, setPrintFormat] = useState<'A4' | 'A5'>(() => (localStorage.getItem('print_format') as 'A4' | 'A5') || 'A4');
+  const [printFormat, setPrintFormat] = usePrintFormat();
+
+  const load = useCallback(async () => {
+    if (!id) return;
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await bonLivraisonService.getById(Number(id));
+      setBon(data?.data || data);
+    } catch (err) {
+      setBon(null);
+      setError(err);
+      toast.error(getErrorMessage(err, 'Impossible de charger ce bon de livraison'));
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
 
   useEffect(() => {
-    const load = async () => {
-      if (!id) return;
-      try {
-        setLoading(true);
-        const data = await bonLivraisonService.getById(Number(id));
-        setBon(data?.data || data);
-      } catch {
-        toast.error('Impossible de charger ce bon de livraison');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     load();
-  }, [id]);
+  }, [load]);
 
   const canMarkDelivered = bon?.statut === 'valide' || bon?.statut === 'brouillon';
   const canConvert = bon?.statut === 'livre';
@@ -65,8 +71,8 @@ export default function BonLivraisonDetail() {
       setShowDeliverDialog(false);
       const refreshed = await bonLivraisonService.getById(Number(bon.id));
       setBon(refreshed?.data || refreshed);
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error || 'Erreur lors de la mise à jour du statut');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la mise à jour du statut'));
     } finally {
       setActionLoading(false);
     }
@@ -87,18 +93,35 @@ export default function BonLivraisonDetail() {
       }
       const refreshed = await bonLivraisonService.getById(Number(bon.id));
       setBon(refreshed?.data || refreshed);
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error || 'Erreur lors de la conversion en facture');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la conversion en facture'));
     } finally {
       setActionLoading(false);
     }
   };
 
   if (loading) {
+    return <PageLoading message="Chargement du bon de livraison…" />;
+  }
+
+  if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-muted-foreground">
-        <Loader2 className="h-8 w-8 animate-spin" />
-        <p>Chargement...</p>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 text-center" role="alert">
+        <AlertCircle className="h-12 w-12 text-destructive opacity-80" />
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold">Échec du chargement</h2>
+          <p className="text-muted-foreground">{getErrorMessage(error, 'Impossible de charger ce bon de livraison')}</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate('/bons-livraison')}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Retour aux bons de livraison
+          </Button>
+          <Button onClick={load} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Réessayer
+          </Button>
+        </div>
       </div>
     );
   }
@@ -220,48 +243,24 @@ export default function BonLivraisonDetail() {
         </CardContent>
       </Card>
 
-      {showPrint && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-auto print:bg-white print:p-0 print:static print:overflow-visible">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8 print:max-w-none print:w-full print:my-0 print:shadow-none print:rounded-none">
-            <div className="sticky top-0 z-10 bg-white border-b p-4 flex justify-between items-center print:hidden">
-              <h2 className="text-lg font-semibold">Aperçu d'impression</h2>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Format:</span>
-                  <Select
-                    value={printFormat}
-                    onValueChange={(v) => { const f = v as 'A4' | 'A5'; setPrintFormat(f); localStorage.setItem('print_format', f); }}
-                  >
-                    <SelectTrigger className="h-8 w-auto px-2 text-xs" aria-label="Format d'impression">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="A4">A4</SelectItem>
-                      <SelectItem value="A5">Ticket A5</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button variant="outline" onClick={() => setShowPrint(false)}>Fermer</Button>
-                <Button onClick={() => window.print()}>
-                  <Printer className="h-4 w-4 mr-2" />
-                  Imprimer
-                </Button>
-              </div>
-            </div>
-            <DocumentPrint
-              format={printFormat}
-              docType="bl"
-              numero={bon.numero_bl || `BL${String(bon.id).padStart(5, '0')}`}
-              dateDoc={bon.date_bl}
-              dateEcheance={bon.date_livraison_prevue || bon.date_livraison}
-              vendeur={bon.cree_par_nom || 'Administrator'}
-              clientNom={bon.client_nom}
-              lignes={Array.isArray(bon.lignes) ? bon.lignes : []}
-              hideTotals={false}
-            />
-          </div>
-        </div>
-      )}
+      <PrintPreview
+        open={showPrint}
+        onOpenChange={setShowPrint}
+        format={printFormat}
+        onFormatChange={setPrintFormat}
+      >
+        <DocumentPrint
+          format={printFormat}
+          docType="bl"
+          numero={bon.numero_bl || `BL${String(bon.id).padStart(5, '0')}`}
+          dateDoc={bon.date_bl}
+          dateEcheance={bon.date_livraison_prevue || bon.date_livraison}
+          vendeur={bon.cree_par_nom || 'Administrator'}
+          clientNom={bon.client_nom}
+          lignes={Array.isArray(bon.lignes) ? bon.lignes : []}
+          hideTotals={false}
+        />
+      </PrintPreview>
 
       {/* Mark delivered Dialog */}
       <Dialog

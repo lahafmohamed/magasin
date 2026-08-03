@@ -1,9 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { attachmentService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Paperclip, Upload, Download, Trash2, Loader2, FileText } from 'lucide-react';
+import { QueryState } from '@/components/ui/query-state';
+import { ListSkeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/loading';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { getErrorMessage } from '@/utils/errors';
+import { Paperclip, Upload, Download, Trash2, FileText } from 'lucide-react';
 
 interface Attachment {
   id: number;
@@ -19,24 +24,28 @@ const fmtSize = (b: number) => (b < 1024 ? `${b} o` : b < 1024 * 1024 ? `${(b / 
 export function AttachmentPanel({ entityType, entityId }: { entityType: string; entityId: number }) {
   const [items, setItems] = useState<Attachment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const confirm = useConfirm();
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    if (!entityId) return;
     setLoading(true);
+    setError(null);
     try {
       setItems(await attachmentService.list(entityType, entityId));
-    } catch {
-      // silent — panel stays empty
+    } catch (err) {
+      setError(err);
+      setItems([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [entityType, entityId]);
 
   useEffect(() => {
-    if (entityId) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entityType, entityId]);
+    load();
+  }, [load]);
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -46,20 +55,28 @@ export function AttachmentPanel({ entityType, entityId }: { entityType: string; 
       await attachmentService.upload(entityType, entityId, file);
       toast.success('Pièce jointe ajoutée');
       load();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Erreur lors de l\'envoi');
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Erreur lors de l'envoi"));
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = '';
     }
   };
 
-  const onDelete = async (id: number) => {
+  const onDelete = async (attachment: Attachment) => {
+    const ok = await confirm({
+      title: 'Supprimer la pièce jointe ?',
+      description: `« ${attachment.filename} » sera définitivement supprimée. Cette action est irréversible.`,
+      confirmLabel: 'Supprimer',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
-      await attachmentService.remove(id);
-      setItems((it) => it.filter((a) => a.id !== id));
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Suppression impossible');
+      await attachmentService.remove(attachment.id);
+      setItems((it) => it.filter((a) => a.id !== attachment.id));
+      toast.success('Pièce jointe supprimée');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Suppression impossible'));
     }
   };
 
@@ -72,17 +89,22 @@ export function AttachmentPanel({ entityType, entityId }: { entityType: string; 
         <>
           <input ref={inputRef} type="file" className="hidden" onChange={onFile}
             accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.xlsx,.xls,.docx,.doc,.csv,.txt" />
-          <Button size="sm" variant="outline" className="gap-1" disabled={uploading} onClick={() => inputRef.current?.click()}>
-            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Ajouter
+          <Button size="sm" variant="outline" className="gap-1" disabled={uploading} aria-busy={uploading} onClick={() => inputRef.current?.click()}>
+            {uploading ? <Spinner /> : <Upload className="h-4 w-4" aria-hidden="true" />} Ajouter
           </Button>
         </>
       </CardHeader>
       <CardContent>
-        {loading ? (
-          <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin" /></div>
-        ) : items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aucune pièce jointe.</p>
-        ) : (
+        <QueryState
+          loading={loading}
+          error={error}
+          onRetry={load}
+          isEmpty={items.length === 0}
+          skeleton={<ListSkeleton items={2} />}
+          emptyTitle="Aucune pièce jointe"
+          emptyDescription="Ajoutez un devis signé, un bon de commande ou un justificatif."
+          emptyIcon={Paperclip}
+        >
           <ul className="divide-y">
             {items.map((a) => (
               <li key={a.id} className="flex items-center gap-3 py-2">
@@ -91,16 +113,16 @@ export function AttachmentPanel({ entityType, entityId }: { entityType: string; 
                   <p className="text-sm truncate">{a.filename}</p>
                   <p className="text-xs text-muted-foreground">{fmtSize(a.taille)} · {new Date(a.created_at).toLocaleDateString('fr-FR')}{a.cree_par_nom ? ` · ${a.cree_par_nom}` : ''}</p>
                 </div>
-                <Button size="icon" variant="ghost" title="Télécharger" onClick={() => attachmentService.download(a.id, a.filename)}>
-                  <Download className="h-4 w-4" />
+                <Button size="icon" variant="ghost" aria-label={`Télécharger ${a.filename}`} title="Télécharger" onClick={() => attachmentService.download(a.id, a.filename)}>
+                  <Download className="h-4 w-4" aria-hidden="true" />
                 </Button>
-                <Button size="icon" variant="ghost" title="Supprimer" onClick={() => onDelete(a.id)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
+                <Button size="icon" variant="ghost" aria-label={`Supprimer ${a.filename}`} title="Supprimer" onClick={() => onDelete(a)}>
+                  <Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" />
                 </Button>
               </li>
             ))}
           </ul>
-        )}
+        </QueryState>
       </CardContent>
     </Card>
   );

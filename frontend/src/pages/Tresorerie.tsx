@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { comptabiliteService } from '../services/api';
 import { formatCurrency } from '../utils/format';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Loader2, Wallet, TrendingUp, TrendingDown, Calendar } from 'lucide-react';
-import { toast } from 'sonner';
+import { QueryState } from '@/components/ui/query-state';
+import { DashboardSkeleton } from '@/components/ui/skeleton';
+import { Wallet, TrendingUp, TrendingDown, Calendar } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   CHART_POSITIVE,
@@ -19,23 +20,23 @@ import {
 export default function TresoreriePage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [jours, setJours] = useState(90);
 
-  useEffect(() => {
+  // L'erreur doit rester dans l'état : sans elle la page afficherait un solde de
+  // 0 XOF indiscernable d'une trésorerie réellement vide (DESIGN-AUDIT.md §2.1).
+  const load = useCallback(() => {
     setLoading(true);
+    setError(null);
     comptabiliteService.getTresorerie(jours)
       .then(setData)
-      .catch(() => toast.error('Erreur chargement trésorerie'))
+      .catch((err) => { setError(err); setData(null); })
       .finally(() => setLoading(false));
   }, [jours]);
 
-  const soldeNet = (data?.total_encaissements ?? 0) - (data?.total_decaissements ?? 0);
+  useEffect(load, [load]);
 
-  if (loading) return (
-    <div className="flex justify-center items-center min-h-[50vh]">
-      <Loader2 className="h-6 w-6 animate-spin" />
-    </div>
-  );
+  const soldeNet = (data?.total_encaissements ?? 0) - (data?.total_decaissements ?? 0);
 
   return (
     <div className="p-3 sm:p-6 w-full max-w-full">
@@ -58,6 +59,12 @@ export default function TresoreriePage() {
           ))}
         </div>
 
+        <QueryState
+          loading={loading}
+          error={error}
+          onRetry={load}
+          skeleton={<DashboardSkeleton />}
+        >
         {/* Totaux */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Card>
@@ -173,6 +180,7 @@ export default function TresoreriePage() {
             </CardContent>
           </Card>
         )}
+        </QueryState>
       </div>
     </div>
   );

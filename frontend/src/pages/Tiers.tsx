@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { formatFCFA } from '@/utils/format';
 import { useExportExcel } from '../hooks/useExportExcel';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { getErrorMessage } from '@/utils/errors';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import { ListSkeleton } from '@/components/ui/skeleton';
 import { QueryState } from '@/components/ui/query-state';
@@ -157,8 +158,8 @@ export default function TiersPage() {
       toast.success(editing ? 'Contact modifié' : 'Contact créé');
       setShowForm(false);
       loadTiers();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Erreur enregistrement');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur enregistrement'));
     } finally { setSaving(false); }
   };
 

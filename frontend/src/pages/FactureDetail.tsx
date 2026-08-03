@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { factureService, paiementService, acompteService, tiersService } from '../services/api';
 import { FactureComplete, Paiement } from '../types';
@@ -7,7 +7,6 @@ import { PaymentHistory } from '../components/PaymentHistory';
 import { AttachmentPanel } from '../components/AttachmentPanel';
 import { PaymentModal } from '../components/PaymentModal';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -24,9 +23,12 @@ import { formatPaymentMethod, type PaymentMethod } from '@/utils/paymentMethod';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DocumentPrint } from '@/components/ui/print-layout';
+import { PrintPreview, usePrintFormat } from '@/components/ui/print-preview';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
-import { ArrowLeft, FileText, User, Calendar, Printer, Download, CreditCard, ArrowLeftRight } from 'lucide-react';
+import { PageLoading } from '@/components/ui/loading';
+import { getErrorMessage } from '@/utils/errors';
+import { AlertCircle, ArrowLeft, FileText, User, Calendar, Printer, Download, CreditCard, ArrowLeftRight, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function FactureDetail() {
@@ -37,8 +39,9 @@ export default function FactureDetail() {
   const [paiements, setPaiements] = useState<Paiement[]>([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [showPrintLayout, setShowPrintLayout] = useState(false);
-  const [printFormat, setPrintFormat] = useState<'A4' | 'A5'>(() => (localStorage.getItem('print_format') as 'A4' | 'A5') || 'A4');
+  const [printFormat, setPrintFormat] = usePrintFormat();
   const [acomptesDispo, setAcomptesDispo] = useState<any[]>([]);
   const [showCompensationModal, setShowCompensationModal] = useState(false);
   const [compensationMontant, setCompensationMontant] = useState('');
@@ -48,13 +51,10 @@ export default function FactureDetail() {
   const [applyMontant, setApplyMontant] = useState('');
   const [applyLoading, setApplyLoading] = useState(false);
 
-  useEffect(() => {
-    loadFacture();
-  }, [id]);
-
-  const loadFacture = async () => {
+  const loadFacture = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    setError(null);
     try {
       const data = await factureService.getById(parseInt(id));
       setFacture(data);
@@ -65,8 +65,9 @@ export default function FactureDetail() {
         try {
           const acs = await acompteService.listForClient(clientId);
           setAcomptesDispo(acs);
-        } catch {
+        } catch (err) {
           setAcomptesDispo([]);
+          toast.error(getErrorMessage(err, 'Erreur lors du chargement des acomptes du client'));
         }
         try {
           const tiersResp = await tiersService.getById(clientId);
@@ -77,17 +78,24 @@ export default function FactureDetail() {
           } else {
             setSoldeFourn(0);
           }
-        } catch {
+        } catch (err) {
           setSoldeFourn(0);
+          toast.error(getErrorMessage(err, 'Erreur lors du chargement du solde fournisseur'));
         }
       }
-    } catch (error) {
-      toast.error('Erreur lors du chargement de la facture');
-      console.error(error);
+    } catch (err) {
+      setFacture(null);
+      setPaiements([]);
+      setError(err);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement de la facture'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    loadFacture();
+  }, [loadFacture]);
 
   const handleCompensation = async () => {
     if (!facture) return;
@@ -113,8 +121,8 @@ export default function FactureDetail() {
       setShowCompensationModal(false);
       setCompensationMontant('');
       await loadFacture();
-    } catch (e: any) {
-      toast.error(e?.response?.data?.error || 'Erreur lors de la compensation');
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Erreur lors de la compensation'));
     } finally {
       setCompensationLoading(false);
     }
@@ -160,8 +168,8 @@ export default function FactureDetail() {
       setAcompteToApply(null);
       setApplyMontant('');
       await loadFacture();
-    } catch (e: any) {
-      toast.error(e?.response?.data?.error || 'Erreur application acompte');
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Erreur application acompte'));
     } finally {
       setApplyLoading(false);
     }
@@ -191,9 +199,8 @@ export default function FactureDetail() {
       await paiementService.delete(paiementId);
       toast.success('Paiement supprimé');
       await loadFacture();
-    } catch (error) {
-      toast.error('Erreur lors de la suppression du paiement');
-      console.error(error);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la suppression du paiement'));
     }
   };
 
@@ -219,11 +226,26 @@ export default function FactureDetail() {
   const marginPercentage = total > 0 ? parseFloat(((profit / total) * 100).toFixed(2)) : 0;
 
   if (loading) {
+    return <PageLoading message="Chargement de la facture…" />;
+  }
+
+  if (error) {
     return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="text-muted-foreground">Chargement de la facture...</p>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 text-center" role="alert">
+        <AlertCircle className="h-12 w-12 text-destructive opacity-80" />
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold">Échec du chargement</h2>
+          <p className="text-muted-foreground">{getErrorMessage(error, 'Erreur lors du chargement de la facture')}</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate('/factures')}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Retour aux factures
+          </Button>
+          <Button onClick={loadFacture} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Réessayer
+          </Button>
         </div>
       </div>
     );
@@ -308,8 +330,8 @@ export default function FactureDetail() {
 
       {/* Compensation fournisseur banner */}
       {soldeFourn > 0 && remainingDue > 0 && facture.statut !== 'annulee' && facture.statut !== 'payee' && (
-        <div className="flex items-center justify-between rounded-lg border border-warning-300 dark:border-warning-500/30 bg-warning-50 dark:bg-warning-500/10 px-4 py-3">
-          <div className="flex items-center gap-2 text-warning-800 dark:text-warning-200">
+        <div className="flex items-center justify-between rounded-lg border border-warning-300 bg-warning-50 px-4 py-3">
+          <div className="flex items-center gap-2 text-warning-800">
             <ArrowLeftRight className="h-5 w-5 flex-shrink-0" />
             <span className="text-sm font-medium">
               Ce client est aussi fournisseur — vous lui devez <strong>{formatXOF(soldeFourn)}</strong>. Vous pouvez compenser jusqu'à <strong>{formatXOF(Math.min(remainingDue, soldeFourn))}</strong> sur cette facture.
@@ -318,7 +340,7 @@ export default function FactureDetail() {
           <Button
             size="sm"
             variant="outline"
-            className="border-warning-400 text-warning-800 dark:text-warning-200 hover:bg-warning-100 ml-4 flex-shrink-0"
+            className="border-warning-400 text-warning-800 hover:bg-warning-100 ml-4 flex-shrink-0"
             onClick={() => {
               setCompensationMontant(Math.min(remainingDue, soldeFourn).toFixed(2));
               setShowCompensationModal(true);
@@ -575,7 +597,7 @@ export default function FactureDetail() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ArrowLeftRight className="h-5 w-5 text-warning-600 dark:text-warning-300" />
+              <ArrowLeftRight className="h-5 w-5 text-warning-600" />
               Compenser avec dette fournisseur
             </DialogTitle>
             <DialogDescription>
@@ -585,7 +607,7 @@ export default function FactureDetail() {
           <div className="space-y-3">
             <div>
               <span className="text-sm font-medium block mb-1">Reste dû sur la facture</span>
-              <p className="text-lg font-bold text-danger-600 dark:text-danger-300">{formatXOF(remainingDue)}</p>
+              <p className="text-lg font-bold text-danger-600">{formatXOF(remainingDue)}</p>
             </div>
             <div>
               <span className="text-sm font-medium block mb-1">Votre dette fournisseur envers ce tiers</span>
@@ -668,48 +690,24 @@ export default function FactureDetail() {
         total={total}
       />
 
-      {showPrintLayout && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-auto print:bg-white print:p-0 print:static print:overflow-visible">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8 print:max-w-none print:w-full print:my-0 print:shadow-none print:rounded-none">
-            <div className="sticky top-0 z-10 bg-white border-b p-4 flex justify-between items-center print:hidden">
-              <h2 className="text-lg font-semibold">Aperçu d'impression</h2>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Format:</span>
-                  <Select
-                    value={printFormat}
-                    onValueChange={(v) => { const f = v as 'A4' | 'A5'; setPrintFormat(f); localStorage.setItem('print_format', f); }}
-                  >
-                    <SelectTrigger className="h-8 w-auto px-2 text-xs" aria-label="Format d'impression">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="A4">A4</SelectItem>
-                      <SelectItem value="A5">Ticket A5</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button variant="outline" onClick={() => setShowPrintLayout(false)}>Fermer</Button>
-                <Button onClick={() => window.print()}>
-                  <Printer className="h-4 w-4 mr-2" />
-                  Imprimer
-                </Button>
-              </div>
-            </div>
-            <DocumentPrint
-              format={printFormat}
-              docType="facture"
-              numero={facture.numero_facture || `F${String(facture.id).padStart(5, '0')}`}
-              dateDoc={facture.date_facture}
-              dateEcheance={(facture as any).date_echeance}
-              vendeur={(facture as any).cree_par_nom || 'Administrator'}
-              clientNom={facture.client_nom}
-              clientPrenom={(facture as any).client_prenom}
-              lignes={lignes as any}
-            />
-          </div>
-        </div>
-      )}
+      <PrintPreview
+        open={showPrintLayout}
+        onOpenChange={setShowPrintLayout}
+        format={printFormat}
+        onFormatChange={setPrintFormat}
+      >
+        <DocumentPrint
+          format={printFormat}
+          docType="facture"
+          numero={facture.numero_facture || `F${String(facture.id).padStart(5, '0')}`}
+          dateDoc={facture.date_facture}
+          dateEcheance={(facture as any).date_echeance}
+          vendeur={(facture as any).cree_par_nom || 'Administrator'}
+          clientNom={facture.client_nom}
+          clientPrenom={(facture as any).client_prenom}
+          lignes={lignes as any}
+        />
+      </PrintPreview>
     </div>
   );
 }

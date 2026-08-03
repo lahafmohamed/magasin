@@ -7,6 +7,7 @@ import { bonLivraisonService } from '@/services/api';
 import { toast } from 'sonner';
 import { type StatTile } from '@/components/ui/stats-bar';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { getErrorMessage } from '@/utils/errors';
 import {
   DocumentListPage,
   useDocumentList,
@@ -59,8 +60,8 @@ export default function BonsLivraison() {
       await bonLivraisonService.convertToFacture(id);
       toast.success('Bon de livraison converti en facture');
       list.reload();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error || 'Erreur lors de la conversion');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors de la conversion'));
     }
   };
 

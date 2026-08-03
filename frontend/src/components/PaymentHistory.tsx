@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
-import { X, Receipt, Loader2 } from 'lucide-react';
+import { X, Receipt } from 'lucide-react';
 import { toast } from 'sonner';
 import { Paiement, METHODES_PAIEMENT, FALLBACK_PAIEMENT_ICON } from '../types';
 import { Button } from './ui/button';
+import { EmptyState } from './ui/empty-state';
+import { Spinner } from './ui/loading';
 import { formatFCFA } from '../utils/format';
 import { paiementService } from '../services/api';
+import { getErrorMessage } from '@/utils/errors';
 
 interface PaymentHistoryProps {
   paiements: Paiement[];
@@ -29,8 +32,8 @@ export const PaymentHistory: React.FC<PaymentHistoryProps> = ({ paiements, onDel
     setDownloadingId(id);
     try {
       await paiementService.downloadRecu(id);
-    } catch {
-      toast.error('Erreur lors de la génération du reçu');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la génération du reçu'));
     } finally {
       setDownloadingId(null);
     }
@@ -50,15 +53,20 @@ export const PaymentHistory: React.FC<PaymentHistoryProps> = ({ paiements, onDel
   const getMethodeConfig = (methode: string) => {
     return METHODES_PAIEMENT[methode as keyof typeof METHODES_PAIEMENT] || {
       label: methode,
-      color: 'bg-gray-500',
+      color: 'bg-muted-foreground',
       Icon: FALLBACK_PAIEMENT_ICON,
     };
   };
 
   if (!paiements || paiements.length === 0) {
     return (
-      <div className="rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-700">
-        Aucun paiement enregistré pour cette facture
+      <div className="rounded-md border">
+        <EmptyState
+          icon={Receipt}
+          title="Aucun paiement enregistré"
+          description="Aucun règlement n'a encore été encaissé sur cette facture."
+          className="py-8"
+        />
       </div>
     );
   }
@@ -124,7 +132,7 @@ export const PaymentHistory: React.FC<PaymentHistoryProps> = ({ paiements, onDel
                       title="Reçu de paiement (PDF)"
                     >
                       {downloadingId === paiement.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <Spinner className="h-3.5 w-3.5" />
                       ) : (
                         <Receipt className="h-3.5 w-3.5" />
                       )}

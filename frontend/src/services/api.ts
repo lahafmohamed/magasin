@@ -1219,13 +1219,30 @@ export const bonLivraisonService = {
 
 // ========== AVOIRS (CREDIT NOTES) ==========
 export const creditNoteService = {
-  getAll: async (search?: string, page = 1, limit = 20): Promise<Page<any>> => {
+  getAll: async (
+    search?: string,
+    statut?: string,
+    page = 1,
+    limit = 20,
+    sort?: string,
+    order?: 'asc' | 'desc',
+    avoirType?: string
+  ): Promise<Page<any>> => {
     const params = new URLSearchParams();
     if (search) params.append('search', search);
+    if (statut) params.append('statut', statut);
+    if (avoirType) params.append('avoir_type', avoirType);
+    if (sort) params.append('sort', sort);
+    if (order) params.append('order', order);
     params.append('page', page.toString());
     params.append('limit', limit.toString());
     const { data } = await api.get(`/avoirs?${params}`);
     return data;
+  },
+
+  getStats: async (): Promise<any> => {
+    const { data } = await api.get('/avoirs/stats');
+    return data.data;
   },
 
   getById: async (id: number): Promise<any> => {

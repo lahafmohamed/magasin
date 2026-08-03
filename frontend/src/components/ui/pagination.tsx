@@ -22,8 +22,11 @@ export function Pagination({ page, totalPages, total, limit, onPageChange, onLim
   const endItem = Math.min(page * limit, total);
 
   return (
-    <div className="flex flex-col gap-3 px-2 py-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="text-center text-sm text-muted-foreground sm:text-left">
+    <nav
+      className="flex flex-col gap-3 px-2 py-4 sm:flex-row sm:items-center sm:justify-between"
+      aria-label="Pagination"
+    >
+      <div className="text-center text-sm text-muted-foreground sm:text-left" aria-live="polite">
         {total > 0 ? (
           <>
             Affichage de <span className="font-medium">{startItem}</span> à{' '}
@@ -36,14 +39,16 @@ export function Pagination({ page, totalPages, total, limit, onPageChange, onLim
       </div>
       
       <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Lignes par page</span>
-          {onLimitChange && (
+        {/* Le libellé suit le Select : sans `onLimitChange` il restait seul,
+            à annoncer un contrôle absent (Employés, Tiers). */}
+        {onLimitChange && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Lignes par page</span>
             <Select
               value={String(limit)}
               onValueChange={(v) => onLimitChange(parseInt(v))}
             >
-              <SelectTrigger className="h-8 w-[72px] text-xs" aria-label="Lignes par page">
+              <SelectTrigger className="h-9 w-[72px] text-xs" aria-label="Lignes par page">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -54,25 +59,29 @@ export function Pagination({ page, totalPages, total, limit, onPageChange, onLim
                 ))}
               </SelectContent>
             </Select>
-          )}
-        </div>
+          </div>
+        )}
 
-        <div className="flex items-center gap-1 sm:gap-2">
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
+            className="h-9 w-9 p-0"
             onClick={() => onPageChange(1)}
             disabled={page === 1}
+            aria-label="Première page"
           >
-            <ChevronsLeft className="h-4 w-4" />
+            <ChevronsLeft className="h-4 w-4" aria-hidden="true" />
           </Button>
           <Button
             variant="outline"
             size="sm"
+            className="h-9 w-9 p-0"
             onClick={() => onPageChange(page - 1)}
             disabled={page === 1}
+            aria-label="Page précédente"
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Button>
           <span className="text-sm font-medium">
             Page {page} sur {totalPages || 1}
@@ -80,21 +89,25 @@ export function Pagination({ page, totalPages, total, limit, onPageChange, onLim
           <Button
             variant="outline"
             size="sm"
+            className="h-9 w-9 p-0"
             onClick={() => onPageChange(page + 1)}
             disabled={page >= totalPages}
+            aria-label="Page suivante"
           >
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
           </Button>
           <Button
             variant="outline"
             size="sm"
+            className="h-9 w-9 p-0"
             onClick={() => onPageChange(totalPages)}
             disabled={page >= totalPages}
+            aria-label="Dernière page"
           >
-            <ChevronsRight className="h-4 w-4" />
+            <ChevronsRight className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
       </div>
-    </div>
+    </nav>
   );
 }

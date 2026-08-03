@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { demandeService } from '../services/api';
 import { fuzzyScore } from '../utils/format';
@@ -10,7 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { EmptyState } from '@/components/ui/empty-state';
+import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import {
@@ -27,6 +27,7 @@ import {
   Eye
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/utils/errors';
 
 interface Demande {
   id: number;
@@ -65,6 +66,7 @@ export default function DemandesList() {
   
   const [demandes, setDemandes] = useState<Demande[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [filterStatut, setFilterStatut] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [sort, setSort] = useState<SortState<DemandeSortKey> | null>(null);
@@ -80,12 +82,9 @@ export default function DemandesList() {
   const isDepot = userRole === 'depot_staff';
   const isAdmin = userRole === 'admin';
 
-  useEffect(() => {
-    loadDemandes();
-  }, [filterStatut]);
-
-  const loadDemandes = async () => {
+  const loadDemandes = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const filters: any = {};
       if (filterStatut !== 'all') filters.statut = filterStatut;
@@ -101,12 +100,18 @@ export default function DemandesList() {
         aTraiter: data.filter((d: Demande) => ['envoyee', 'approuvee', 'partiellement_approuvee'].includes(d.statut)).length,
         livrees: data.filter((d: Demande) => d.statut === 'livree').length,
       });
-    } catch {
-      toast.error('Erreur lors du chargement des demandes');
+    } catch (err) {
+      setError(err);
+      setDemandes([]);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des demandes'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterStatut]);
+
+  useEffect(() => {
+    loadDemandes();
+  }, [loadDemandes]);
 
   const filteredDemandes = !searchQuery.trim()
     ? demandes
@@ -269,24 +274,26 @@ export default function DemandesList() {
       {/* Demandes Table */}
       <Card>
         <CardContent className="p-0">
-          {loading ? (
-            <TableSkeleton rows={10} columns={7} />
-          ) : filteredDemandes.length === 0 ? (
-            <EmptyState
-              icon={Package}
-              title="Aucune demande trouvée"
-              action={
-                <RequirePermission permission={Permissions.DEMANDE_CREATE} hideIfUnauthorized>
-                  <Button
-                    variant="link"
-                    onClick={() => navigate('/demandes/nouvelle')}
-                  >
-                    Créer une demande
-                  </Button>
-                </RequirePermission>
-              }
-            />
-          ) : (
+          <QueryState
+            loading={loading}
+            error={error}
+            onRetry={loadDemandes}
+            skeleton={<TableSkeleton rows={10} columns={7} />}
+            isEmpty={filteredDemandes.length === 0}
+            emptyIcon={Package}
+            emptyTitle="Aucune demande trouvée"
+            emptyDescription={searchQuery.trim() ? 'Aucun résultat pour cette recherche.' : undefined}
+            emptyAction={
+              <RequirePermission permission={Permissions.DEMANDE_CREATE} hideIfUnauthorized>
+                <Button
+                  variant="link"
+                  onClick={() => navigate('/demandes/nouvelle')}
+                >
+                  Créer une demande
+                </Button>
+              </RequirePermission>
+            }
+          >
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -344,7 +351,7 @@ export default function DemandesList() {
                 </tbody>
               </table>
             </div>
-          )}
+          </QueryState>
         </CardContent>
       </Card>
     </div>

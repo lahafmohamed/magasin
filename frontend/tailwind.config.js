@@ -1,5 +1,15 @@
 import tailwindcssAnimate from "tailwindcss-animate";
 
+/** Rampe 50..900 + DEFAULT adossée aux variables CSS `--<name>-<shade>`. */
+const semanticRamp = (name) =>
+  [50, 100, 200, 300, 400, 500, 600, 700, 800, 900].reduce(
+    (ramp, shade) => ({
+      ...ramp,
+      [shade]: `hsl(var(--${name}-${shade}) / <alpha-value>)`,
+    }),
+    { DEFAULT: `hsl(var(--${name}) / <alpha-value>)` },
+  );
+
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: 'class',
@@ -15,26 +25,14 @@ export default {
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
-        success: {
-          DEFAULT: "#059669",
-          50: "#ECFDF5", 100: "#D1FAE5", 200: "#A7F3D0", 300: "#6EE7B7", 400: "#34D399",
-          500: "#059669", 600: "#047857", 700: "#065F46", 800: "#064E3B", 900: "#022C22",
-        },
-        warning: {
-          DEFAULT: "#D97706",
-          50: "#FFFBEB", 100: "#FEF3C7", 200: "#FDE68A", 300: "#FCD34D", 400: "#FBBF24",
-          500: "#D97706", 600: "#B45309", 700: "#92400E", 800: "#78350F", 900: "#451A03",
-        },
-        danger: {
-          DEFAULT: "#DC2626",
-          50: "#FEF2F2", 100: "#FEE2E2", 200: "#FECACA", 300: "#FCA5A5", 400: "#F87171",
-          500: "#DC2626", 600: "#B91C1C", 700: "#991B1B", 800: "#7F1D1D", 900: "#450A0A",
-        },
-        info: {
-          DEFAULT: "#2563EB",
-          50: "#EFF6FF", 100: "#DBEAFE", 200: "#BFDBFE", 300: "#93C5FD", 400: "#60A5FA",
-          500: "#2563EB", 600: "#1D4ED8", 700: "#1E40AF", 800: "#1E3A8A", 900: "#172554",
-        },
+        // Rampes sémantiques statut/argent — définies en variables CSS dans index.css
+        // (:root + .dark) pour être theme-aware. La rampe est inversée en mode sombre :
+        // `text-success-700` / `bg-danger-50` se lisent correctement dans les deux
+        // thèmes sans variante `dark:`.
+        success: semanticRamp("success"),
+        warning: semanticRamp("warning"),
+        danger: semanticRamp("danger"),
+        info: semanticRamp("info"),
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
@@ -66,7 +64,29 @@ export default {
           foreground: "hsl(var(--card-foreground))",
         },
       },
+      fontFamily: {
+        // Inter est chargé dans index.html ; sans cette clé `font-sans` retombait
+        // sur la pile Tailwind par défaut au lieu de la police du produit.
+        sans: ["Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+      },
+      fontSize: {
+        // Tailwind s'arrête à text-xs (12px) ; les micro-libellés (badges de
+        // comptage, mentions de tuiles) réinventaient donc text-[10px]/[11px].
+        "2xs": ["0.6875rem", { lineHeight: "0.875rem" }], // 11px
+        "3xs": ["0.625rem", { lineHeight: "0.8125rem" }], // 10px
+      },
+      zIndex: {
+        // Échelle nommée : les surcouches se comparaient jusqu'ici en z-[100].
+        dropdown: "40",
+        sidebar: "40",
+        overlay: "50",
+        modal: "50",
+        toast: "60",
+        tooltip: "70",
+        skiplink: "80",
+      },
       borderRadius: {
+        xl: "calc(var(--radius) + 4px)",
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",

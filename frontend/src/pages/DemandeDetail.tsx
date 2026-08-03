@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { demandeService } from '../services/api';
 import { useAuth } from '../lib/AuthContext';
@@ -8,14 +8,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { 
-  ArrowLeft, 
-  Send, 
-  CheckCircle, 
-  XCircle, 
-  Package, 
+import { PageLoading, Spinner } from '@/components/ui/loading';
+import { getErrorMessage } from '@/utils/errors';
+import {
+  ArrowLeft,
+  Send,
+  CheckCircle,
+  XCircle,
+  Package,
   Check,
-  Loader2,
+  RefreshCw,
   Clock,
   AlertCircle,
   History,
@@ -137,6 +139,7 @@ export default function DemandeDetail() {
 
   const [demande, setDemande] = useState<DemandeDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showDecisionDialog, setShowDecisionDialog] = useState(false);
   const [showClotureDialog, setShowClotureDialog] = useState(false);
@@ -145,22 +148,25 @@ export default function DemandeDetail() {
   const isDepot = userRole === 'depot_staff';
   const isAdmin = userRole === 'admin';
 
-  useEffect(() => {
-    if (id) loadDemande();
-  }, [id]);
-
-  const loadDemande = async () => {
+  const loadDemande = useCallback(async () => {
+    if (!id) return;
     setLoading(true);
+    setError(null);
     try {
-      const response = await demandeService.getById(parseInt(id!, 10));
+      const response = await demandeService.getById(parseInt(id, 10));
       setDemande(response.data || response);
-    } catch {
-      toast.error('Erreur lors du chargement de la demande');
-      navigate('/demandes');
+    } catch (err) {
+      setDemande(null);
+      setError(err);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement de la demande'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    loadDemande();
+  }, [loadDemande]);
 
   const handleAction = async (action: string, payload?: any) => {
     if (!demande) return;
@@ -193,17 +199,35 @@ export default function DemandeDetail() {
           break;
       }
       await loadDemande();
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || `Erreur lors de l'action`);
+    } catch (err) {
+      toast.error(getErrorMessage(err, `Erreur lors de l'action`));
     } finally {
       setActionLoading(null);
     }
   };
 
   if (loading) {
+    return <PageLoading message="Chargement de la demande…" />;
+  }
+
+  if (error) {
     return (
-      <div className="flex justify-center items-center h-96">
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="p-6 flex flex-col items-center justify-center gap-4 text-center" role="alert">
+        <AlertCircle className="h-12 w-12 text-destructive opacity-80" />
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold">Échec du chargement</h2>
+          <p className="text-muted-foreground">{getErrorMessage(error, 'Erreur lors du chargement de la demande')}</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate('/demandes')}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Retour à la liste
+          </Button>
+          <Button onClick={loadDemande} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Réessayer
+          </Button>
+        </div>
       </div>
     );
   }
@@ -441,7 +465,7 @@ export default function DemandeDetail() {
                   onClick={() => handleAction('send')}
                   disabled={!!actionLoading}
                 >
-                  {actionLoading === 'send' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  {actionLoading === 'send' ? <Spinner /> : <Send className="h-4 w-4" />}
                   Envoyer au dépôt
                 </Button>
               )}
@@ -466,7 +490,7 @@ export default function DemandeDetail() {
                   }}
                   disabled={!!actionLoading}
                 >
-                  {actionLoading === 'execute' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
+                  {actionLoading === 'execute' ? <Spinner /> : <Package className="h-4 w-4" />}
                   Exécuter le transfert
                 </Button>
               )}
@@ -492,7 +516,7 @@ export default function DemandeDetail() {
                   }}
                   disabled={!!actionLoading}
                 >
-                  {actionLoading === 'cancel' ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                  {actionLoading === 'cancel' ? <Spinner /> : <XCircle className="h-4 w-4" />}
                   Annuler
                 </Button>
               )}

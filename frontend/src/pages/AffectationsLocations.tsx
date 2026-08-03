@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
 import { userLocationAssignmentService } from '../services/api';
+import { getErrorMessage } from '@/utils/errors';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/loading';
 import { PageHeader } from '@/components/ui/page-header';
 import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
@@ -86,8 +88,8 @@ export default function AffectationsLocations() {
       if (usersSource) {
         setUsers(usersSource);
       }
-    } catch {
-      toast.error('Erreur chargement des affectations utilisateur');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur chargement des affectations utilisateur'));
     }
   };
 
@@ -123,8 +125,8 @@ export default function AffectationsLocations() {
       const usersData = await userLocationAssignmentService.getUsers();
       const usersList: AssignmentUser[] = usersData.data || usersData;
       setUsers(usersList);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Erreur mise a jour affectations');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur mise a jour affectations'));
     } finally {
       setSaving(false);
     }
@@ -260,7 +262,7 @@ export default function AffectationsLocations() {
                     <Button onClick={handleSave} disabled={saving}>
                       {saving ? (
                         <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Spinner />
                           Enregistrement…
                         </>
                       ) : (

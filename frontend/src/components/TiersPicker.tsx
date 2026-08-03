@@ -91,7 +91,7 @@ export function TiersPicker({ role, value, onChange, placeholder, disabled = fal
           </div>
         </div>
         {!disabled && (
-          <button type="button" onClick={() => onChange(null)} className="text-muted-foreground hover:text-foreground">
+          <button type="button" aria-label="Retirer le tiers sélectionné" onClick={() => onChange(null)} className="text-muted-foreground hover:text-foreground">
             <X className="h-4 w-4" />
           </button>
         )}

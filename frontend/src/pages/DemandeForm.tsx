@@ -11,6 +11,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { PageLoading, Spinner } from '@/components/ui/loading';
+import { getErrorMessage } from '@/utils/errors';
 import {
   Plus,
   Minus,
@@ -20,7 +22,7 @@ import {
   Send,
   Save,
   Package,
-  Loader2,
+  RefreshCw,
   AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -92,6 +94,7 @@ export default function DemandeForm() {
   const depotId = watch('depot_id');
 
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<unknown>(null);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -127,12 +130,43 @@ export default function DemandeForm() {
     }
   }, [depotId, debouncedSearch]);
 
+  const loadExistingDemande = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await demandeService.getById(parseInt(id, 10));
+      const demande = response.data || response;
+
+      reset({
+        magasin_id: String(demande.magasin_id),
+        depot_id: String(demande.depot_id),
+        motif: demande.motif || '',
+      });
+
+      setCart(demande.lignes.map((l: any) => ({
+        produit_id: l.produit_id,
+        reference: l.reference,
+        produit_nom: l.produit_nom,
+        quantite_demandee: l.quantite_demandee,
+        stock_disponible: l.quantite_disponible || 0,
+        notes: l.notes || '',
+      })));
+    } catch (err) {
+      setCart([]);
+      setError(err);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement de la demande'));
+    } finally {
+      setLoading(false);
+    }
+  }, [id, reset]);
+
   // Load existing demande if editing
   useEffect(() => {
     if (isEdit) {
       loadExistingDemande();
     }
-  }, [id]);
+  }, [isEdit, loadExistingDemande]);
 
   const loadLocations = async () => {
     try {
@@ -152,8 +186,8 @@ export default function DemandeForm() {
           setValue('depot_id', String(depots[0].id));
         }
       }
-    } catch {
-      toast.error('Erreur lors du chargement des emplacements');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des emplacements'));
     }
   };
 
@@ -162,38 +196,11 @@ export default function DemandeForm() {
     try {
       const response = await demandeService.getDepotStock(depotIdArg, debouncedSearch);
       setDepotProducts(response.data || response || []);
-    } catch {
-      // Silent fail
+    } catch (err) {
+      setDepotProducts([]);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement du stock du dépôt'));
     } finally {
       setLoadingProducts(false);
-    }
-  };
-
-  const loadExistingDemande = async () => {
-    setLoading(true);
-    try {
-      const response = await demandeService.getById(parseInt(id!, 10));
-      const demande = response.data || response;
-
-      reset({
-        magasin_id: String(demande.magasin_id),
-        depot_id: String(demande.depot_id),
-        motif: demande.motif || '',
-      });
-
-      setCart(demande.lignes.map((l: any) => ({
-        produit_id: l.produit_id,
-        reference: l.reference,
-        produit_nom: l.produit_nom,
-        quantite_demandee: l.quantite_demandee,
-        stock_disponible: l.quantite_disponible || 0,
-        notes: l.notes || '',
-      })));
-    } catch {
-      toast.error('Erreur lors du chargement de la demande');
-      navigate('/demandes');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -283,8 +290,8 @@ export default function DemandeForm() {
       }
 
       navigate('/demandes');
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Erreur lors de la sauvegarde');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la sauvegarde'));
     } finally {
       setSubmitting(false);
     }
@@ -296,9 +303,27 @@ export default function DemandeForm() {
   const depots = locations.filter((l) => l.location_type === 'depot');
 
   if (loading) {
+    return <PageLoading message="Chargement de la demande…" />;
+  }
+
+  if (error) {
     return (
-      <div className="flex justify-center items-center h-96">
-        <Loader2 className="h-8 w-8 animate-spin" />
+      <div className="p-6 flex flex-col items-center justify-center gap-4 text-center" role="alert">
+        <AlertCircle className="h-12 w-12 text-destructive opacity-80" />
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold">Échec du chargement</h2>
+          <p className="text-muted-foreground">{getErrorMessage(error, 'Erreur lors du chargement de la demande')}</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate('/demandes')}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Retour à la liste
+          </Button>
+          <Button onClick={loadExistingDemande} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Réessayer
+          </Button>
+        </div>
       </div>
     );
   }
@@ -412,7 +437,7 @@ export default function DemandeForm() {
 
                 {loadingProducts ? (
                   <div className="flex justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin" />
+                    <Spinner size="md" />
                   </div>
                 ) : depotProducts.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
@@ -610,7 +635,7 @@ export default function DemandeForm() {
                       disabled={submitting}
                       variant="outline"
                     >
-                      {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      {submitting ? <Spinner /> : <Save className="h-4 w-4" />}
                       {isEdit ? 'Enregistrer' : 'Enregistrer brouillon'}
                     </Button>
                     <Button
@@ -618,7 +643,7 @@ export default function DemandeForm() {
                       onClick={handleSubmit((values) => submitDemande(values, true))}
                       disabled={submitting}
                     >
-                      {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                      {submitting ? <Spinner /> : <Send className="h-4 w-4" />}
                       {isEdit ? 'Enregistrer et envoyer' : 'Envoyer au dépôt'}
                     </Button>
                   </div>

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { caisseService } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +12,7 @@ import { AlertTriangle, CheckCircle2, RefreshCw, Filter, ShieldCheck } from 'luc
 import { formatFCFA, formatDateShort } from '@/utils/format';
 import { formatPaymentMethod } from '@/utils/paymentMethod';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/utils/errors';
 import { PageHeader } from '@/components/ui/page-header';
 import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
@@ -32,7 +34,7 @@ const KIND_BADGE: Record<string, string> = {
   // Palette catégorielle (pas de vert : réservé aux statuts/succès)
   paiement: 'bg-teal-50 dark:bg-teal-500/10 text-teal-700 dark:text-teal-300',
   acompte_client: 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300',
-  acompte_fournisseur: 'bg-warning-50 dark:bg-warning-500/10 text-warning-700 dark:text-warning-300',
+  acompte_fournisseur: 'bg-warning-50 text-warning-700',
 };
 
 interface AuditItem {
@@ -68,7 +70,7 @@ export default function CaisseAudit() {
   // jamais une réponse obsolète écraser la plus récente.
   const reqIdRef = useRef(0);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const reqId = ++reqIdRef.current;
     setLoading(true);
     setError(null);
@@ -93,14 +95,13 @@ export default function CaisseAudit() {
         return;
       }
       setError(err);
-      toast.error(err?.response?.data?.error || 'Erreur audit');
+      toast.error(getErrorMessage(err, "Erreur lors du chargement de l'audit de caisse"));
     } finally {
       if (reqId === reqIdRef.current) setLoading(false);
     }
-  };
+  }, [orphansOnly, sourceKind, dateFrom, dateTo]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, [orphansOnly, sourceKind, dateFrom, dateTo]);
+  useEffect(() => { load(); }, [load]);
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-7xl space-y-6">
@@ -121,11 +122,11 @@ export default function CaisseAudit() {
           <CardContent className="p-4">
             <div className="flex items-center gap-2">
               {orphansTotal > 0
-                ? <AlertTriangle className="h-5 w-5 text-danger-600 dark:text-danger-300" />
-                : <CheckCircle2 className="h-5 w-5 text-success-600 dark:text-success-300" />}
+                ? <AlertTriangle className="h-5 w-5 text-danger-600" />
+                : <CheckCircle2 className="h-5 w-5 text-success-600" />}
               <div>
                 <p className="text-xs text-muted-foreground">Orphelins (espèce sans caisse)</p>
-                <p className={`text-2xl font-bold ${orphansTotal > 0 ? 'text-danger-600 dark:text-danger-300' : 'text-success-600 dark:text-success-300'}`}>{orphansTotal}</p>
+                <p className={`text-2xl font-bold ${orphansTotal > 0 ? 'text-danger-600' : 'text-success-600'}`}>{orphansTotal}</p>
               </div>
             </div>
           </CardContent>
@@ -169,8 +170,12 @@ export default function CaisseAudit() {
             <Label className="text-xs">Au</Label>
             <DatePicker value={dateTo} onChange={setDateTo} className="h-9 w-44 text-sm" aria-label="Au" />
           </div>
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="checkbox" checked={orphansOnly} onChange={e => setOrphansOnly(e.target.checked)} />
+          <label htmlFor="audit-orphelins" className="flex items-center gap-2 text-sm cursor-pointer">
+            <Checkbox
+              id="audit-orphelins"
+              checked={orphansOnly}
+              onChange={e => setOrphansOnly(e.target.checked)}
+            />
             Orphelins uniquement
           </label>
           {(dateFrom || dateTo || sourceKind || orphansOnly) && (
@@ -215,7 +220,7 @@ export default function CaisseAudit() {
               </TableHeader>
               <TableBody>
                 {items.map((it) => (
-                  <TableRow key={`${it.source_kind}-${it.source_id}`} className={it.is_orphan ? 'bg-danger-50 dark:bg-danger-500/10' : ''}>
+                  <TableRow key={`${it.source_kind}-${it.source_id}`} className={it.is_orphan ? 'bg-danger-50' : ''}>
                     <TableCell className="text-xs whitespace-nowrap">{it.source_date ? formatDateShort(it.source_date) : '—'}</TableCell>
                     <TableCell>
                       <span className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${KIND_BADGE[it.source_kind] || ''}`}>

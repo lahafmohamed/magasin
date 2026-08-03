@@ -1,12 +1,14 @@
-import { useState, useEffect, useMemo } from 'react';
-import { X, Loader2, Plus, FileText } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { X, Plus, FileText } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { TableSkeleton } from '@/components/ui/skeleton';
+import { CardSkeleton, TableSkeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/loading';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { factureFournisseurService, receptionService, produitService, acompteFournisseurService } from '../services/api';
 import { TiersPicker } from '../components/TiersPicker';
 import { Tiers } from '../types';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/utils/errors';
 import { MoneyInput } from '../components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +19,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
+import { EmptyState } from '@/components/ui/empty-state';
 import { QueryState } from '@/components/ui/query-state';
 import { PageHeader } from '@/components/ui/page-header';
 import { Pagination } from '@/components/ui/pagination';
@@ -91,6 +94,9 @@ const TABLE_HEAD = 'h-auto px-1 py-1.5 font-medium text-xs';
 export default function FacturesFournisseur() {
   const [factures, setFactures] = useState<FactureFournisseur[]>([]);
   const [selectedFacture, setSelectedFacture] = useState<FactureDetail | null>(null);
+  const [selectedFactureId, setSelectedFactureId] = useState<number | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<unknown>(null);
   const [selectedFournisseur, setSelectedFournisseur] = useState<Tiers | null>(null);
   const [receptions, setReceptions] = useState<Reception[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -133,16 +139,7 @@ export default function FacturesFournisseur() {
   const [acomptesDispo, setAcomptesDispo] = useState<Array<{ id: number; montant: string; montant_restant: string; date_acompte: string; methode_paiement: string }>>([]);
   const [acompteApplyForm, setAcompteApplyForm] = useState({ acompte_id: '', montant: '' });
 
-  useEffect(() => {
-    fetchFactures();
-  }, [filterStatut, page, limit]);
-
-  useEffect(() => {
-    fetchReceptions();
-    fetchProducts();
-  }, []);
-
-  const fetchFactures = async () => {
+  const fetchFactures = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
@@ -151,22 +148,20 @@ export default function FacturesFournisseur() {
       setFactures(Array.isArray(rows) ? rows : []);
       setTotal(data.pagination?.total ?? (Array.isArray(rows) ? rows.length : 0));
       setTotalPages(data.pagination?.totalPages ?? 1);
-    } catch (error: any) {
-      console.error('Error fetching factures fournisseur:', error);
-      toast.error(error.response?.data?.error || 'Erreur chargement factures');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors du chargement des factures fournisseur'));
       setLoadError(error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterStatut, page, limit]);
 
   const fetchReceptions = async () => {
     try {
       const data = await receptionService.getAll();
       setReceptions(data.data || data);
-    } catch (error: any) {
-      console.error('Error fetching réceptions:', error);
-      toast.error(error.response?.data?.error || 'Erreur chargement réceptions');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors du chargement des réceptions'));
     }
   };
 
@@ -174,19 +169,35 @@ export default function FacturesFournisseur() {
     try {
       const data = await produitService.getAll();
       setProducts(data.data || data);
-    } catch {
-      toast.error('Erreur chargement produits');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors du chargement des produits'));
     }
   };
 
-  const handleSelectFacture = async (facture: FactureFournisseur) => {
+  const loadFactureDetail = useCallback(async (id: number) => {
+    setSelectedFactureId(id);
+    setDetailLoading(true);
+    setDetailError(null);
     try {
-      const data = await factureFournisseurService.getById(facture.id);
+      const data = await factureFournisseurService.getById(id);
       setSelectedFacture(data.data || data);
-    } catch {
-      toast.error('Erreur chargement détails');
+    } catch (error) {
+      setSelectedFacture(null);
+      setDetailError(error);
+      toast.error(getErrorMessage(error, 'Erreur lors du chargement du détail de la facture'));
+    } finally {
+      setDetailLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchFactures();
+  }, [fetchFactures]);
+
+  useEffect(() => {
+    fetchReceptions();
+    fetchProducts();
+  }, []);
 
   const addLine = () => {
     setFormData({
@@ -247,8 +258,8 @@ export default function FacturesFournisseur() {
         lignes: [],
       });
       fetchFactures();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Erreur création facture');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la création de la facture'));
     } finally {
       setSubmitting(false);
     }
@@ -261,8 +272,8 @@ export default function FacturesFournisseur() {
       setAcomptesDispo(list);
       setAcompteApplyForm({ acompte_id: '', montant: '' });
       setShowAcompteApply(true);
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Erreur chargement acomptes');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des acomptes'));
     }
   };
 
@@ -277,10 +288,10 @@ export default function FacturesFournisseur() {
       });
       toast.success('Acompte appliqué');
       setShowAcompteApply(false);
-      handleSelectFacture(selectedFacture);
+      loadFactureDetail(selectedFacture.id);
       fetchFactures();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Erreur application acompte');
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Erreur lors de l'application de l'acompte"));
     } finally {
       setSubmitting(false);
     }
@@ -300,10 +311,10 @@ export default function FacturesFournisseur() {
       toast.success('Paiement enregistré');
       setShowPaymentForm(false);
       setPaymentData({ montant: '', methode_paiement: 'virement', reference: '' });
-      handleSelectFacture(selectedFacture);
+      loadFactureDetail(selectedFacture.id);
       fetchFactures();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Erreur paiement');
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Erreur lors de l'enregistrement du paiement"));
     } finally {
       setSubmitting(false);
     }
@@ -481,7 +492,7 @@ export default function FacturesFournisseur() {
               <Button type="submit" disabled={submitting}>
                 {submitting ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Spinner className="mr-2" />
                     Création…
                   </>
                 ) : 'Créer'}
@@ -539,7 +550,7 @@ export default function FacturesFournisseur() {
                 <Button type="submit" disabled={submitting}>
                   {submitting ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Spinner className="mr-2" />
                       Enregistrement…
                     </>
                   ) : 'Enregistrer'}
@@ -610,7 +621,7 @@ export default function FacturesFournisseur() {
                   <Button type="submit" disabled={submitting}>
                     {submitting ? (
                       <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <Spinner className="mr-2" />
                         Application…
                       </>
                     ) : 'Appliquer'}
@@ -622,7 +633,7 @@ export default function FacturesFournisseur() {
         </DialogContent>
       </Dialog>
 
-      <div className={`grid grid-cols-1 gap-6 ${selectedFacture ? 'lg:grid-cols-2' : ''}`}>
+      <div className={`grid grid-cols-1 gap-6 ${selectedFactureId !== null ? 'lg:grid-cols-2' : ''}`}>
         <div className="rounded-md border bg-card shadow-sm">
           <div className="p-5">
             <h2 className="text-lg font-semibold mb-3">Factures</h2>
@@ -660,7 +671,7 @@ export default function FacturesFournisseur() {
                               <StatutBadge statut={facture.statut} />
                             </TableCell>
                             <TableCell className="px-1 py-1.5">
-                              <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => handleSelectFacture(facture)}>Voir</Button>
+                              <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => loadFactureDetail(facture.id)}>Voir</Button>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -673,7 +684,7 @@ export default function FacturesFournisseur() {
                     key={facture.id}
                     title={facture.numero_facture_interne}
                     badge={<StatutBadge statut={facture.statut} />}
-                    onClick={() => handleSelectFacture(facture)}
+                    onClick={() => loadFactureDetail(facture.id)}
                   >
                     <DataCardRow label="Fournisseur" value={facture.fournisseur_nom} />
                     <DataCardRow label="Date" value={<span className="num">{formatDateShort(facture.date_facture)}</span>} />
@@ -696,85 +707,105 @@ export default function FacturesFournisseur() {
           </div>
         </div>
 
-        {selectedFacture && (
+        {selectedFactureId !== null && (
           <div className="rounded-md border bg-card shadow-sm">
             <div className="p-5">
-              <h2 className="text-lg font-semibold mb-3">{selectedFacture.numero_facture_interne}</h2>
-              <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
-                <div className="space-y-1">
-                  <p className="text-muted-foreground">Fournisseur:</p>
-                  <p className="font-semibold">{selectedFacture.fournisseur_nom}</p>
-                  <p className="text-muted-foreground mt-2">N° facture:</p>
-                  <p className="font-semibold">{selectedFacture.numero_facture_fournisseur}</p>
-                </div>
-                <div className="space-y-1 text-right">
-                  <p className="text-muted-foreground">Date:</p>
-                  <p className="font-semibold">{formatDateShort(selectedFacture.date_facture)}</p>
-                  {selectedFacture.date_echeance && (
-                    <>
-                      <p className="text-muted-foreground mt-2">Échéance:</p>
-                      <p className="font-semibold">{formatDateShort(selectedFacture.date_echeance)}</p>
-                    </>
-                  )}
-                </div>
-                <div className="col-span-2 border-t pt-3 flex justify-between items-center">
-                  <span className="text-muted-foreground">Statut:</span>
-                  <StatutBadge statut={selectedFacture.statut} />
-                </div>
-              </div>
-
-              <div className="mb-4 p-3 bg-muted/40 rounded-md border text-sm space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Total Facture:</span>
-                  <span className="font-semibold">{formatCurrency(selectedFacture.total)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Montant payé:</span>
-                  <span className="font-semibold text-success-700 dark:text-success-400">{formatCurrency(selectedFacture.montant_paye)}</span>
-                </div>
-                <div className="flex justify-between border-t pt-1.5 font-bold">
-                  <span>Reste à payer:</span>
-                  <span className={parseFloat(selectedFacture.reste_due) > 0 ? "text-danger-600 dark:text-danger-400" : "text-success-600"}>
-                    {formatCurrency(selectedFacture.reste_due)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="rounded-md border mb-4">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow className="text-xs uppercase tracking-wide hover:bg-transparent">
-                      <TableHead className="h-auto px-3 py-2 text-xs">Produit</TableHead>
-                      <TableHead className="h-auto px-3 py-2 text-xs text-right">Qté</TableHead>
-                      <TableHead className="h-auto px-3 py-2 text-xs text-right">Prix unit.</TableHead>
-                      <TableHead className="h-auto px-3 py-2 text-xs text-right">Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {selectedFacture.lignes.map((ligne) => (
-                      <TableRow key={ligne.id}>
-                        <TableCell className="px-3 py-2">{ligne.produit_nom || ligne.description}</TableCell>
-                        <TableCell className="px-3 py-2 text-right num">{ligne.quantite}</TableCell>
-                        <TableCell className="px-3 py-2 text-right num">{formatCurrency(ligne.prix_unitaire)}</TableCell>
-                        <TableCell className="px-3 py-2 text-right font-medium num">{formatCurrency(ligne.total_ligne)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <div className="flex gap-2">
-                {selectedFacture.statut !== 'payee' && (
+              <QueryState
+                loading={detailLoading}
+                error={detailError}
+                onRetry={() => loadFactureDetail(selectedFactureId)}
+                skeleton={<CardSkeleton lines={6} />}
+              >
+                {selectedFacture && (
                   <>
-                    <Button variant="success" onClick={() => setShowPaymentForm(true)}>
-                      Enregistrer paiement
-                    </Button>
-                    <Button variant="outline" onClick={openAcompteApply}>
-                      Appliquer acompte
-                    </Button>
+                    <h2 className="text-lg font-semibold mb-3">{selectedFacture.numero_facture_interne}</h2>
+                    <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
+                      <div className="space-y-1">
+                        <p className="text-muted-foreground">Fournisseur:</p>
+                        <p className="font-semibold">{selectedFacture.fournisseur_nom}</p>
+                        <p className="text-muted-foreground mt-2">N° facture:</p>
+                        <p className="font-semibold">{selectedFacture.numero_facture_fournisseur}</p>
+                      </div>
+                      <div className="space-y-1 text-right">
+                        <p className="text-muted-foreground">Date:</p>
+                        <p className="font-semibold">{formatDateShort(selectedFacture.date_facture)}</p>
+                        {selectedFacture.date_echeance && (
+                          <>
+                            <p className="text-muted-foreground mt-2">Échéance:</p>
+                            <p className="font-semibold">{formatDateShort(selectedFacture.date_echeance)}</p>
+                          </>
+                        )}
+                      </div>
+                      <div className="col-span-2 border-t pt-3 flex justify-between items-center">
+                        <span className="text-muted-foreground">Statut:</span>
+                        <StatutBadge statut={selectedFacture.statut} />
+                      </div>
+                    </div>
+
+                    <div className="mb-4 p-3 bg-muted/40 rounded-md border text-sm space-y-1.5">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Total Facture:</span>
+                        <span className="font-semibold">{formatCurrency(selectedFacture.total)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Montant payé:</span>
+                        <span className="font-semibold text-success-700">{formatCurrency(selectedFacture.montant_paye)}</span>
+                      </div>
+                      <div className="flex justify-between border-t pt-1.5 font-bold">
+                        <span>Reste à payer:</span>
+                        <span className={parseFloat(selectedFacture.reste_due) > 0 ? "text-danger-600" : "text-success-600"}>
+                          {formatCurrency(selectedFacture.reste_due)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border mb-4">
+                      {selectedFacture.lignes.length === 0 ? (
+                        <EmptyState
+                          icon={FileText}
+                          title="Aucune ligne"
+                          description="Cette facture ne comporte aucune ligne."
+                          className="py-8"
+                        />
+                      ) : (
+                        <Table>
+                          <TableHeader className="bg-muted/50">
+                            <TableRow className="text-xs uppercase tracking-wide hover:bg-transparent">
+                              <TableHead className="h-auto px-3 py-2 text-xs">Produit</TableHead>
+                              <TableHead className="h-auto px-3 py-2 text-xs text-right">Qté</TableHead>
+                              <TableHead className="h-auto px-3 py-2 text-xs text-right">Prix unit.</TableHead>
+                              <TableHead className="h-auto px-3 py-2 text-xs text-right">Total</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {selectedFacture.lignes.map((ligne) => (
+                              <TableRow key={ligne.id}>
+                                <TableCell className="px-3 py-2">{ligne.produit_nom || ligne.description}</TableCell>
+                                <TableCell className="px-3 py-2 text-right num">{ligne.quantite}</TableCell>
+                                <TableCell className="px-3 py-2 text-right num">{formatCurrency(ligne.prix_unitaire)}</TableCell>
+                                <TableCell className="px-3 py-2 text-right font-medium num">{formatCurrency(ligne.total_ligne)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      )}
+                    </div>
+
+                    <div className="flex gap-2">
+                      {selectedFacture.statut !== 'payee' && (
+                        <>
+                          <Button variant="success" onClick={() => setShowPaymentForm(true)}>
+                            Enregistrer paiement
+                          </Button>
+                          <Button variant="outline" onClick={openAcompteApply}>
+                            Appliquer acompte
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   </>
                 )}
-              </div>
+              </QueryState>
             </div>
           </div>
         )}

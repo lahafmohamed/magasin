@@ -164,7 +164,7 @@ export function Topbar({
                 onSelect={() => {
                   void logout();
                 }}
-                className="text-danger-600 focus:bg-danger-50 focus:text-danger-700 dark:text-danger-500 dark:focus:bg-danger-500/10"
+                className="text-danger-600 focus:bg-danger-50 focus:text-danger-700"
               >
                 <LogOut className="h-4 w-4" />
                 Déconnexion

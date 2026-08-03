@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { authService } from '../services/authService';
 import { toast } from 'sonner';
-import { Loader2, Eye, EyeOff, Check, X } from 'lucide-react';
+import { Eye, EyeOff, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/loading';
 import { isStrongPassword, passwordRules, PASSWORD_POLICY_MESSAGE } from '../utils/password';
+import { getErrorMessage } from '@/utils/errors';
 
 export default function ChangePassword() {
   const { logout } = useAuth();
@@ -40,8 +42,8 @@ export default function ChangePassword() {
       await authService.changePassword(currentPassword, newPassword);
       toast.success('Mot de passe mis à jour. Veuillez vous reconnecter.');
       await logout();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Erreur lors du changement de mot de passe.');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du changement de mot de passe.'));
     } finally {
       setLoading(false);
     }
@@ -110,7 +112,7 @@ export default function ChangePassword() {
                   <li
                     key={rule.label}
                     className={`flex items-center gap-1.5 text-xs ${
-                      rule.ok ? 'text-success-600 dark:text-success-500' : 'text-muted-foreground'
+                      rule.ok ? 'text-success-600' : 'text-muted-foreground'
                     }`}
                   >
                     {rule.ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
@@ -153,7 +155,7 @@ export default function ChangePassword() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Spinner />
                   Mise à jour…
                 </>
               ) : (

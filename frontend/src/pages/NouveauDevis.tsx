@@ -13,10 +13,12 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { ArrowLeft, Check, FileText, Search, ShoppingCart, X } from 'lucide-react';
 import { formatFCFA as formatXOF } from '@/utils/format';
 import { toast } from 'sonner';
 import { getValidSalePrice } from '@/utils/salesPrice';
+import { getErrorMessage } from '@/utils/errors';
 
 interface StockLocation {
   id: number;
@@ -128,8 +130,8 @@ export default function NouveauDevis() {
         } else {
           toast.error('Aucun magasin actif disponible pour les devis');
         }
-      } catch {
-        toast.error('Impossible de charger les magasins');
+      } catch (err) {
+        toast.error(getErrorMessage(err, 'Impossible de charger les magasins'));
       }
     };
 
@@ -147,8 +149,8 @@ export default function NouveauDevis() {
           nextMap[level.produit_id] = Number(level.quantite_disponible || 0);
         }
         setLocationStockMap(nextMap);
-      } catch {
-        toast.error('Impossible de charger le stock du magasin');
+      } catch (err) {
+        toast.error(getErrorMessage(err, 'Impossible de charger le stock du magasin'));
       }
     };
     void loadLocationStock();
@@ -194,8 +196,8 @@ export default function NouveauDevis() {
             })),
           );
         }
-      } catch {
-        toast.error('Impossible de charger le devis');
+      } catch (err) {
+        toast.error(getErrorMessage(err, 'Impossible de charger le devis'));
         navigate('/devis');
       } finally {
         setEditLoading(false);
@@ -292,8 +294,8 @@ export default function NouveauDevis() {
         toast.success('Devis créé avec succès');
       }
       navigate('/devis');
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error || 'Erreur lors de la sauvegarde du devis');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors de la sauvegarde du devis'));
     }
   };
 
@@ -442,9 +444,13 @@ export default function NouveauDevis() {
                 onBlur={() => setTimeout(() => setShowProduitDropdown(false), 150)}
               />
               {showProduitDropdown && produitSearch.length >= 2 && produits.length === 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-popover border rounded-lg shadow-lg px-3 py-3 text-sm text-muted-foreground">
-                  <p>Aucun produit trouvé pour "{produitSearch}"</p>
-                  <p className="text-xs mt-1">Essayez une orthographe différente ou vérifiez le stock en magasin</p>
+                <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-popover border rounded-lg shadow-lg">
+                  <EmptyState
+                    icon={Search}
+                    title={`Aucun produit ne correspond à « ${produitSearch} »`}
+                    description="Essayez une autre orthographe ou vérifiez le stock du magasin sélectionné."
+                    className="py-6"
+                  />
                 </div>
               )}
               {showProduitDropdown && produits.length > 0 && (
@@ -561,7 +567,7 @@ export default function NouveauDevis() {
                                 <span className="font-mono">{formatXOF(ligne.prix_revient)}</span>
                               </div>
                               {prixError && (
-                                <p role="alert" className="mt-1 text-[10px] font-medium text-danger">
+                                <p role="alert" className="mt-1 text-xs font-medium text-danger">
                                   {prixError}
                                 </p>
                               )}
@@ -583,7 +589,7 @@ export default function NouveauDevis() {
                                 className="w-16 px-2 py-1 text-center text-sm border rounded font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
                               />
                               {qteError && (
-                                <p role="alert" className="mt-1 text-[10px] font-medium text-danger">
+                                <p role="alert" className="mt-1 text-xs font-medium text-danger">
                                   {qteError}
                                 </p>
                               )}
@@ -631,8 +637,13 @@ export default function NouveauDevis() {
                 </div>
               </div>
             ) : (
-              <div className="mt-4 py-8 text-center text-sm text-muted-foreground bg-muted/30 rounded-lg">
-                Aucun article ajouté au devis.
+              <div className="mt-4 bg-muted/30 rounded-lg">
+                <EmptyState
+                  icon={ShoppingCart}
+                  title="Aucun article ajouté au devis"
+                  description="Recherchez un produit ci-dessus pour l'ajouter au devis."
+                  className="py-8"
+                />
               </div>
             )}
             {lignesError && (

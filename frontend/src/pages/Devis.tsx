@@ -7,6 +7,7 @@ import { devisService } from '@/services/api';
 import { toast } from 'sonner';
 import { type StatTile } from '@/components/ui/stats-bar';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { getErrorMessage } from '@/utils/errors';
 import {
   DocumentListPage,
   useDocumentList,
@@ -62,8 +63,8 @@ export default function Devis() {
       await devisService.updateStatut(id, 'accepte');
       toast.success('Devis confirmé et bon de livraison généré');
       list.reload();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error || 'Erreur lors de la confirmation du devis');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors de la confirmation du devis'));
     }
   };
 
@@ -73,8 +74,8 @@ export default function Devis() {
       await devisService.delete(id);
       toast.success('Devis supprimé');
       list.reload();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error || 'Erreur lors de la suppression');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors de la suppression'));
     }
   };
 

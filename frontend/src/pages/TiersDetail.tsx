@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { getErrorMessage } from '@/utils/errors';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatDateShort } from '@/utils/format';
 import { formatPaymentMethod, PAYMENT_METHODS } from '@/utils/paymentMethod';
@@ -138,8 +139,8 @@ export default function TiersDetail() {
       setShowInteractionForm(false);
       setInteractionForm({ type: 'appel', sujet: '', description: '', date_rappel: '', priorite: 'normale' });
       toast.success('Interaction enregistrée');
-    } catch {
-      toast.error("Erreur lors de l'enregistrement");
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Erreur lors de l'enregistrement"));
     } finally {
       setCrmSubmitting(false);
     }
@@ -151,8 +152,8 @@ export default function TiersDetail() {
       await crmService.deleteInteraction(id);
       setInteractions(prev => prev.filter(i => i.id !== id));
       toast.success('Interaction supprimée');
-    } catch {
-      toast.error('Erreur lors de la suppression');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la suppression'));
     }
   };
 
@@ -169,8 +170,8 @@ export default function TiersDetail() {
       setShowTacheForm(false);
       setTacheForm({ titre: '', description: '', priorite: 'normale', date_echeance: '' });
       toast.success('Tâche créée');
-    } catch {
-      toast.error('Erreur lors de la création');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la création'));
     } finally {
       setCrmSubmitting(false);
     }
@@ -181,8 +182,8 @@ export default function TiersDetail() {
       await crmService.updateTacheStatut(id, 'terminee');
       setTaches(prev => prev.map(t => t.id === id ? { ...t, statut: 'terminee' } : t));
       toast.success('Tâche terminée');
-    } catch {
-      toast.error('Erreur');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Impossible de terminer la tâche'));
     }
   };
 
@@ -191,8 +192,8 @@ export default function TiersDetail() {
     try {
       await crmService.deleteTache(id);
       setTaches(prev => prev.filter(t => t.id !== id));
-    } catch {
-      toast.error('Erreur');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Impossible de supprimer la tâche'));
     }
   };
 
@@ -205,8 +206,8 @@ export default function TiersDetail() {
   ];
 
   const PRIORITE_LABELS: Record<string, { label: string; color: string }> = {
-    basse: { label: 'Basse', color: 'text-gray-500' },
-    normale: { label: 'Normale', color: 'text-blue-600' },
+    basse: { label: 'Basse', color: 'text-muted-foreground' },
+    normale: { label: 'Normale', color: 'text-info-600' },
     haute: { label: 'Haute', color: 'text-warning-600' },
     urgente: { label: 'Urgente', color: 'text-destructive' },
   };
@@ -231,8 +232,8 @@ export default function TiersDetail() {
       setRefundTarget(null);
       loadData();
       loadAcomptes();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Erreur remboursement');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur remboursement'));
     } finally {
       setSubmitting(false);
     }
@@ -270,7 +271,7 @@ export default function TiersDetail() {
       setAcompteForm(p => ({ ...p, montant: '', notes: '', reference_number: '' }));
       loadData();
       loadAcomptes();
-    } catch (err: any) { toast.error(err?.response?.data?.error || 'Erreur'); }
+    } catch (err) { toast.error(getErrorMessage(err, "Erreur lors de l'enregistrement de l'acompte client")); }
     finally { setSubmitting(false); }
   };
 
@@ -294,7 +295,7 @@ export default function TiersDetail() {
       setAcompteForm(p => ({ ...p, montant: '', notes: '', reference_number: '' }));
       loadData();
       loadAcomptes();
-    } catch (err: any) { toast.error(err?.response?.data?.error || 'Erreur'); }
+    } catch (err) { toast.error(getErrorMessage(err, "Erreur lors de l'enregistrement de l'acompte fournisseur")); }
     finally { setSubmitting(false); }
   };
 
@@ -308,7 +309,7 @@ export default function TiersDetail() {
       loadData();
       const comps = await tiersService.getCompensations(tiersId);
       setCompensations(comps);
-    } catch (err: any) { toast.error(err?.response?.data?.error || 'Erreur compensation'); }
+    } catch (err) { toast.error(getErrorMessage(err, 'Erreur compensation')); }
     finally { setSubmitting(false); }
   };
 
@@ -317,7 +318,7 @@ export default function TiersDetail() {
       await tiersService.recomputeAllocation(tiersId);
       toast.success('Allocation FIFO recalculée');
       loadData();
-    } catch { toast.error('Erreur recalcul'); }
+    } catch (err) { toast.error(getErrorMessage(err, 'Erreur recalcul')); }
   };
 
   if (loading || error || !data) {
@@ -506,7 +507,16 @@ export default function TiersDetail() {
             </TableHeader>
             <TableBody>
               {mouvements.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground text-sm">Aucun mouvement</TableCell></TableRow>
+                <TableRow>
+                  <TableCell colSpan={6} className="p-0 sm:p-0">
+                    <EmptyState
+                      icon={FileText}
+                      title="Aucun mouvement sur ce compte"
+                      description="Aucune facture, aucun paiement ni acompte sur la période sélectionnée."
+                      className="py-8"
+                    />
+                  </TableCell>
+                </TableRow>
               ) : pagedMouvements.map((m: any, i: number) => {
                 const meta = TYPE_LABELS[m.type] || { label: m.type, color: '' };
                 const getDocumentLink = (movement: any): string | null => {
@@ -667,7 +677,7 @@ export default function TiersDetail() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-sm font-medium">{item.sujet}</p>
-                        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => handleDeleteInteraction(item.id)}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => handleDeleteInteraction(item.id)} aria-label="Supprimer cette interaction">
                           <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
                         </Button>
                       </div>
@@ -729,7 +739,7 @@ export default function TiersDetail() {
                             <CheckCircle2 className="h-3.5 w-3.5 text-success-600" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleDeleteTache(t.id)}>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleDeleteTache(t.id)} aria-label="Supprimer cette tâche">
                           <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
                         </Button>
                       </div>

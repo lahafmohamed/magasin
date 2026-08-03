@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Spinner } from '@/components/ui/loading';
 import { formatCurrency } from '../utils/format';
 
 type ResultType = 'produit' | 'tiers' | 'facture' | 'devis' | 'bon de livraison' | 'commande';
@@ -202,6 +203,7 @@ export function GlobalSearch() {
           <div className="flex items-center gap-2">
             <Search className="h-4 w-4 text-muted-foreground" />
             <Input
+              aria-label="Rechercher dans toute l'application"
               placeholder="Rechercher produits, contacts, factures, devis, BL, commandes…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -222,7 +224,7 @@ export function GlobalSearch() {
         <div id="global-search-results" role="listbox" className="max-h-[60vh] overflow-y-auto">
           {loading && (
             <div className="flex justify-center py-8">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <Spinner size="md" className="text-primary" />
             </div>
           )}
           

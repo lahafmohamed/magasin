@@ -1,6 +1,8 @@
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Link, useLocation } from 'react-router-dom';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Dialog, DialogClose, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog';
 import { useNavCategories, DASHBOARD_ITEM, NavItem } from './navConfig';
 
 function isPathActive(pathname: string, path: string) {
@@ -140,28 +142,38 @@ export function Sidebar({
       </aside>
 
       {/* Mobile drawer */}
-      {mobileOpen && (
-        <div className="lg:hidden fixed inset-0 z-50">
-          <div
-            className="fixed inset-0 bg-black/50 animate-in fade-in-0 duration-200"
-            onClick={onCloseMobile}
-            aria-hidden="true"
-          />
-          <aside className="fixed inset-y-0 left-0 w-72 max-w-[80vw] flex flex-col border-r bg-background animate-in slide-in-from-left duration-200">
-            <div className="flex h-14 items-center justify-between border-b px-3">
-              <Brand collapsed={false} />
-              <button
-                onClick={onCloseMobile}
-                aria-label="Fermer le menu"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <NavList collapsed={false} onNavigate={onCloseMobile} />
-          </aside>
-        </div>
-      )}
+      <MobileDrawer open={mobileOpen} onClose={onCloseMobile} />
     </>
+  );
+}
+
+/**
+ * Tiroir de navigation mobile. Monté via Radix Dialog pour hériter du piège de
+ * focus, de la fermeture par Échap, du verrou de défilement et du retour du
+ * focus sur le bouton déclencheur — que la version faite main n'avait pas.
+ */
+function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogPortal>
+        <DialogOverlay className="lg:hidden" />
+        <DialogPrimitive.Content
+          className="lg:hidden fixed inset-y-0 left-0 z-50 flex w-72 max-w-[80vw] flex-col border-r bg-background outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left duration-200"
+          aria-label="Menu de navigation"
+        >
+          <DialogTitle className="sr-only">Menu de navigation</DialogTitle>
+          <div className="flex h-14 items-center justify-between border-b px-3">
+            <Brand collapsed={false} />
+            <DialogClose
+              aria-label="Fermer le menu"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </DialogClose>
+          </div>
+          <NavList collapsed={false} onNavigate={onClose} />
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    </Dialog>
   );
 }

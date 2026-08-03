@@ -11,9 +11,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { MoneyInput } from '@/components/ui/money-input';
-import { BookOpen, Search, FileText, Scale, Calendar, FileDown, Plus, Trash2, Loader2 } from 'lucide-react';
+import { BookOpen, Search, FileText, Scale, Calendar, FileDown, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { QueryState } from '@/components/ui/query-state';
+import { Spinner } from '@/components/ui/loading';
+import { getErrorMessage } from '@/utils/errors';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/ui/page-header';
@@ -73,7 +75,7 @@ export default function ComptabilitePage() {
     try {
       const data = await comptabiliteService.getJournal({ date_debut: dateDebut, date_fin: dateFin, journal: journalFilter || undefined });
       setJournalData(data);
-    } catch (e) { setError(e); toast.error('Erreur chargement journal'); }
+    } catch (e) { setError(e); setJournalData([]); toast.error(getErrorMessage(e, 'Erreur chargement journal')); }
     finally { setLoading(false); }
   };
 
@@ -82,7 +84,7 @@ export default function ComptabilitePage() {
     try {
       const data = await comptabiliteService.getBalance(dateDebut, dateFin);
       setBalanceData(data?.filter((r: any) => Math.abs(parseFloat(r.total_debit)) > 0 || Math.abs(parseFloat(r.total_credit)) > 0));
-    } catch (e) { setError(e); toast.error('Erreur chargement balance'); }
+    } catch (e) { setError(e); setBalanceData([]); toast.error(getErrorMessage(e, 'Erreur chargement balance')); }
     finally { setLoading(false); }
   };
 
@@ -91,7 +93,7 @@ export default function ComptabilitePage() {
     try {
       const data = await comptabiliteService.getPlanComptable(planClasse);
       setPlanData(data);
-    } catch (e) { setError(e); toast.error('Erreur chargement plan comptable'); }
+    } catch (e) { setError(e); setPlanData([]); toast.error(getErrorMessage(e, 'Erreur chargement plan comptable')); }
     finally { setLoading(false); }
   };
 
@@ -101,7 +103,7 @@ export default function ComptabilitePage() {
     try {
       const data = await comptabiliteService.getGrandLivre(compteSelected, dateDebut, dateFin);
       setGrandLivreData(data);
-    } catch (e) { setError(e); toast.error('Erreur chargement grand-livre'); }
+    } catch (e) { setError(e); setGrandLivreData([]); toast.error(getErrorMessage(e, 'Erreur chargement grand-livre')); }
     finally { setLoading(false); }
   };
 
@@ -136,12 +138,12 @@ export default function ComptabilitePage() {
 
   const exportBilan = async () => {
     try { openBlob(await generalLedgerService.exportBalanceSheetPdf(dateFin)); }
-    catch { toast.error('Erreur lors de la génération du bilan'); }
+    catch (e) { toast.error(getErrorMessage(e, 'Erreur lors de la génération du bilan')); }
   };
 
   const exportCompteResultat = async () => {
     try { openBlob(await generalLedgerService.exportIncomeStatementPdf(dateDebut, dateFin)); }
-    catch { toast.error('Erreur lors de la génération du compte de résultat'); }
+    catch (e) { toast.error(getErrorMessage(e, 'Erreur lors de la génération du compte de résultat')); }
   };
 
   // ===== Nouvelle écriture =====
@@ -150,7 +152,7 @@ export default function ComptabilitePage() {
     if (comptes.length === 0) {
       comptabiliteService.getPlanComptable()
         .then(data => setComptes(data || []))
-        .catch(() => toast.error('Erreur chargement du plan comptable'));
+        .catch(e => toast.error(getErrorMessage(e, 'Erreur chargement du plan comptable')));
     }
   };
 
@@ -196,11 +198,8 @@ export default function ComptabilitePage() {
       resetPiece();
       // Le journal actif se recharge tout de suite ; sinon l'effet [tab] le rechargera.
       if (tab === 'journal') loadJournal();
-    } catch (e: any) {
-      let msg: string = e?.response?.data?.error || e?.message || "Erreur lors de l'enregistrement de l'écriture";
-      // Erreur FK brute (compte absent du plan comptable) → message lisible.
-      if (/violates|constraint/i.test(msg)) msg = 'Compte inconnu ou données invalides';
-      toast.error(msg);
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Erreur lors de l'enregistrement de l'écriture"));
     } finally {
       setSaving(false);
     }
@@ -604,7 +603,7 @@ export default function ComptabilitePage() {
                 Annuler
               </Button>
               <Button onClick={submitPiece} disabled={!canSubmit} className="gap-1">
-                {saving && <Loader2 className="h-4 w-4 animate-spin" />} Enregistrer
+                {saving && <Spinner />} Enregistrer
               </Button>
             </DialogFooter>
           </DialogContent>

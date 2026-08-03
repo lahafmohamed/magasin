@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { produitService } from '../services/api';
 import { formatFCFA as formatXOF } from '../utils/format';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,8 +6,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { QueryState } from '@/components/ui/query-state';
+import { PageLoading } from '@/components/ui/loading';
 import { Package, DollarSign, TrendingUp, BarChart3, Download } from 'lucide-react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/utils/errors';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { downloadCsv } from '../utils/csv';
 import {
@@ -22,15 +25,11 @@ export default function StockValuation() {
   const [valuation, setValuation] = useState<any>(null);
   const [byCategory, setByCategory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<unknown>(null);
 
-  useEffect(() => {
-    loadValuation();
-  }, []);
-
-  const loadValuation = async () => {
+  const loadValuation = useCallback(async () => {
     setLoading(true);
-    setError(false);
+    setError(null);
     try {
       const [valuationData, categoryData] = await Promise.all([
         produitService.getStockValuation(),
@@ -53,13 +52,18 @@ export default function StockValuation() {
         valeur_vente: parseFloat(cat.valeur_vente),
       })));
     } catch (err) {
-      setError(true);
-      toast.error('Erreur lors du chargement');
-      console.error(err);
+      setError(err);
+      setValuation(null);
+      setByCategory([]);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement de la valorisation'));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadValuation();
+  }, [loadValuation]);
 
   const exportToCSV = () => {
     const headers = ['Catégorie', 'Produits', 'Unités', 'Valeur Achat', 'Valeur Vente', 'Marge'];
@@ -76,29 +80,6 @@ export default function StockValuation() {
     toast.success('Export CSV réussi');
   };
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-      </div>
-    );
-  }
-
-  // Distinguish a fetch failure from a genuinely empty valuation: on error the
-  // body was silently hidden behind `{valuation && …}` with only a fading toast.
-  if (error && !valuation) {
-    return (
-      <div className="p-3 sm:p-6 w-full">
-        <EmptyState
-          icon={BarChart3}
-          title="Impossible de charger la valorisation"
-          description="Une erreur est survenue. Vérifiez votre connexion et réessayez."
-          action={<Button onClick={loadValuation}>Réessayer</Button>}
-        />
-      </div>
-    );
-  }
-
   const margePercent = valuation ? ((valuation.marge_potentielle / valuation.valeur_achat) * 100).toFixed(1) : 0;
 
   return (
@@ -111,12 +92,18 @@ export default function StockValuation() {
           </h1>
           <p className="text-muted-foreground mt-1">Analyse de la valeur de votre inventaire</p>
         </div>
-        <Button onClick={exportToCSV} className="gap-2">
+        <Button onClick={exportToCSV} className="gap-2" disabled={byCategory.length === 0}>
           <Download className="h-4 w-4" />
           Exporter CSV
         </Button>
       </div>
 
+      <QueryState
+        loading={loading}
+        error={error}
+        onRetry={loadValuation}
+        skeleton={<PageLoading />}
+      >
       {/* Summary Cards */}
       {valuation && (
         <>
@@ -174,7 +161,11 @@ export default function StockValuation() {
             </CardHeader>
             <CardContent>
               {byCategory.length === 0 ? (
-                <EmptyState icon={BarChart3} title="Aucune donnée" description="Aucune valeur de stock à afficher." />
+                <EmptyState
+                  icon={BarChart3}
+                  title="Aucune catégorie valorisée"
+                  description="Aucun produit en stock à répartir par catégorie."
+                />
               ) : (
                 <ResponsiveContainer width="100%" height={300} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
                   <BarChart accessibilityLayer data={byCategory}>
@@ -200,37 +191,46 @@ export default function StockValuation() {
           <CardDescription>Répartition complète de l'inventaire</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Catégorie</TableHead>
-                <TableHead className="text-right">Produits</TableHead>
-                <TableHead className="text-right">Unités</TableHead>
-                <TableHead className="text-right">Valeur Achat</TableHead>
-                <TableHead className="text-right">Valeur Vente</TableHead>
-                <TableHead className="text-right">Marge</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {byCategory.map((cat) => {
-                const marge = cat.valeur_vente - cat.valeur_achat;
-                return (
-                  <TableRow key={cat.categorie}>
-                    <TableCell className="font-semibold">{cat.categorie}</TableCell>
-                    <TableCell className="text-right">{cat.nombre_produits}</TableCell>
-                    <TableCell className="text-right">{cat.total_unites}</TableCell>
-                    <TableCell className="text-right">{formatXOF(cat.valeur_achat)}</TableCell>
-                    <TableCell className="text-right font-bold">{formatXOF(cat.valeur_vente)}</TableCell>
-                    <TableCell className="text-right">
-                      <Badge variant="success">{formatXOF(marge)}</Badge>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          {byCategory.length === 0 ? (
+            <EmptyState
+              icon={Package}
+              title="Aucune catégorie à détailler"
+              description="Aucun produit en stock pour alimenter le détail par catégorie."
+            />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Catégorie</TableHead>
+                  <TableHead className="text-right">Produits</TableHead>
+                  <TableHead className="text-right">Unités</TableHead>
+                  <TableHead className="text-right">Valeur Achat</TableHead>
+                  <TableHead className="text-right">Valeur Vente</TableHead>
+                  <TableHead className="text-right">Marge</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {byCategory.map((cat) => {
+                  const marge = cat.valeur_vente - cat.valeur_achat;
+                  return (
+                    <TableRow key={cat.categorie}>
+                      <TableCell className="font-semibold">{cat.categorie}</TableCell>
+                      <TableCell className="text-right">{cat.nombre_produits}</TableCell>
+                      <TableCell className="text-right">{cat.total_unites}</TableCell>
+                      <TableCell className="text-right">{formatXOF(cat.valeur_achat)}</TableCell>
+                      <TableCell className="text-right font-bold">{formatXOF(cat.valeur_vente)}</TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant="success">{formatXOF(marge)}</Badge>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
+      </QueryState>
     </div>
   );
 }

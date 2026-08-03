@@ -12,10 +12,26 @@ function Skeleton({
   )
 }
 
+/**
+ * Enveloppe commune aux squelettes : annonce le chargement aux lecteurs d'écran
+ * (les barres elles-mêmes n'ont aucun texte, elles ne sont donc pas restituées).
+ */
+function SkeletonRegion({
+  className,
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div role="status" aria-busy="true" aria-label="Chargement…" className={className} {...props}>
+      {children}
+    </div>
+  )
+}
+
 // Table skeleton for loading states
 export function TableSkeleton({ rows = 10, columns = 6 }: { rows?: number; columns?: number }) {
   return (
-    <div className="space-y-3">
+    <SkeletonRegion className="space-y-3">
       {/* Header skeleton */}
       <div className="flex gap-4 p-4 border-b">
         {Array.from({ length: columns }).map((_, i) => (
@@ -42,27 +58,27 @@ export function TableSkeleton({ rows = 10, columns = 6 }: { rows?: number; colum
           ))}
         </div>
       ))}
-    </div>
+    </SkeletonRegion>
   )
 }
 
 // Card skeleton for dashboard items
 export function CardSkeleton({ lines = 3 }: { lines?: number }) {
   return (
-    <div className="p-6 space-y-3">
+    <SkeletonRegion className="p-6 space-y-3">
       <Skeleton className="h-6 w-3/4" />
       {Array.from({ length: lines }).map((_, i) => (
         <Skeleton key={i} className="h-4 w-full" />
       ))}
       <Skeleton className="h-8 w-1/2 mt-4" />
-    </div>
+    </SkeletonRegion>
   )
 }
 
 // Form skeleton for loading forms
 export function FormSkeleton({ fields = 5 }: { fields?: number }) {
   return (
-    <div className="space-y-4">
+    <SkeletonRegion className="space-y-4">
       {Array.from({ length: fields }).map((_, i) => (
         <div key={i} className="space-y-2">
           <Skeleton className="h-4 w-24" />
@@ -73,14 +89,14 @@ export function FormSkeleton({ fields = 5 }: { fields?: number }) {
         <Skeleton className="h-10 w-24" />
         <Skeleton className="h-10 w-16" />
       </div>
-    </div>
+    </SkeletonRegion>
   )
 }
 
 // List skeleton for item lists
 export function ListSkeleton({ items = 8 }: { items?: number }) {
   return (
-    <div className="space-y-3">
+    <SkeletonRegion className="space-y-3">
       {Array.from({ length: items }).map((_, i) => (
         <div key={i} className="flex items-center gap-4 p-3 border-b">
           <Skeleton className="h-10 w-10 rounded-full" />
@@ -91,14 +107,14 @@ export function ListSkeleton({ items = 8 }: { items?: number }) {
           <Skeleton className="h-8 w-20" />
         </div>
       ))}
-    </div>
+    </SkeletonRegion>
   )
 }
 
 // Dashboard skeleton
 export function DashboardSkeleton() {
   return (
-    <div className="space-y-6" data-testid="dashboard-skeleton">
+    <SkeletonRegion className="space-y-6" data-testid="dashboard-skeleton">
       {/* Stats cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, i) => (
@@ -123,8 +139,8 @@ export function DashboardSkeleton() {
         <Skeleton className="h-6 w-32 mb-4" />
         <TableSkeleton rows={5} columns={4} />
       </div>
-    </div>
+    </SkeletonRegion>
   )
 }
 
-export { Skeleton }
+export { Skeleton, SkeletonRegion }

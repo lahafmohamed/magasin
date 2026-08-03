@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { commandeService, produitService } from '../services/api';
 import { formatCurrency } from '@/utils/format';
+import { getErrorMessage } from '@/utils/errors';
 import { Button } from '@/components/ui/button';
 import StatusBadge from '@/components/StatusBadge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -13,11 +14,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { TiersPicker } from '../components/TiersPicker';
 import { AttachmentPanel } from '../components/AttachmentPanel';
+import { PageLoading, Spinner } from '@/components/ui/loading';
 import { Tiers } from '../types';
-import { 
-  ArrowLeft, ShoppingCart, Truck, CheckCircle, Clock, 
+import {
+  ArrowLeft, ShoppingCart, Truck, CheckCircle, Clock,
   XCircle, Package, Printer, Edit, Save, Search,
-  Trash2, BookOpen, X, Loader2, Calendar, Download
+  Trash2, BookOpen, X, AlertCircle, RefreshCw, Calendar, Download
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -29,6 +31,7 @@ export default function CommandeDetail() {
   const [commande, setCommande] = useState<any>(null);
   const [lignes, setLignes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [match, setMatch] = useState<any>(null);
   const [matchLoading, setMatchLoading] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
@@ -39,8 +42,8 @@ export default function CommandeDetail() {
     setDownloadingPdf(true);
     try {
       await commandeService.downloadPdf(Number(id), commande?.numero_commande);
-    } catch {
-      toast.error('Erreur lors de la génération du bon de commande');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la génération du bon de commande'));
     } finally {
       setDownloadingPdf(false);
     }
@@ -62,37 +65,41 @@ export default function CommandeDetail() {
   const [catalogSearch, setCatalogSearch] = useState('');
   const [catalogCategory, setCatalogCategory] = useState('all');
 
-  useEffect(() => {
-    loadCommande();
-    loadMatch();
-  }, [id]);
-
-  const loadMatch = async () => {
+  const loadMatch = useCallback(async () => {
     if (!id) return;
     setMatchLoading(true);
     try {
       setMatch(await commandeService.getMatch(parseInt(id)));
-    } catch {
+    } catch (err) {
       setMatch(null);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement du rapprochement 3 voies'));
     } finally {
       setMatchLoading(false);
     }
-  };
+  }, [id]);
 
-  const loadCommande = async () => {
+  const loadCommande = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    setError(null);
     try {
       const data = await commandeService.getById(parseInt(id));
       setCommande(data);
       setLignes(data.lignes || []);
-    } catch (error) {
-      toast.error('Erreur lors du chargement de la commande');
-      console.error(error);
+    } catch (err) {
+      setCommande(null);
+      setLignes([]);
+      setError(err);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement de la commande'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    loadCommande();
+    loadMatch();
+  }, [loadCommande, loadMatch]);
 
   const startEditing = () => {
     if (!commande) return;
@@ -139,9 +146,8 @@ export default function CommandeDetail() {
       toast.success('Commande mise à jour avec succès');
       setIsEditing(false);
       loadCommande();
-    } catch (error) {
-      toast.error('Erreur lors de la mise à jour de la commande');
-      console.error(error);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la mise à jour de la commande'));
     } finally {
       setSaving(false);
     }
@@ -150,7 +156,10 @@ export default function CommandeDetail() {
   // Product Autocomplete inside editor
   useEffect(() => {
     if (produitSearch.length >= 2) {
-      produitService.searchFuzzy(produitSearch, 10, 0.1).then(setProduits).catch(console.error);
+      produitService
+        .searchFuzzy(produitSearch, 10, 0.1)
+        .then(setProduits)
+        .catch((err) => toast.error(getErrorMessage(err, 'Erreur lors de la recherche de produits')));
     } else {
       setProduits([]);
     }
@@ -161,8 +170,9 @@ export default function CommandeDetail() {
     try {
       const data = await produitService.getAll(undefined, undefined, false, 1, 100);
       setCatalogProducts(data.data || data || []);
-    } catch (error) {
-      console.error(error);
+    } catch (err) {
+      setCatalogProducts([]);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement du catalogue'));
     } finally {
       setCatalogLoading(false);
     }
@@ -222,8 +232,8 @@ export default function CommandeDetail() {
       await commandeService.updateStatut(parseInt(id), statut);
       loadCommande();
       toast.success('Statut mis à jour');
-    } catch {
-      toast.error('Erreur lors de la mise à jour');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la mise à jour'));
     }
   };
 
@@ -303,11 +313,26 @@ export default function CommandeDetail() {
   const catalogCategories = Array.from(new Set(catalogProducts.map(p => p.categorie).filter(Boolean)));
 
   if (loading) {
+    return <PageLoading message="Chargement de la commande…" />;
+  }
+
+  if (error) {
     return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-muted-foreground">Chargement de la commande...</p>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 text-center" role="alert">
+        <AlertCircle className="h-12 w-12 text-destructive opacity-80" />
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold">Échec du chargement</h2>
+          <p className="text-muted-foreground">{getErrorMessage(error, 'Erreur lors du chargement de la commande')}</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate('/commandes')}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Retour aux commandes
+          </Button>
+          <Button onClick={loadCommande} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Réessayer
+          </Button>
         </div>
       </div>
     );
@@ -452,7 +477,7 @@ export default function CommandeDetail() {
                             </div>
                             <div className="text-right">
                               <p className="text-sm font-bold text-primary">{formatCurrency(p.prix_achat)}</p>
-                              <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
+                              <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${isLowStock ? 'bg-warning-100 text-warning-800' : 'bg-success-100 text-success-800'}`}>
                                 Stock: {p.stock} (Min: {p.stock_min})
                               </p>
                             </div>
@@ -492,7 +517,7 @@ export default function CommandeDetail() {
                                 <div>
                                   <p className="font-semibold text-sm">{ligne.produit_nom}</p>
                                   <div className="flex gap-2 items-center mt-1">
-                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
+                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${isLowStock ? 'bg-warning-100 text-warning-800' : 'bg-success-100 text-success-800'}`}>
                                       Stock: {ligne.stock} / Min: {ligne.stock_min}
                                     </span>
                                   </div>
@@ -554,7 +579,7 @@ export default function CommandeDetail() {
               <Button type="submit" disabled={saving || !selectedFournisseur || lignes.length === 0} className="shadow-lg shadow-primary/20">
                 {saving ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    <Spinner className="mr-2" />
                     Enregistrement...
                   </>
                 ) : (
@@ -620,7 +645,7 @@ export default function CommandeDetail() {
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {catalogLoading ? (
               <div className="flex justify-center items-center py-12">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                <Spinner size="md" className="text-muted-foreground" />
               </div>
             ) : filteredCatalog.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground text-sm">
@@ -637,7 +662,7 @@ export default function CommandeDetail() {
                       <p className="text-xs font-mono text-muted-foreground">{p.reference}</p>
                       <div className="flex gap-2 items-center mt-1">
                         <span className="text-xs font-bold text-primary">{formatCurrency(p.prix_achat)}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isLowStock ? 'bg-warning-100 text-warning-800' : 'bg-success-100 text-success-800'}`}>
                           Stock: {p.stock} (Min: {p.stock_min})
                         </span>
                       </div>
@@ -723,7 +748,7 @@ export default function CommandeDetail() {
             className="gap-2"
           >
             {downloadingPdf ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Spinner />
             ) : (
               <Download className="h-4 w-4" />
             )}
@@ -750,9 +775,9 @@ export default function CommandeDetail() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold flex items-center gap-2">
             {match ? (
-              match.coherent ? <CheckCircle className="h-5 w-5 text-success-600 dark:text-success-300" />
+              match.coherent ? <CheckCircle className="h-5 w-5 text-success-600" />
                 : match.within_tolerance ? <Clock className="h-5 w-5 text-warning-500" />
-                : <XCircle className="h-5 w-5 text-danger-600 dark:text-danger-300" />
+                : <XCircle className="h-5 w-5 text-danger-600" />
             ) : <Package className="h-5 w-5 text-muted-foreground" />}
             Rapprochement 3 voies
           </CardTitle>
@@ -760,13 +785,13 @@ export default function CommandeDetail() {
         </CardHeader>
         <CardContent>
           {matchLoading ? (
-            <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin" /></div>
+            <div className="flex justify-center py-6"><Spinner size="md" /></div>
           ) : !match || match.lignes.length === 0 ? (
             <p className="text-sm text-muted-foreground">Aucune donnée de rapprochement.</p>
           ) : (
             <>
               {match.violations?.length > 0 && (
-                <div className="mb-3 rounded-md border border-danger-300 dark:border-danger-500/30 bg-danger-50 dark:bg-danger-500/10 p-3 text-sm text-danger-800 dark:text-danger-200">
+                <div className="mb-3 rounded-md border border-danger-300 bg-danger-50 p-3 text-sm text-danger-800">
                   <p className="font-medium">Écarts détectés{match.config?.bloquer ? ' (création de facture bloquée)' : ' (avertissement)'} :</p>
                   <ul className="list-disc pl-5 mt-1">
                     {match.violations.map((v: any, i: number) => (
@@ -798,9 +823,9 @@ export default function CommandeDetail() {
                         <TableCell className="text-right num">{l.prix_commande ?? '—'}</TableCell>
                         <TableCell className="text-right num">{l.prix_facture ?? '—'}</TableCell>
                         <TableCell className="text-center">
-                          {l.coherent ? <CheckCircle className="h-4 w-4 text-success-600 dark:text-success-300 inline" />
+                          {l.coherent ? <CheckCircle className="h-4 w-4 text-success-600 inline" />
                             : l.within_tolerance ? <Clock className="h-4 w-4 text-warning-500 inline" />
-                            : <XCircle className="h-4 w-4 text-danger-600 dark:text-danger-300 inline" />}
+                            : <XCircle className="h-4 w-4 text-danger-600 inline" />}
                         </TableCell>
                       </TableRow>
                     ))}

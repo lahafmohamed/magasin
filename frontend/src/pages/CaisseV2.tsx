@@ -34,11 +34,13 @@ import {
   ArrowLeftRight,
   History,
   Eye,
-  Loader2,
   AlertTriangle
 } from 'lucide-react';
 import { ListSkeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/loading';
+import { EmptyState } from '@/components/ui/empty-state';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/utils/errors';
 import { formatFCFA as formatXOF } from '../utils/format';
 import { formatPaymentMethod } from '../utils/paymentMethod';
 import { api } from '../services/api';
@@ -286,8 +288,8 @@ export default function CaisseV2() {
       if (data && data.length === 1) {
         setSelectedMagasin(data[0].id);
       }
-    } catch {
-      toast.error('Erreur lors du chargement des magasins');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des magasins'));
     }
   };
 
@@ -301,8 +303,8 @@ export default function CaisseV2() {
       } else {
         setMouvements([]);
       }
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || error.message || 'Erreur lors du chargement de la caisse');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors du chargement de la caisse'));
     } finally {
       setLoading(false);
     }
@@ -343,7 +345,7 @@ export default function CaisseV2() {
       } else if (error.response?.status === 403) {
         toast.error('Accès refusé');
       } else {
-        toast.error(error.response?.data?.error || error.message || 'Erreur lors de l\'ouverture');
+        toast.error(getErrorMessage(error, "Erreur lors de l'ouverture de la caisse"));
       }
     } finally {
       setOpening(false);
@@ -360,10 +362,11 @@ export default function CaisseV2() {
       const { data } = await api.get(`/caisse/cloture-preview/${sessionId}${qs}`);
       if (reqId !== previewReqId.current) return; // stale response — a newer request superseded it
       dispatchClose({ type: 'previewLoaded', preview: data });
-    } catch (e: any) {
+    } catch (e) {
       if (reqId !== previewReqId.current) return; // stale response
-      dispatchClose({ type: 'previewError', error: e.response?.data?.error || e.message || 'Erreur preview' });
-      toast.error(e.response?.data?.error || e.message || 'Erreur preview');
+      const message = getErrorMessage(e, 'Erreur lors du calcul de la clôture');
+      dispatchClose({ type: 'previewError', error: message });
+      toast.error(message);
     }
   };
 
@@ -419,8 +422,8 @@ export default function CaisseV2() {
       toast.success(response.data?.message || 'Caisse clôturée avec succès');
       closeCloseDialog();
       loadSession(selectedMagasin!);
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || error.message || 'Erreur lors de la clôture');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors de la clôture'));
     } finally {
       setClosing(false);
     }
@@ -455,8 +458,8 @@ export default function CaisseV2() {
       setDiversDialog(false);
       resetDiversForm();
       loadSession(selectedMagasin!);
-    } catch (e: any) {
-      toast.error(e.response?.data?.error || e.message || 'Erreur réseau');
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Erreur lors de l'enregistrement du mouvement"));
     } finally {
       setDiversSubmitting(false);
     }
@@ -475,9 +478,9 @@ export default function CaisseV2() {
 
   const getTypeBadge = (type: string) => {
     if (type === 'encaissement') {
-      return <Badge className="bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200">Entrée</Badge>;
+      return <Badge className="bg-success-100 text-success-800">Entrée</Badge>;
     }
-    return <Badge className="bg-danger-100 dark:bg-danger-500/20 text-danger-800 dark:text-danger-200">Sortie</Badge>;
+    return <Badge className="bg-danger-100 text-danger-800">Sortie</Badge>;
   };
 
   const getCategorieLabel = (categorie: string) => {
@@ -566,20 +569,20 @@ export default function CaisseV2() {
       {selectedMagasin && session && !loading && (
         <>
           {session.requires_manager_action && (
-            <Card className="p-4 mb-4 border-danger-300 bg-danger-50 dark:border-danger-500/40 dark:bg-danger-500/10">
+            <Card className="p-4 mb-4 border-danger-300 bg-danger-50">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-3">
-                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger-700 dark:text-danger-300" />
+                  <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-danger-700" />
                   <div>
-                    <p className="font-semibold text-danger-900 dark:text-danger-100">
+                    <p className="font-semibold text-danger-900">
                       Session de caisse trop ancienne
                     </p>
-                    <p className="text-sm text-danger-800 dark:text-danger-200">
+                    <p className="text-sm text-danger-800">
                       Ouverte depuis {Math.floor(session.session_age_hours / 24)} jour(s).
                       {' '}Elle doit être contrôlée et clôturée avant de poursuivre les opérations courantes.
                     </p>
                     {staleSessionNeedsManager && (
-                      <p className="mt-1 text-sm font-medium text-danger-900 dark:text-danger-100">
+                      <p className="mt-1 text-sm font-medium text-danger-900">
                         Demandez l’intervention d’un manager.
                       </p>
                     )}
@@ -596,18 +599,18 @@ export default function CaisseV2() {
           )}
 
           {/* Status bar */}
-          <Card className="p-4 mb-6 bg-success-50 dark:bg-success-500/10 border-success-200 dark:border-success-500/30">
+          <Card className="p-4 mb-6 bg-success-50 border-success-200">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-3 h-3 rounded-full bg-success-500 animate-pulse" />
                 <div>
-                  <span className="font-semibold text-success-900 dark:text-success-200">Caisse ouverte</span>
-                  <span className="text-success-700 dark:text-success-300 text-sm ml-2">
+                  <span className="font-semibold text-success-900">Caisse ouverte</span>
+                  <span className="text-success-700 text-sm ml-2">
                     depuis {formatDateTime(session.date_ouverture)}
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-4 text-sm text-success-800 dark:text-success-200">
+              <div className="flex items-center gap-4 text-sm text-success-800">
                 <span>Fond initial : {formatXOF(session.fond_initial)}</span>
                 <span>|</span>
                 <span>Ouverte par : {session.ouvert_par_username}</span>
@@ -619,12 +622,12 @@ export default function CaisseV2() {
           <div className="grid gap-4 md:grid-cols-4 mb-6">
             <Card className="p-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-success-100 dark:bg-success-500/20 flex items-center justify-center">
-                  <TrendingUp className="h-5 w-5 text-success-600 dark:text-success-300" />
+                <div className="w-10 h-10 rounded-full bg-success-100 flex items-center justify-center">
+                  <TrendingUp className="h-5 w-5 text-success-600" />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Encaissements</p>
-                  <p className="text-xl font-bold text-success-600 dark:text-success-300">
+                  <p className="text-xl font-bold text-success-600">
                     {formatXOF(session.total_encaissements)}
                   </p>
                 </div>
@@ -633,12 +636,12 @@ export default function CaisseV2() {
 
             <Card className="p-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-danger-100 dark:bg-danger-500/20 flex items-center justify-center">
-                  <TrendingDown className="h-5 w-5 text-danger-600 dark:text-danger-300" />
+                <div className="w-10 h-10 rounded-full bg-danger-100 flex items-center justify-center">
+                  <TrendingDown className="h-5 w-5 text-danger-600" />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Décaissements</p>
-                  <p className="text-xl font-bold text-danger-600 dark:text-danger-300">
+                  <p className="text-xl font-bold text-danger-600">
                     {formatXOF(session.total_decaissements)}
                   </p>
                 </div>
@@ -734,8 +737,12 @@ export default function CaisseV2() {
                 <TableBody>
                   {mouvements.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                        Aucun mouvement enregistré aujourd'hui
+                      <TableCell colSpan={7} className="p-0">
+                        <EmptyState
+                          icon={ArrowLeftRight}
+                          title="Aucun mouvement enregistré aujourd'hui"
+                          description="Les encaissements et décaissements de la session apparaîtront ici."
+                        />
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -755,7 +762,7 @@ export default function CaisseV2() {
                           {m.libelle}
                         </TableCell>
                         <TableCell className="text-right font-medium">
-                          <span className={m.type === 'encaissement' ? 'text-success-600 dark:text-success-300' : 'text-danger-600 dark:text-danger-300'}>
+                          <span className={m.type === 'encaissement' ? 'text-success-600' : 'text-danger-600'}>
                             {m.type === 'encaissement' ? '+' : '-'}{formatXOF(m.montant)}
                           </span>
                         </TableCell>
@@ -838,7 +845,7 @@ export default function CaisseV2() {
             <Button type="submit" disabled={!fondInitial || opening}>
               {opening ? (
                 <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <Spinner className="mr-2" />
                   Ouverture…
                 </>
               ) : (
@@ -871,7 +878,7 @@ export default function CaisseV2() {
           <div className="space-y-4 py-4">
             {/* Orphans block */}
             {closurePreview && closurePreview.orphan_mouvements.length > 0 && (
-              <div className="p-3 rounded-lg bg-danger-100 dark:bg-danger-500/20 text-danger-800 dark:text-danger-200 border border-danger-300 dark:border-danger-500/30">
+              <div className="p-3 rounded-lg bg-danger-100 text-danger-800 border border-danger-300">
                 <div className="flex items-center gap-2 font-semibold mb-2">
                   <AlertCircle className="h-4 w-4" />
                   {closurePreview.orphan_mouvements.length} mouvement(s) sans source — clôture bloquée
@@ -895,14 +902,19 @@ export default function CaisseV2() {
                   <div key={p.methode_paiement} className="flex justify-between">
                     <span>{formatPaymentMethod(p.methode_paiement)} <span className="text-xs text-muted-foreground">({p.nb})</span></span>
                     <span>
-                      <span className="text-success-600 dark:text-success-300">+{formatXOF(p.total_encaissements)}</span>
+                      <span className="text-success-600">+{formatXOF(p.total_encaissements)}</span>
                       {' / '}
-                      <span className="text-danger-600 dark:text-danger-300">-{formatXOF(p.total_decaissements)}</span>
+                      <span className="text-danger-600">-{formatXOF(p.total_decaissements)}</span>
                     </span>
                   </div>
                 ))}
                 {closurePreview.par_methode.length === 0 && (
-                  <div className="text-muted-foreground italic">Aucun mouvement</div>
+                  <EmptyState
+                    icon={ArrowLeftRight}
+                    title="Aucun mouvement"
+                    description="Aucune entrée ni sortie n'a été enregistrée sur cette session."
+                    className="py-6"
+                  />
                 )}
               </div>
             )}
@@ -981,7 +993,7 @@ export default function CaisseV2() {
             >
               {closing ? (
                 <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <Spinner className="mr-2" />
                   Clôture…
                 </>
               ) : (
@@ -1099,7 +1111,7 @@ export default function CaisseV2() {
             <Button type="submit" disabled={diversSubmitting}>
               {diversSubmitting ? (
                 <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <Spinner className="mr-2" />
                   Enregistrement…
                 </>
               ) : (
@@ -1149,7 +1161,7 @@ export default function CaisseV2() {
                       </TableCell>
                       <TableCell>{m.libelle}</TableCell>
                       <TableCell className="text-right font-medium">
-                        <span className={m.type === 'encaissement' ? 'text-success-600 dark:text-success-300' : 'text-danger-600 dark:text-danger-300'}>
+                        <span className={m.type === 'encaissement' ? 'text-success-600' : 'text-danger-600'}>
                           {m.type === 'encaissement' ? '+' : '-'}{formatXOF(m.montant)}
                         </span>
                       </TableCell>

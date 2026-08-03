@@ -27,6 +27,15 @@ export default function Layout({ children }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* La navigation précède <main> dans le DOM sur toutes les routes : sans
+          ce lien, atteindre le contenu au clavier impose de traverser les 29
+          entrées du menu à chaque changement de page. */}
+      <a
+        href="#contenu-principal"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-skiplink focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+      >
+        Aller au contenu principal
+      </a>
       <Sidebar
         collapsed={collapsed}
         mobileOpen={mobileOpen}
@@ -54,7 +63,12 @@ export default function Layout({ children }: LayoutProps) {
           </div>
         )}
         {/* key forces the enter animation to replay on each route change */}
-        <main key={location.pathname} className="page-enter flex-1 w-full">
+        <main
+          key={location.pathname}
+          id="contenu-principal"
+          tabIndex={-1}
+          className="page-enter flex-1 w-full focus:outline-none"
+        >
           {children}
         </main>
       </div>

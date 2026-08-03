@@ -34,15 +34,15 @@ export function PageHeader({
       {backTo && (
         <Link
           to={backTo}
-          className="mb-2 inline-flex items-center gap-1 rounded-md px-2 py-1 -ml-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="mb-2 inline-flex items-center gap-1 rounded-md px-2 py-1 -ml-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         >
-          <ArrowLeft className="h-4 w-4" /> {backLabel}
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" /> {backLabel}
         </Link>
       )}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            {Icon && <Icon className="h-8 w-8" />} {title}
+            {Icon && <Icon className="h-8 w-8" aria-hidden="true" />} {title}
           </h1>
           {description && <p className="text-muted-foreground mt-1">{description}</p>}
         </div>

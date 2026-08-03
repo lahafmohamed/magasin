@@ -16,20 +16,21 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SortableHeader, type SortState } from '@/components/ui/sortable-header';
 import { Pagination } from '@/components/ui/pagination';
-import { LoadingState } from '@/components/ui/loading';
+import { LoadingState, Spinner } from '@/components/ui/loading';
 import { ListSkeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { QueryState } from '@/components/ui/query-state';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import {
   Plus, Search, Trash2, ShoppingCart, CheckCircle, Clock,
-  Truck, XCircle, Package, Loader2, ArrowLeft, Calendar,
+  Truck, XCircle, Package, ArrowLeft, Calendar,
   X, AlertTriangle, BookOpen,
   TrendingUp
 } from 'lucide-react';
 import { formatCurrency, normalizeSearch } from '@/utils/format';
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { getErrorMessage } from '@/utils/errors';
 
 export default function Commandes() {
   const navigate = useNavigate();
@@ -267,8 +268,8 @@ export default function Commandes() {
       await commandeService.updateStatut(id, statut);
       loadCommandes();
       toast.success('Statut mis à jour');
-    } catch {
-      toast.error('Erreur lors de la mise à jour');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la mise à jour'));
     }
   };
 
@@ -279,7 +280,7 @@ export default function Commandes() {
       case 'validee':
         return <Badge variant="default" className="gap-1"><CheckCircle className="h-3 w-3" /> Validée</Badge>;
       case 'expediee':
-        return <Badge className="gap-1 bg-blue-500 text-white"><Truck className="h-3 w-3" /> Expédiée</Badge>;
+        return <Badge variant="info" className="gap-1"><Truck className="h-3 w-3" /> Expédiée</Badge>;
       case 'livree':
         return <Badge variant="success" className="gap-1"><Package className="h-3 w-3" /> Livrée</Badge>;
       case 'annulee':
@@ -481,7 +482,7 @@ export default function Commandes() {
                             </div>
                             <div className="text-right">
                               <p className="text-sm font-bold text-primary">{formatCurrency(p.prix_achat)}</p>
-                              <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
+                              <p className={`text-[10px] px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${isLowStock ? 'bg-warning-100 text-warning-800' : 'bg-success-100 text-success-800'}`}>
                                 Stock: {p.stock} (Min: {p.stock_min})
                               </p>
                             </div>
@@ -491,13 +492,19 @@ export default function Commandes() {
                     </ul>
                   )}
                   {produitSearch.length >= 2 && produits.length === 0 && (
-                    <div className="absolute z-10 w-full mt-1 bg-background border rounded-lg shadow-lg p-4 text-center text-sm text-muted-foreground">
-                      <AlertTriangle className="h-5 w-5 text-warning-500 mx-auto mb-1" />
-                      <p>Aucun produit trouvé pour "<strong>{produitSearch}</strong>".</p>
-                      <Button type="button" variant="outline" size="sm" className="mt-2 gap-1" onClick={openQuickCreate}>
-                        <Plus className="h-3.5 w-3.5" />
-                        Créer "{produitSearch}"
-                      </Button>
+                    <div className="absolute z-10 w-full mt-1 bg-background border rounded-lg shadow-lg">
+                      <EmptyState
+                        icon={AlertTriangle}
+                        title={`Aucun produit ne correspond à « ${produitSearch} »`}
+                        description="Vérifiez l'orthographe ou créez la fiche produit maintenant."
+                        className="py-6"
+                        action={
+                          <Button type="button" variant="outline" size="sm" className="gap-1" onClick={openQuickCreate}>
+                            <Plus className="h-3.5 w-3.5" />
+                            Créer "{produitSearch}"
+                          </Button>
+                        }
+                      />
                     </div>
                   )}
                 </div>
@@ -532,7 +539,7 @@ export default function Commandes() {
                                 <div>
                                   <p className="font-semibold text-sm">{ligne.produit_nom}</p>
                                   <div className="flex gap-2 items-center mt-1">
-                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
+                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-medium ${isLowStock ? 'bg-warning-100 text-warning-800' : 'bg-success-100 text-success-800'}`}>
                                       Stock: {ligne.stock} / Min: {ligne.stock_min}
                                     </span>
                                   </div>
@@ -596,7 +603,7 @@ export default function Commandes() {
               <Button type="submit" disabled={submitting || !selectedFournisseur || lignes.length === 0} className="shadow-lg shadow-primary/20">
                 {submitting ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    <Spinner className="mr-2" />
                     Création en cours...
                   </>
                 ) : (
@@ -641,7 +648,7 @@ export default function Commandes() {
               <div className="flex justify-end gap-3 pt-2">
                 <Button type="button" variant="outline" onClick={() => setShowQuickCreate(false)}>Annuler</Button>
                 <Button type="submit" disabled={quickCreating || !quickCreateNom || !quickCreateReference}>
-                  {quickCreating ? <><Loader2 className="h-4 w-4 animate-spin mr-1" /> Création...</> : 'Créer & Ajouter'}
+                  {quickCreating ? <><Spinner className="mr-1" /> Création...</> : 'Créer & Ajouter'}
                 </Button>
               </div>
             </form>
@@ -710,7 +717,7 @@ export default function Commandes() {
                       <p className="text-xs font-mono text-muted-foreground">{p.reference}</p>
                       <div className="flex gap-2 items-center mt-1">
                         <span className="text-xs font-bold text-primary">{formatCurrency(p.prix_achat)}</span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isLowStock ? 'bg-warning-100 dark:bg-warning-500/20 text-warning-800 dark:text-warning-200' : 'bg-success-100 dark:bg-success-500/20 text-success-800 dark:text-success-200'}`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${isLowStock ? 'bg-warning-100 text-warning-800' : 'bg-success-100 text-success-800'}`}>
                           Stock: {p.stock} (Min: {p.stock_min})
                         </span>
                       </div>
@@ -762,7 +769,7 @@ export default function Commandes() {
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Commande ce mois</span>
               <h2 className="text-xl sm:text-2xl font-black text-foreground">{formatCurrency(stats.totalMonth)}</h2>
             </div>
-            <div className="w-12 h-12 rounded-full bg-success-500/10 flex items-center justify-center text-success-600 dark:text-success-300">
+            <div className="w-12 h-12 rounded-full bg-success-500/10 flex items-center justify-center text-success-600">
               <TrendingUp className="h-6 w-6" />
             </div>
           </CardContent>
@@ -775,7 +782,7 @@ export default function Commandes() {
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">En attente</span>
               <h2 className="text-xl sm:text-2xl font-black text-foreground">{stats.pendingCount} commande(s)</h2>
             </div>
-            <div className="w-12 h-12 rounded-full bg-warning-500/10 flex items-center justify-center text-warning-600 dark:text-warning-300">
+            <div className="w-12 h-12 rounded-full bg-warning-500/10 flex items-center justify-center text-warning-600">
               <Clock className="h-6 w-6" />
             </div>
           </CardContent>
@@ -788,7 +795,7 @@ export default function Commandes() {
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">En Retard</span>
               <h2 className="text-xl sm:text-2xl font-black text-destructive">{stats.lateCount} livraison(s)</h2>
             </div>
-            <div className="w-12 h-12 rounded-full bg-danger-500/10 flex items-center justify-center text-danger-600 dark:text-danger-300">
+            <div className="w-12 h-12 rounded-full bg-danger-500/10 flex items-center justify-center text-danger-600">
               <AlertTriangle className="h-6 w-6" />
             </div>
           </CardContent>
@@ -862,17 +869,17 @@ export default function Commandes() {
                         />
                         <div className="mt-2 flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                           {c.statut === 'en_attente' && (
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-success-600 dark:text-success-300" onClick={(e) => updateStatut(e, c.id, 'validee')} aria-label="Valider la commande">
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-success-600" onClick={(e) => updateStatut(e, c.id, 'validee')} aria-label="Valider la commande">
                               <CheckCircle className="h-4 w-4" />
                             </Button>
                           )}
                           {c.statut === 'validee' && (
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-blue-600 dark:text-blue-300" onClick={(e) => updateStatut(e, c.id, 'expediee')} aria-label="Marquer comme expédiée">
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-info-600" onClick={(e) => updateStatut(e, c.id, 'expediee')} aria-label="Marquer comme expédiée">
                               <Truck className="h-4 w-4" />
                             </Button>
                           )}
                           {(c.statut === 'en_attente' || c.statut === 'validee' || c.statut === 'expediee') && (
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-success-600 dark:text-success-300" onClick={(e) => { e.stopPropagation(); navigate(`/receptions?commande_id=${c.id}`); }} aria-label="Réceptionner la commande">
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-success-600" onClick={(e) => { e.stopPropagation(); navigate(`/receptions?commande_id=${c.id}`); }} aria-label="Réceptionner la commande">
                               <Package className="h-4 w-4" />
                             </Button>
                           )}
@@ -928,7 +935,7 @@ export default function Commandes() {
                             <Button 
                               variant="ghost" 
                               size="sm" 
-                              className="h-8 w-8 p-0 text-success-600 dark:text-success-300 hover:text-success-700 hover:bg-success-500/10"
+                              className="h-8 w-8 p-0 text-success-600 hover:text-success-700 hover:bg-success-500/10"
                               onClick={(e) => updateStatut(e, c.id, 'validee')}
                               title="Valider la commande"
                               aria-label="Valider la commande"
@@ -940,7 +947,7 @@ export default function Commandes() {
                             <Button 
                               variant="ghost" 
                               size="sm" 
-                              className="h-8 w-8 p-0 text-blue-600 dark:text-blue-300 hover:text-blue-700 hover:bg-blue-500/10"
+                              className="h-8 w-8 p-0 text-info-600 hover:text-info-700 hover:bg-info-500/10"
                               onClick={(e) => updateStatut(e, c.id, 'expediee')}
                               title="Marquer comme expédiee"
                               aria-label="Marquer comme expédiée"
@@ -952,7 +959,7 @@ export default function Commandes() {
                             <Button 
                               variant="ghost" 
                               size="sm" 
-                              className="h-8 w-8 p-0 text-success-600 dark:text-success-300 hover:text-success-700 hover:bg-success-500/10"
+                              className="h-8 w-8 p-0 text-success-600 hover:text-success-700 hover:bg-success-500/10"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 navigate(`/receptions?commande_id=${c.id}`);

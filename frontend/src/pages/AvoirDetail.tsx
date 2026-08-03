@@ -1,16 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { creditNoteService } from '../services/api';
 import { AvoirComplete } from '../types';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import StatusBadge from '@/components/StatusBadge';
 import { DocumentPrint } from '@/components/ui/print-layout';
+import { PrintPreview, usePrintFormat } from '@/components/ui/print-preview';
 import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
+import { PageLoading } from '@/components/ui/loading';
 import { formatXOF, formatDate } from '@/utils/format';
-import { ArrowLeft, FileText, User, Calendar, Printer } from 'lucide-react';
+import { getErrorMessage } from '@/utils/errors';
+import { AlertCircle, ArrowLeft, FileText, User, Calendar, Printer, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AvoirDetail() {
@@ -18,33 +20,51 @@ export default function AvoirDetail() {
   const navigate = useNavigate();
   const [avoir, setAvoir] = useState<AvoirComplete | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [showPrintLayout, setShowPrintLayout] = useState(false);
-  const [printFormat, setPrintFormat] = useState<'A4' | 'A5'>(() => (localStorage.getItem('print_format') as 'A4' | 'A5') || 'A4');
+  const [printFormat, setPrintFormat] = usePrintFormat();
 
-  useEffect(() => {
-    loadAvoir();
-  }, [id]);
-
-  const loadAvoir = async () => {
+  const loadAvoir = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    setError(null);
     try {
       const data = await creditNoteService.getById(parseInt(id));
       setAvoir(data);
-    } catch (error) {
-      toast.error('Erreur lors du chargement de l\'avoir');
-      console.error(error);
+    } catch (err) {
+      setAvoir(null);
+      setError(err);
+      toast.error(getErrorMessage(err, "Erreur lors du chargement de l'avoir"));
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    loadAvoir();
+  }, [loadAvoir]);
 
   if (loading) {
+    return <PageLoading message="Chargement de l'avoir…" />;
+  }
+
+  if (error) {
     return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="text-muted-foreground">Chargement de l'avoir...</p>
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 text-center" role="alert">
+        <AlertCircle className="h-12 w-12 text-destructive opacity-80" />
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold">Échec du chargement</h2>
+          <p className="text-muted-foreground">{getErrorMessage(error, "Erreur lors du chargement de l'avoir")}</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate('/avoirs')}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Retour aux avoirs
+          </Button>
+          <Button onClick={loadAvoir} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Réessayer
+          </Button>
         </div>
       </div>
     );
@@ -218,46 +238,22 @@ export default function AvoirDetail() {
         </Card>
       )}
 
-      {showPrintLayout && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-auto print:bg-white print:p-0 print:static print:overflow-visible">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8 print:max-w-none print:w-full print:my-0 print:shadow-none print:rounded-none">
-            <div className="sticky top-0 z-10 bg-white border-b p-4 flex justify-between items-center print:hidden">
-              <h2 className="text-lg font-semibold">Aperçu d'impression</h2>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Format:</span>
-                  <Select
-                    value={printFormat}
-                    onValueChange={(v) => { const f = v as 'A4' | 'A5'; setPrintFormat(f); localStorage.setItem('print_format', f); }}
-                  >
-                    <SelectTrigger className="h-8 w-auto px-2 text-xs" aria-label="Format d'impression">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="A4">A4</SelectItem>
-                      <SelectItem value="A5">Ticket A5</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button variant="outline" onClick={() => setShowPrintLayout(false)}>Fermer</Button>
-                <Button onClick={() => window.print()}>
-                  <Printer className="h-4 w-4 mr-2" />
-                  Imprimer
-                </Button>
-              </div>
-            </div>
-            <DocumentPrint
-              format={printFormat}
-              docType="avoir"
-              numero={avoir.numero_avoir || `AV${String(avoir.id).padStart(5, '0')}`}
-              dateDoc={avoir.date_avoir}
-              clientNom={avoir.client_nom}
-              clientPrenom={(avoir as any).client_prenom}
-              lignes={lignes as any}
-            />
-          </div>
-        </div>
-      )}
+      <PrintPreview
+        open={showPrintLayout}
+        onOpenChange={setShowPrintLayout}
+        format={printFormat}
+        onFormatChange={setPrintFormat}
+      >
+        <DocumentPrint
+          format={printFormat}
+          docType="avoir"
+          numero={avoir.numero_avoir || `AV${String(avoir.id).padStart(5, '0')}`}
+          dateDoc={avoir.date_avoir}
+          clientNom={avoir.client_nom}
+          clientPrenom={(avoir as any).client_prenom}
+          lignes={lignes as any}
+        />
+      </PrintPreview>
     </div>
   );
 }

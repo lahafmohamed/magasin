@@ -4,10 +4,12 @@ import { useAuth } from '../lib/AuthContext';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { AlertCircle, Loader2, Eye, EyeOff } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/loading';
+import { getErrorMessage } from '@/utils/errors';
 
 const loginSchema = z.object({
   username: z.string().min(1, 'Identifiant requis'),
@@ -42,8 +44,8 @@ export default function Login() {
     try {
       await login(data.username, data.password);
       navigate(from, { replace: true });
-    } catch (err: any) {
-      setError(err.response?.data?.error || err.message || 'Échec de connexion');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Échec de connexion'));
     } finally {
       setIsLoading(false);
     }
@@ -109,7 +111,7 @@ export default function Login() {
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Spinner />
                   Connexion…
                 </>
               ) : (

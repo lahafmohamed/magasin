@@ -11,6 +11,9 @@ router.use(authenticate);
 // GET /api/avoirs - Get all credit notes
 router.get('/', CreditNoteController.getAll);
 
+// GET /api/avoirs/stats - Totaux par statut (déclaré avant /:id, sinon capturé comme un id)
+router.get('/stats', CreditNoteController.getStats);
+
 // GET /api/avoirs/:id - Get credit note by ID
 router.get('/:id', CreditNoteController.getById);
 

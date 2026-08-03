@@ -13,8 +13,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
+import { PageLoading, Spinner } from '@/components/ui/loading';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { getErrorMessage } from '@/utils/errors';
 
 interface StockLocation {
   id: number;
@@ -108,8 +110,8 @@ export default function StockTransfers() {
       setTransfers(transfersRes.data || transfersRes);
       setLocations(locationsRes.data || locationsRes);
       setProducts(productsRes.data || productsRes);
-    } catch {
-      toast.error('Erreur de chargement');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur de chargement'));
     } finally {
       setLoading(false);
     }
@@ -154,8 +156,8 @@ export default function StockTransfers() {
       const data = await stockTransferService.getById(transfer.id);
       setSelectedTransfer(data.data || data);
       setDetailOpen(true);
-    } catch {
-      toast.error('Erreur chargement détails');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur chargement détails'));
     }
   };
 
@@ -172,8 +174,8 @@ export default function StockTransfers() {
       toast.success('Transfert complété');
       fetchAll();
       if (selectedTransfer?.id === transferId) setDetailOpen(false);
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Erreur complétion transfert');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur complétion transfert'));
     } finally {
       setCompleting(null);
     }
@@ -203,6 +205,12 @@ export default function StockTransfers() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const sourceId = parseInt(formData.location_source_id, 10);
+    const destinationId = parseInt(formData.location_destination_id, 10);
+    if (!Number.isInteger(sourceId) || !Number.isInteger(destinationId)) {
+      toast.error('Sélectionnez un emplacement source et un emplacement destination');
+      return;
+    }
     if (formData.location_source_id === formData.location_destination_id) {
       toast.error('Source et destination doivent être différentes');
       return;
@@ -211,11 +219,19 @@ export default function StockTransfers() {
       toast.error('Ajoutez au moins une ligne');
       return;
     }
+    if (formData.lignes.some((ligne) => !ligne.produit_id)) {
+      toast.error('Choisissez un produit pour chaque ligne');
+      return;
+    }
+    if (formData.lignes.some((ligne) => !Number.isInteger(ligne.quantite_demandee) || ligne.quantite_demandee < 1)) {
+      toast.error('Chaque ligne doit avoir une quantité entière supérieure à 0');
+      return;
+    }
     setSubmitting(true);
     try {
       await stockTransferService.create({
-        location_source_id: parseInt(formData.location_source_id),
-        location_destination_id: parseInt(formData.location_destination_id),
+        location_source_id: sourceId,
+        location_destination_id: destinationId,
         lignes: formData.lignes,
         notes: formData.notes || undefined,
       });
@@ -223,8 +239,8 @@ export default function StockTransfers() {
       setShowCreateForm(false);
       setFormData({ location_source_id: '', location_destination_id: '', notes: '', lignes: [] });
       fetchAll();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Erreur création transfert');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur création transfert'));
     } finally {
       setSubmitting(false);
     }
@@ -253,11 +269,7 @@ export default function StockTransfers() {
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center py-20">
-        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <PageLoading />;
   }
 
   return (
@@ -379,12 +391,12 @@ export default function StockTransfers() {
                           <Button
                             size="sm"
                             variant="outline"
-                            className="gap-1 text-success-600 dark:text-success-300 border-success-200 dark:border-success-500/30 hover:bg-success-50 dark:hover:bg-success-500/10 hover:text-success-700"
+                            className="gap-1 text-success-600 border-success-200 hover:bg-success-50 hover:text-success-700"
                             disabled={completing === transfer.id}
                             onClick={(e) => handleComplete(transfer.id, e)}
                           >
                             {completing === transfer.id ? (
-                              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                              <Spinner />
                             ) : (
                               <CheckCircle className="h-3.5 w-3.5" />
                             )}
@@ -457,7 +469,7 @@ export default function StockTransfers() {
                     onClick={() => handleComplete(selectedTransfer.id)}
                   >
                     {completing === selectedTransfer.id ? (
-                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      <Spinner />
                     ) : (
                       <CheckCircle className="h-4 w-4" />
                     )}
@@ -568,8 +580,9 @@ export default function StockTransfers() {
                         placeholder="Qté"
                         value={ligne.quantite_demandee}
                         min={1}
-                        onChange={(e) => updateLine(index, 'quantite_demandee', parseInt(e.target.value))}
+                        onChange={(e) => updateLine(index, 'quantite_demandee', Math.max(1, parseInt(e.target.value, 10) || 1))}
                         required
+                        aria-label="Quantité à transférer"
                       />
                       <Button
                         type="button"
@@ -592,7 +605,7 @@ export default function StockTransfers() {
                 Annuler
               </Button>
               <Button type="submit" disabled={submitting} className="gap-2">
-                {submitting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                {submitting ? <Spinner /> : <Plus className="h-4 w-4" />}
                 Créer le transfert
               </Button>
             </DialogFooter>

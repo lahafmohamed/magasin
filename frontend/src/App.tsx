@@ -1,9 +1,10 @@
-import { Suspense, lazy, useEffect, type ComponentProps, type ReactNode } from 'react';
+import { Suspense, lazy, type ComponentProps, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './lib/AuthContext';
 import { Toaster } from 'sonner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfirmProvider } from './components/ui/confirm-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import { useERPShortcuts } from './hooks/useKeyboardShortcuts';
@@ -90,37 +91,27 @@ function AppWithShortcuts() {
   useSseNotifications();
   const { shortcuts, helpOpen, setHelpOpen } = useERPShortcuts();
 
-  useEffect(() => {
-    if (helpOpen) {
-      const handler = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') setHelpOpen(false);
-      };
-      document.addEventListener('keydown', handler);
-      return () => document.removeEventListener('keydown', handler);
-    }
-  }, [helpOpen, setHelpOpen]);
-
   return (
     <Suspense fallback={<LoadingScreen />}>
       {/* Shortcuts help modal */}
-      {helpOpen && (
-        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4 animate-in fade-in-0 duration-200" onClick={() => setHelpOpen(false)}>
-          <div className="bg-card text-card-foreground border rounded-lg shadow-xl max-w-lg w-full p-6 animate-in fade-in-0 zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-bold mb-4">Raccourcis clavier</h2>
-            <div className="space-y-2">
-              {shortcuts.map((s, i) => (
-                <div key={i} className="flex justify-between items-center text-sm">
-                  <span className="text-muted-foreground">{s.description}</span>
-                  <kbd className="inline-flex items-center gap-1 rounded border bg-muted px-2 py-0.5 font-mono text-xs">
-                    {s.gKey ? <><Command className="h-3 w-3" />G puis {s.key.toUpperCase()}</> : s.key}
-                  </kbd>
-                </div>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground mt-4 text-center">Appuyez sur Échap pour fermer</p>
+      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Raccourcis clavier</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            {shortcuts.map((s, i) => (
+              <div key={i} className="flex justify-between items-center text-sm">
+                <span className="text-muted-foreground">{s.description}</span>
+                <kbd className="inline-flex items-center gap-1 rounded border bg-muted px-2 py-0.5 font-mono text-xs">
+                  {s.gKey ? <><Command className="h-3 w-3" aria-hidden="true" />G puis {s.key.toUpperCase()}</> : s.key}
+                </kbd>
+              </div>
+            ))}
           </div>
-        </div>
-      )}
+          <p className="text-xs text-muted-foreground text-center">Appuyez sur Échap pour fermer</p>
+        </DialogContent>
+      </Dialog>
 
       <Routes>
         <Route path="/login" element={<Login />} />

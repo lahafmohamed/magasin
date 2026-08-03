@@ -14,10 +14,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Check, Search, Truck, Users, X } from 'lucide-react';
+import { ArrowLeft, Check, Package, Search, Truck, Users, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { getValidSalePrice } from '@/utils/salesPrice';
+import { getErrorMessage } from '@/utils/errors';
 
 const ligneSchema = z.object({
   produit_id: z.number(),
@@ -170,8 +172,8 @@ export default function NouveauBonLivraison() {
       clear();
       toast.success(`Bon de livraison ${result.numero_bl || ''} cree avec succes`.trim());
       navigate('/bons-livraison');
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error || 'Erreur lors de la creation du bon de livraison');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors de la creation du bon de livraison'));
     } finally {
       setSubmitting(false);
     }
@@ -360,8 +362,13 @@ export default function NouveauBonLivraison() {
                 <TableBody>
                   {fields.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                        Aucun article ajouté au bon de livraison
+                      <TableCell colSpan={6} className="p-0 sm:p-0">
+                        <EmptyState
+                          icon={Package}
+                          title="Aucun article ajouté au bon de livraison"
+                          description="Recherchez un produit ci-dessus pour l'ajouter à la livraison."
+                          className="py-8"
+                        />
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -419,7 +426,7 @@ export default function NouveauBonLivraison() {
                             {formatCurrency(Number(ligne.quantite_livree || 0) * Number(ligne.prix_unitaire || 0))}
                           </TableCell>
                           <TableCell>
-                            <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)}>
+                            <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} aria-label="Retirer cette ligne">
                               <X className="h-4 w-4" />
                             </Button>
                           </TableCell>

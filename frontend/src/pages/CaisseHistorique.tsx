@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, caisseService } from '@/services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { History, Filter } from 'lucide-react';
+import { toast } from 'sonner';
+import { getErrorMessage } from '@/utils/errors';
 import { formatCurrency, formatDateShort } from '@/utils/format';
 import { PageHeader } from '@/components/ui/page-header';
 import { QueryState } from '@/components/ui/query-state';
@@ -45,9 +47,9 @@ const heure = (iso: string | null) =>
 
 function EcartCell({ ecart, statut }: { ecart: number | null; statut: string }) {
   if (statut !== 'cloturee' || ecart === null) return <span className="text-muted-foreground">—</span>;
-  if (Math.abs(ecart) < 0.005) return <span className="text-success-600 dark:text-success-400 font-mono">0</span>;
+  if (Math.abs(ecart) < 0.005) return <span className="text-success-600 font-mono">0</span>;
   return (
-    <span className="text-danger-600 dark:text-danger-400 font-mono font-medium">
+    <span className="text-danger-600 font-mono font-medium">
       {ecart > 0 ? '+' : ''}{formatCurrency(ecart)}
     </span>
   );
@@ -72,10 +74,13 @@ export default function CaisseHistorique() {
   useEffect(() => {
     api.get('/caisse/magasins')
       .then(({ data }) => setMagasins(Array.isArray(data) ? data : data?.data || []))
-      .catch(() => setMagasins([]));
+      .catch((err) => {
+        setMagasins([]);
+        toast.error(getErrorMessage(err, 'Erreur lors du chargement des magasins'));
+      });
   }, []);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const reqId = ++reqIdRef.current;
     setLoading(true);
     setError(null);
@@ -96,13 +101,13 @@ export default function CaisseHistorique() {
     } catch (err) {
       if (reqId !== reqIdRef.current) return;
       setError(err);
+      toast.error(getErrorMessage(err, "Erreur lors du chargement de l'historique des caisses"));
     } finally {
       if (reqId === reqIdRef.current) setLoading(false);
     }
-  };
+  }, [magasinId, dateFrom, dateTo, page, limit]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, [magasinId, dateFrom, dateTo, page, limit]);
+  useEffect(() => { load(); }, [load]);
 
   const onFilterChange = (setter: (v: string) => void) => (v: string) => {
     setter(v);

@@ -3,6 +3,7 @@ import { Plus, Shield, ShieldAlert, KeyRound, MapPin, Search, Users } from 'luci
 import { adminUserService, stockLocationService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -16,6 +17,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingState, Spinner } from '@/components/ui/loading';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
+import { getErrorMessage } from '@/utils/errors';
 
 interface User {
   id: number;
@@ -78,8 +80,8 @@ export default function UserManagement() {
       setUsers(usersRes.data || usersRes);
       setRoles(rolesRes);
       setLocations(locationsRes.data || locationsRes);
-    } catch {
-      toast.error('Erreur lors du chargement des données');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des données'));
     } finally {
       setLoading(false);
     }
@@ -124,12 +126,51 @@ export default function UserManagement() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+
+    const username = formData.username.trim();
+    const email = formData.email.trim();
+    const nomComplet = formData.nom_complet.trim();
+    const roleId = parseInt(formData.role_id, 10);
+
+    if (!username) {
+      toast.error("L'identifiant est obligatoire");
+      return;
+    }
+    if (username.length < 3) {
+      toast.error("L'identifiant doit contenir au moins 3 caractères");
+      return;
+    }
+    if (!Number.isInteger(roleId) || roleId <= 0) {
+      toast.error('Sélectionnez un rôle pour cet utilisateur');
+      return;
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast.error('Adresse email invalide');
+      return;
+    }
+    const passwordRequired = !editingUser;
+    if (passwordRequired && !formData.password) {
+      toast.error('Le mot de passe est obligatoire');
+      return;
+    }
+    if (
+      formData.password &&
+      (formData.password.length < 8 || !/[A-Za-z]/.test(formData.password) || !/\d/.test(formData.password))
+    ) {
+      toast.error('Le mot de passe doit contenir au moins 8 caractères, dont une lettre et un chiffre.');
+      return;
+    }
+
     setSubmitting(true);
 
     try {
       const payload = {
         ...formData,
-        role_id: parseInt(formData.role_id),
+        username,
+        email,
+        nom_complet: nomComplet,
+        role_id: roleId,
       };
 
       if (editingUser) {
@@ -146,8 +187,8 @@ export default function UserManagement() {
 
       setShowForm(false);
       fetchData();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || "Erreur lors de l'opération");
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Erreur lors de l'opération"));
     } finally {
       setSubmitting(false);
     }
@@ -253,7 +294,7 @@ export default function UserManagement() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                        user.actif ? 'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400' : 'bg-danger-100 text-danger-700 dark:bg-danger-900/30 dark:text-danger-400'
+                        user.actif ? 'bg-success-100 text-success-700' : 'bg-danger-100 text-danger-700'
                       }`}>
                         {user.actif ? 'Actif' : 'Inactif'}
                       </span>
@@ -353,15 +394,16 @@ export default function UserManagement() {
 
               <div className="space-y-2 flex flex-col justify-center">
                 <Label className="mb-2">Statut du compte</Label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input 
-                    type="checkbox" 
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="actif"
                     checked={formData.actif}
                     onChange={e => setFormData({...formData, actif: e.target.checked})}
-                    className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
                   />
-                  <span className="text-sm font-medium">{formData.actif ? 'Compte Actif' : 'Compte Inactif'}</span>
-                </label>
+                  <Label htmlFor="actif" className="text-sm font-medium">
+                    {formData.actif ? 'Compte Actif' : 'Compte Inactif'}
+                  </Label>
+                </div>
               </div>
             </div>
 
@@ -375,11 +417,11 @@ export default function UserManagement() {
                       formData.location_ids.includes(loc.id) ? 'bg-primary/5 border-primary/50' : 'bg-background hover:bg-muted/50'
                     }`}
                   >
-                    <input 
-                      type="checkbox"
+                    <Checkbox
                       checked={formData.location_ids.includes(loc.id)}
                       onChange={() => toggleLocation(loc.id)}
-                      className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                      aria-label={`Accès à ${loc.nom}`}
+                      className="mt-1"
                     />
                     <div className="flex flex-col">
                       <span className="text-sm font-medium">{loc.nom}</span>

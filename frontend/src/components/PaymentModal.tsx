@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, Loader2 } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { METHODES_PAIEMENT } from '../types';
 import { MoneyInput } from './ui/money-input';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { Spinner } from './ui/loading';
 import { Textarea } from './ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { formatFCFA } from '../utils/format';
+import { getErrorMessage } from '../utils/errors';
 import type { PaymentMethod } from '../utils/paymentMethod';
 
 interface PaymentModalProps {
@@ -84,8 +86,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
       });
 
       onClose();
-    } catch (err: any) {
-      setError(err.response?.data?.error || "Une erreur est survenue lors de l'enregistrement du paiement");
+    } catch (err) {
+      setError(getErrorMessage(err, "Une erreur est survenue lors de l'enregistrement du paiement"));
     } finally {
       setLoading(false);
     }
@@ -201,7 +203,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             <Button type="submit" disabled={loading || isAmountInvalid}>
               {loading ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Spinner />
                   Enregistrement…
                 </>
               ) : (

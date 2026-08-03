@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { produitService, tiersService, stockLocationService } from '../services/api';
@@ -13,7 +13,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { EmptyState } from '@/components/ui/empty-state';
+import { LoadingState, Spinner } from '@/components/ui/loading';
+import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { SortableHeader, SortState } from '@/components/ui/sortable-header';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -25,10 +26,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-import { Plus, Search, Pencil, Trash2, AlertCircle, XCircle, Package, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, Loader2, MoreVertical } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, AlertCircle, XCircle, Package, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, MoreVertical } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatCurrency, normalizeSearch } from '@/utils/format';
 import { downloadCsv } from '@/utils/csv';
+import { getErrorMessage } from '@/utils/errors';
 
 interface StockLocation {
   id: number;
@@ -47,6 +49,7 @@ export default function Inventaire() {
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -128,10 +131,6 @@ export default function Inventaire() {
   }, [searchParams]);
 
   useEffect(() => {
-    loadProduits();
-  }, [debouncedSearch, lowStockOnly, categorieFilter, page, limit, sort, order, selectedAdjustLocationId]);
-
-  useEffect(() => {
     loadStockLocations();
   }, []);
 
@@ -183,8 +182,9 @@ export default function Inventaire() {
     }
   };
 
-  const loadProduits = async () => {
+  const loadProduits = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const categorie = categorieFilter === 'all' ? undefined : categorieFilter;
       const locationId = selectedAdjustLocationId ? parseInt(selectedAdjustLocationId, 10) : undefined;
@@ -197,23 +197,60 @@ export default function Inventaire() {
       // Extract categories from data
       const cats = [...new Set((Array.isArray(produitsData) ? produitsData : []).map((p: Produit) => p.categorie).filter(Boolean))] as string[];
       setCategories(cats);
-    } catch (error) {
-      console.error('❌ Error loading produits:', error);
-      toast.error('Erreur lors du chargement des produits');
+    } catch (err) {
+      setError(err);
+      setProduits([]);
+      setTotal(0);
+      setTotalPages(0);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des produits'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [debouncedSearch, lowStockOnly, categorieFilter, page, limit, sort, order, selectedAdjustLocationId]);
+
+  useEffect(() => {
+    loadProduits();
+  }, [loadProduits]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return; // guard against double-submit (duplicate product)
+
+    const reference = formData.reference.trim();
+    const nom = formData.nom.trim();
+
+    if (!reference) {
+      toast.error('La référence est obligatoire');
+      return;
+    }
+    if (!nom) {
+      toast.error('Le nom du produit est obligatoire');
+      return;
+    }
+    if (!Number.isFinite(formData.prix_achat) || formData.prix_achat < 0) {
+      toast.error("Le prix d'achat doit être un nombre positif ou nul");
+      return;
+    }
+    if (!Number.isFinite(formData.prix_vente) || formData.prix_vente < 0) {
+      toast.error('Le prix de vente doit être un nombre positif ou nul');
+      return;
+    }
+    if (!Number.isFinite(formData.stock_min) || formData.stock_min < 0) {
+      toast.error('Le stock minimum doit être un nombre positif ou nul');
+      return;
+    }
+    const quantite = editingProduit ? formData.stock : formData.initial_stock;
+    if (!Number.isFinite(quantite) || quantite < 0) {
+      toast.error('Le stock doit être un nombre positif ou nul');
+      return;
+    }
+
     setSubmitting(true);
     try {
       if (editingProduit) {
         await produitService.update(editingProduit.id, {
-          reference: formData.reference,
-          nom: formData.nom,
+          reference,
+          nom,
           description: formData.description,
           categorie: formData.categorie,
           prix_achat: formData.prix_achat,
@@ -224,8 +261,8 @@ export default function Inventaire() {
         });
       } else {
         await produitService.create({
-          reference: formData.reference,
-          nom: formData.nom,
+          reference,
+          nom,
           description: formData.description,
           categorie: formData.categorie,
           prix_achat: formData.prix_achat,
@@ -240,9 +277,8 @@ export default function Inventaire() {
       resetForm();
       loadProduits();
       toast.success(editingProduit ? 'Produit modifié avec succès' : 'Produit ajouté avec succès');
-    } catch (error) {
-      console.error(error);
-      toast.error('Erreur lors de l\'enregistrement');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de l\'enregistrement'));
     } finally {
       setSubmitting(false);
     }
@@ -278,8 +314,8 @@ export default function Inventaire() {
       await produitService.delete(produitToDelete.id);
       loadProduits();
       toast.success('Produit supprimé avec succès');
-    } catch {
-      toast.error('Ce produit est peut-être lié à des factures');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Ce produit est peut-être lié à des factures'));
     } finally {
       setDeleting(null);
       setDeleteDialogOpen(false);
@@ -429,9 +465,9 @@ export default function Inventaire() {
     try {
       const history = await produitService.getStockHistory(produit.id, 50);
       setStockHistory(history ?? []);
-    } catch (error) {
-      toast.error('Erreur lors du chargement de l\'historique');
-      console.error(error);
+    } catch (err) {
+      setStockHistory([]);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement de l\'historique'));
     } finally {
       setLoadingHistory(false);
     }
@@ -445,9 +481,8 @@ export default function Inventaire() {
     try {
       const info = await produitService.getPurchaseInfo(produit.id);
       setPurchaseInfo(info);
-    } catch (error) {
-      toast.error('Erreur lors du chargement des informations d\'achat');
-      console.error(error);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des informations d\'achat'));
     } finally {
       setLoadingPurchaseInfo(false);
     }
@@ -588,7 +623,7 @@ export default function Inventaire() {
               aria-label="Supprimer le produit"
             >
               {deleting === p.id ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
+                <Spinner />
               ) : (
                 <Trash2 className="h-4 w-4" />
               )}
@@ -1017,13 +1052,17 @@ export default function Inventaire() {
       <Card>
           <CardContent className="p-0">
             <div className="space-y-3 p-3 md:hidden">
-              {loading ? (
-                <TableSkeleton rows={6} columns={2} />
-              ) : produits?.length === 0 ? (
-                <EmptyState icon={Package} title="Aucun produit trouvé" />
-              ) : (
-                produits.map(renderProductCard)
-              )}
+              <QueryState
+                loading={loading}
+                error={error}
+                onRetry={loadProduits}
+                skeleton={<TableSkeleton rows={6} columns={2} />}
+                isEmpty={produits.length === 0}
+                emptyIcon={Package}
+                emptyTitle="Aucun produit trouvé"
+              >
+                {produits.map(renderProductCard)}
+              </QueryState>
             </div>
             <div
               ref={tableScrollRef}
@@ -1061,16 +1100,20 @@ export default function Inventaire() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading ? (
+                {loading || error || produits.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={8} className="p-0">
-                      <TableSkeleton rows={10} columns={8} />
-                    </TableCell>
-                  </TableRow>
-                ) : produits?.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={8} className="p-0">
-                      <EmptyState icon={Package} title="Aucun produit trouvé" />
+                      <QueryState
+                        loading={loading}
+                        error={error}
+                        onRetry={loadProduits}
+                        skeleton={<TableSkeleton rows={10} columns={8} />}
+                        isEmpty={produits.length === 0}
+                        emptyIcon={Package}
+                        emptyTitle="Aucun produit trouvé"
+                      >
+                        {null}
+                      </QueryState>
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -1113,7 +1156,7 @@ export default function Inventaire() {
             <Button variant="destructive" onClick={confirmDelete} disabled={deleting === produitToDelete?.id}>
               {deleting === produitToDelete?.id ? (
                 <>
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />
+                  <Spinner className="mr-2" />
                   Suppression...
                 </>
               ) : (
@@ -1142,9 +1185,7 @@ export default function Inventaire() {
           
           <div className="flex-1 overflow-y-auto">
             {loadingHistory ? (
-              <div className="flex justify-center py-8">
-                <RefreshCw className="h-6 w-6 animate-spin" />
-              </div>
+              <LoadingState inCell />
             ) : stockHistory.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                 <Clock className="h-12 w-12 mb-2 opacity-50" />
@@ -1237,9 +1278,7 @@ export default function Inventaire() {
 
           <div className="flex-1 overflow-y-auto space-y-4">
             {loadingPurchaseInfo ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin" />
-              </div>
+              <LoadingState inCell />
             ) : purchaseInfo ? (
               <>
                 {/* Default Supplier */}

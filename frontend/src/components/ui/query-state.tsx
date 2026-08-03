@@ -3,6 +3,7 @@ import { AlertCircle, RefreshCw, LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { getErrorMessage } from '@/utils/errors';
 
 interface QueryStateProps {
   /** Chargement en cours — affiche le skeleton. */
@@ -23,13 +24,6 @@ interface QueryStateProps {
   className?: string;
   /** Contenu réel (données chargées). */
   children: React.ReactNode;
-}
-
-function errorMessage(error: unknown): string {
-  if (!error) return 'Une erreur est survenue.';
-  if (typeof error === 'string') return error;
-  const anyErr = error as { response?: { data?: { error?: string } }; message?: string };
-  return anyErr.response?.data?.error || anyErr.message || 'Une erreur est survenue.';
 }
 
 /**
@@ -72,7 +66,7 @@ export function QueryState({
         <AlertCircle className="h-10 w-10 text-destructive opacity-80" aria-hidden="true" />
         <div className="space-y-1">
           <p className="text-sm font-medium text-foreground">Échec du chargement</p>
-          <p className="text-sm text-muted-foreground">{errorMessage(error)}</p>
+          <p className="text-sm text-muted-foreground">{getErrorMessage(error)}</p>
         </div>
         {onRetry && (
           <Button variant="outline" size="sm" onClick={onRetry} className="mt-1 gap-2">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useLayoutEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState, useLayoutEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
   factureService,
@@ -41,6 +41,8 @@ import {
 import { DashboardDemandeWidgets } from '../components/DashboardDemandeWidgets';
 import StatusBadge from '../components/StatusBadge';
 import { DashboardSkeleton } from '@/components/ui/skeleton';
+import { QueryState } from '@/components/ui/query-state';
+import { getErrorMessage } from '@/utils/errors';
 import { toast } from 'sonner';
 import {
   AreaChart,
@@ -131,11 +133,13 @@ function AlertBanner({ alerts }: { alerts: { low_stock: any[]; overdue_invoices:
   if (totalAlerts === 0) return null;
 
   const chipCls =
-    "inline-flex items-center gap-1 rounded-md bg-white dark:bg-warning-500/15 px-2.5 py-1.5 text-warning-700 dark:text-warning-200 hover:bg-warning-100 dark:hover:bg-warning-500/25 transition-colors";
+    // La puce doit ressortir sur le fond `bg-warning-50` de la bannière : blanc en
+    // clair, un cran au-dessus de la rampe (inversée) en sombre.
+    "inline-flex items-center gap-1 rounded-md bg-white dark:bg-warning-100 px-2.5 py-1.5 text-warning-700 hover:bg-warning-100 dark:hover:bg-warning-200 transition-colors";
 
   return (
-    <div className="rounded-lg border border-warning-200 bg-warning-50 dark:border-warning-500/30 dark:bg-warning-500/10 p-3 space-y-2 animate-in fade-in-0">
-      <div className="flex items-center gap-2 text-warning-800 dark:text-warning-200 font-semibold text-sm">
+    <div className="rounded-lg border border-warning-200 bg-warning-50 p-3 space-y-2 animate-in fade-in-0">
+      <div className="flex items-center gap-2 text-warning-800 font-semibold text-sm">
         <AlertTriangle className="h-4 w-4" />
         Alertes ({totalAlerts})
       </div>
@@ -166,6 +170,7 @@ function AlertBanner({ alerts }: { alerts: { low_stock: any[]; overdue_invoices:
 export default function Dashboard() {
   const [stats, setStats] = useState<StatsDashboard | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [period, setPeriod] = useState<Period>(30);
 
@@ -192,14 +197,10 @@ export default function Dashboard() {
 
   const chartHeight = containerWidth < 640 ? 200 : containerWidth < 1024 ? 260 : 300;
 
-  useEffect(() => {
-    loadDashboard();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period]);
-
-  const loadDashboard = async (silent = false) => {
+  const loadDashboard = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
     else setLoading(true);
+    setError(null);
     try {
       const [
         statsData,
@@ -288,14 +289,18 @@ export default function Dashboard() {
       setRecentInvoices(recentInvoicesData?.data || recentInvoicesData || []);
       setYoyData(yoyResult);
       setForecastData(forecastResult);
-    } catch (error) {
-      toast.error('Erreur lors du chargement du dashboard');
-      console.error(error);
+    } catch (err) {
+      setError(err);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement du tableau de bord'));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [period]);
+
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
 
   const currentCA = useMemo(
     () => revenueData.reduce((s, p) => s + p.total, 0),
@@ -356,14 +361,6 @@ export default function Dashboard() {
   const sparkRevenue = revenueData.map((p) => ({ v: p.total }));
   const sparkCountStub = revenueData.map((p, i) => ({ v: (p.total > 0 ? 1 : 0) + (i % 3) }));
 
-  if (loading) {
-    return (
-      <div className="p-3 sm:p-6 w-full max-w-full">
-        <DashboardSkeleton />
-      </div>
-    );
-  }
-
   return (
     <div className="p-3 sm:p-6 w-full max-w-full">
       <div className="mx-auto space-y-4 sm:space-y-6">
@@ -412,6 +409,12 @@ export default function Dashboard() {
           </div>
         </div>
 
+        <QueryState
+          loading={loading}
+          error={error}
+          onRetry={() => loadDashboard()}
+          skeleton={<DashboardSkeleton />}
+        >
         {/* Alert Banner */}
         {alertsData && (
           <AlertBanner alerts={alertsData} />
@@ -674,8 +677,8 @@ export default function Dashboard() {
                       label: 'En attente',
                       count: commandeStats.en_attente || 0,
                       Icon: Clock,
-                      color: 'text-warning-600 dark:text-warning-200',
-                      bg: 'bg-warning-50 dark:bg-warning-500/10',
+                      color: 'text-warning-600',
+                      bg: 'bg-warning-50',
                     },
                     {
                       label: 'Validées',
@@ -695,8 +698,8 @@ export default function Dashboard() {
                       label: 'Livrées',
                       count: commandeStats.livree || 0,
                       Icon: PackageCheck,
-                      color: 'text-success-600 dark:text-success-300',
-                      bg: 'bg-success-50 dark:bg-success-500/10',
+                      color: 'text-success-600',
+                      bg: 'bg-success-50',
                     },
                   ].map((s) => (
                     <div
@@ -712,7 +715,11 @@ export default function Dashboard() {
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">Aucune donnée.</p>
+                <EmptyState
+                  icon={ShoppingCart}
+                  title="Aucune commande à suivre"
+                  description="Aucune commande fournisseur n'est en cours dans le pipeline."
+                />
               )}
             </CardContent>
           </Card>
@@ -844,10 +851,11 @@ export default function Dashboard() {
                   })}
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-                  <ShoppingCart className="h-10 w-10 mb-2" />
-                  <p className="text-sm">Aucune vente enregistrée</p>
-                </div>
+                <EmptyState
+                  icon={ShoppingCart}
+                  title="Aucune vente enregistrée"
+                  description="Aucun produit n'a encore été vendu."
+                />
               )}
             </CardContent>
           </Card>
@@ -889,10 +897,11 @@ export default function Dashboard() {
                   })}
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-                  <Users className="h-10 w-10 mb-2" />
-                  <p className="text-sm">Aucun client avec achats</p>
-                </div>
+                <EmptyState
+                  icon={Users}
+                  title="Aucun client facturé"
+                  description="Aucun client n'a encore de facture enregistrée."
+                />
               )}
             </CardContent>
           </Card>
@@ -1040,10 +1049,11 @@ export default function Dashboard() {
                   </div>
                 </ScrollArea>
               ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                  <CheckCircle2 className="h-10 w-10 mb-2 text-success-500" />
-                  <p className="text-sm">Aucun produit en alerte</p>
-                </div>
+                <EmptyState
+                  icon={CheckCircle2}
+                  title="Aucun produit en rupture"
+                  description="Tous les produits sont au-dessus de leur seuil d'alerte."
+                />
               )}
             </CardContent>
           </Card>
@@ -1101,10 +1111,11 @@ export default function Dashboard() {
                   })}
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                  <FileText className="h-10 w-10 mb-2" />
-                  <p className="text-sm">Aucune facture récente</p>
-                </div>
+                <EmptyState
+                  icon={FileText}
+                  title="Aucune facture récente"
+                  description="Aucune facture n'a encore été émise."
+                />
               )}
             </CardContent>
           </Card>
@@ -1145,6 +1156,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         )}
+        </QueryState>
 
         {/* Quick Navigation */}
         <Card>

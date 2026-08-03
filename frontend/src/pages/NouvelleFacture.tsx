@@ -11,9 +11,12 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { DatePicker } from '@/components/ui/date-picker';
-import { ArrowLeft, Search, Minus, Plus, X, AlertCircle, ScanLine } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Spinner } from '@/components/ui/loading';
+import { ArrowLeft, Search, Minus, Plus, X, AlertCircle, ScanLine, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
 import { getValidSalePrice } from '../utils/salesPrice';
+import { getErrorMessage } from '@/utils/errors';
 
 interface StockLocation {
   id: number;
@@ -153,8 +156,8 @@ export default function NouvelleFacture() {
         } else {
           toast.error('Aucun magasin actif disponible pour la facturation');
         }
-      } catch {
-        toast.error('Impossible de charger les magasins');
+      } catch (err) {
+        toast.error(getErrorMessage(err, 'Impossible de charger les magasins'));
       }
     };
     void loadLocations();
@@ -171,8 +174,8 @@ export default function NouvelleFacture() {
           nextMap[level.produit_id] = Number(level.quantite_disponible || 0);
         }
         setLocationStockMap(nextMap);
-      } catch {
-        toast.error("Impossible de charger le stock de l'emplacement");
+      } catch (err) {
+        toast.error(getErrorMessage(err, "Impossible de charger le stock de l'emplacement"));
       }
     };
     void loadLocationStock();
@@ -301,8 +304,8 @@ export default function NouvelleFacture() {
       clear();
       toast.success(`Facture ${result.numero_facture} créée avec succès!`);
       navigate('/factures');
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Erreur lors de la création de la facture');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors de la création de la facture'));
     } finally {
       setSubmitting(false);
     }
@@ -480,9 +483,13 @@ export default function NouvelleFacture() {
                 onBlur={() => setTimeout(() => setShowProduitDropdown(false), 150)}
               />
               {showProduitDropdown && produitSearch.length >= 2 && produits.length === 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-popover border rounded-lg shadow-lg px-3 py-3 text-sm text-muted-foreground">
-                  <p>Aucun produit trouvé pour "{produitSearch}"</p>
-                  <p className="text-xs mt-1">Essayez une orthographe différente ou vérifiez le stock en magasin</p>
+                <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-popover border rounded-lg shadow-lg">
+                  <EmptyState
+                    icon={Search}
+                    title={`Aucun produit ne correspond à « ${produitSearch} »`}
+                    description="Essayez une autre orthographe ou vérifiez le stock de l'emplacement sélectionné."
+                    className="py-6"
+                  />
                 </div>
               )}
               {showProduitDropdown && produits.length > 0 && (
@@ -597,6 +604,7 @@ export default function NouvelleFacture() {
                               <div className="inline-flex items-center border rounded-md overflow-hidden">
                                 <button
                                   type="button"
+                                  aria-label="Diminuer la quantité"
                                   className="px-2 py-1 text-muted-foreground hover:bg-muted"
                                   onClick={() =>
                                     setValue(`lignes.${i}.quantite`, Math.max(1, l.quantite - 1), {
@@ -612,7 +620,8 @@ export default function NouvelleFacture() {
                                   name={`lignes.${i}.quantite`}
                                   render={({ field: qField }) => (
                                     <input
-                                      className="w-10 text-center text-sm border-x py-1 font-mono bg-background focus:outline-none"
+                                      aria-label={`Quantité pour ${l.produit_nom}`}
+                                      className="w-10 text-center text-sm border-x py-1 font-mono bg-background focus-visible:ring-2 focus-visible:ring-ring"
                                       value={qField.value === 0 ? '' : qField.value}
                                       onChange={(e) => {
                                         const n = parseInt(e.target.value, 10);
@@ -629,6 +638,7 @@ export default function NouvelleFacture() {
                                 />
                                 <button
                                   type="button"
+                                  aria-label="Augmenter la quantité"
                                   className="px-2 py-1 text-muted-foreground hover:bg-muted"
                                   onClick={() =>
                                     setValue(`lignes.${i}.quantite`, l.quantite + 1, {
@@ -641,7 +651,7 @@ export default function NouvelleFacture() {
                                 </button>
                               </div>
                               {lineErrors?.quantite && (
-                                <p role="alert" className="text-[10px] font-medium text-danger mt-1">
+                                <p role="alert" className="text-xs font-medium text-danger mt-1">
                                   {lineErrors.quantite.message}
                                 </p>
                               )}
@@ -671,7 +681,7 @@ export default function NouvelleFacture() {
                                 <span className="font-mono">{formatXOF(l.prix_revient)}</span>
                               </div>
                               {lineErrors?.prix_unitaire && (
-                                <p role="alert" className="text-[10px] font-medium text-danger mt-1">
+                                <p role="alert" className="text-xs font-medium text-danger mt-1">
                                   {lineErrors.prix_unitaire.message}
                                 </p>
                               )}
@@ -740,8 +750,13 @@ export default function NouvelleFacture() {
                 </div>
               </div>
             ) : (
-              <div className="mt-4 py-8 text-center text-sm text-muted-foreground bg-muted/30 rounded-lg">
-                Aucun article ajouté à la facture.
+              <div className="mt-4 bg-muted/30 rounded-lg">
+                <EmptyState
+                  icon={ShoppingCart}
+                  title="Aucun article ajouté à la facture"
+                  description="Recherchez un produit ci-dessus pour l'ajouter à la facture."
+                  className="py-8"
+                />
               </div>
             )}
             {errors.lignes?.message && (
@@ -815,7 +830,7 @@ export default function NouvelleFacture() {
           >
             {submitting ? (
               <>
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent mr-2" />
+                <Spinner className="mr-2" />
                 Création en cours…
               </>
             ) : (

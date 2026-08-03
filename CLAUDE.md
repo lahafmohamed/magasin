@@ -21,7 +21,7 @@ French-language **ERP** for a retail + wholesale electronics business ("magasin 
 
 **Frontend** (`frontend/`)
 - **React 18.3** + **Vite 5** + **TypeScript ^5.3** (`strict: true`)
-- **TailwindCSS ^3.4** + **shadcn/ui** style (Radix primitives + `class-variance-authority` + `cn()`)
+- **TailwindCSS ^3.4** + **shadcn/ui** style (`class-variance-authority` + `cn()`). **Radix is installed** — 7 `@radix-ui/*` packages back `dialog`, `dropdown-menu`, `label`, `popover`, `scroll-area`, `select`, `separator`; `tabs` and `checkbox` are hand-rolled on purpose. Design tokens: semantic color ramps live as CSS vars in `index.css` (`:root` + inverted `.dark`) and are wired in `tailwind.config.js` via `semanticRamp()`
 - **react-router-dom ^6.21** (lazy routes) · **react-hook-form ^7.72** + **zod** · **axios ^1.6** · **recharts ^3.8** · **sonner** toasts · **@tanstack/react-virtual**
 - Tests: **vitest** + Testing Library + jsdom. `playwright` is a devDep but **unused** (no config/specs).
 - PWA assets (`public/sw.js`, `manifest.json`) are **live**: `index.html` links the manifest and `main.tsx` registers the service worker outside localhost — it ships in production.
@@ -131,7 +131,15 @@ Legend: ✅ Complete · 🟡 Partial · 🟥 Stub/Dead · ➖ Missing. Full evid
 - **Money:** stored `NUMERIC(15,2)`; round to 2 decimals; prefer SQL-side aggregation over JS float accumulation.
 - **Migrations:** add a new `NNN_*.sql` (next number after `095`) and apply with `migrate.mjs`. Don't add new ad-hoc `.mjs` fix scripts.
 - **Periods:** financial writes should call `PeriodService.checkPeriodIsOpen` for a friendly app-layer error, but the hard guarantee is the DB trigger from `075` on `ecritures_comptables` — closed periods are rejected on **every** posting path (see Known Issues).
-- **Frontend:** functional components + hooks; data fetched per-page via `useState`/`useEffect` through `services/api.ts`; no global store (Context for auth/theme only). UI from `components/ui` (shadcn-style). Toasts via `sonner` (`toast.error('Erreur ...')`). Permission-gate UI with `usePermission`/`<RequirePermission>` — treat client gating as advisory; **enforce on the server**.
+- **Frontend:** functional components + hooks; data fetched per-page via `useState`/`useEffect` through `services/api.ts`; no global store (Context for auth/theme only). UI from `components/ui` (shadcn-style, 7 primitives Radix-backed). Permission-gate UI with `usePermission`/`<RequirePermission>` — treat client gating as advisory; **enforce on the server**.
+- **Frontend, non-negotiables** (see [DESIGN-AUDIT.md](DESIGN-AUDIT.md)):
+  - **Errors:** every catch goes through `getErrorMessage(err, '<fallback FR>')` (`utils/errors.ts`) — never surface `err.response.data.error` or `err.message` raw; they leak Postgres constraint names and English axios strings.
+  - **Fetch states:** a failed fetch must never look like empty data. Hold the error in state and render through `<QueryState loading error onRetry skeleton isEmpty>`.
+  - **Status colors:** `success/warning/danger/info` are theme-aware CSS vars whose ramp **inverts** in `.dark`. Write `text-success-700` alone — adding a `dark:` sibling now produces the bug it used to fix.
+  - **Spinners:** use `PageLoading`/`Spinner`/`LoadingState` from `ui/loading`; don't inline `<Loader2 className="animate-spin">`.
+  - **Destructive actions:** bare buttons need `useConfirm()`. A form Dialog with a submit is confirmation enough.
+  - **Overlays:** build on `ui/dialog` (Radix) — hand-rolled `fixed inset-0` overlays have no focus trap, Escape, or scroll lock.
+  - **Doc lists:** new list pages use `DocumentListPage` + `useDocumentList` (URL-backed search/filters/sort/pagination, `extraFilters` for page-specific filters). Never paginate client-side over a full fetch.
 - **Audit:** mutations log via `AuditService`/`audit` middleware (writes are fire-and-forget / non-fatal).
 
 ## Known Issues & Limitations
@@ -151,6 +159,7 @@ See [AUDIT.md](AUDIT.md) for the full prioritized roadmap. Top current items (po
 - **✅ RBAC consolidated** onto the single `authorize(roles)` mechanism (role string from `roles.nom` via `utilisateurs.role_id`). The DB permission system (`056/057/058`: `permissions`/`role_permissions`/`user_permissions` + `customiser_permissions`) and the in-memory `ROLE_PERMISSIONS` matrix were removed (`084` drops the tables); `permissions.ts` retains only the `getUserLocationRole` location helper. FE `usePermission` remains as **advisory** UI gating (role-based, no server dependency).
 - **✅ Token handling** — auth is the httpOnly `auth_token` cookie (`withCredentials`); the FE caches only the non-sensitive `auth_user` in localStorage (no token). Login still returns the token in the body **intentionally** for non-browser API clients.
 - **🟡 Frontend quality** — ESLint now present and FE lint+tests run in CI, but FE tests still far below the 60% threshold; `api.ts` ~131 `Promise<any>`; duplicated axios instance (`api.ts` vs `authService.ts` — intentionally divergent interceptors); PWA service worker unregistered.
+- **✅ Design system / UX hardening (2026-07-29)** — full audit in [DESIGN-AUDIT.md](DESIGN-AUDIT.md). Fixed: 21 pages that rendered a failed fetch as real data (Trésorerie showed a 0 XOF treasury, Dashboard showed zeroed KPIs); semantic color ramps made theme-aware (133 fighting `dark:` overrides stripped); raw server/axios errors no longer reach users; attachments no longer delete without confirmation; the Avoirs page no longer fan-out-fetches every page client-side. Two latent SQL crashes surfaced and fixed in `CreditNoteService` (COUNT filtering on an unjoined `tiers`; `ORDER BY fa.client_nom` on a projection alias) — both were masked by the client-side approach. **Open:** money/date formatter unification (4 aliases; `DevisDetail` renders "XOF" while the rest of the app says "FCFA"), `Commandes`/`DemandesList` → `DocumentListPage`, page-shell padding drift.
 - **✅ Legacy cleanup** — the V1 `DepenseService` helpers were merged into `DepenseServiceV2`; unused models/services, stale schema/docs, the orphan migration directory, and ad-hoc repair/check scripts were removed. `backend/scripts/` now contains only CI bootstrap and database backup tooling.
 
 ## Commands Reference

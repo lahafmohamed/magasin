@@ -36,10 +36,10 @@ import {
   Trash2,
   Store,
   AlertCircle,
-  Link as LinkIcon,
-  Loader2
+  Link as LinkIcon
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/utils/errors';
 import { useAuth } from '@/lib/AuthContext';
 import { api } from '../services/api';
 import { PageHeader } from '@/components/ui/page-header';
@@ -47,6 +47,7 @@ import { QueryState } from '@/components/ui/query-state';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import { Pagination } from '@/components/ui/pagination';
 import { TableSkeleton } from '@/components/ui/skeleton';
+import { Spinner } from '@/components/ui/loading';
 import { PAYMENT_METHODS, formatPaymentMethod } from '../utils/paymentMethod';
 
 interface Magasin {
@@ -165,8 +166,8 @@ export default function DepensesV2() {
         // More than one magasin — user must pick one; stop spinner
         setLoading(false);
       }
-    } catch {
-      toast.error('Erreur lors du chargement des magasins');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des magasins'));
       setLoading(false);
     }
   };
@@ -208,7 +209,7 @@ export default function DepensesV2() {
       setTotalPages(pagination?.totalPages ?? 1);
     } catch (err) {
       setError(err);
-      toast.error('Erreur lors du chargement des dépenses');
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des dépenses'));
     } finally {
       setLoading(false);
     }
@@ -278,7 +279,7 @@ export default function DepensesV2() {
       if (error.response?.status === 422 && data?.code === 'CAISSE_FERMEE') {
         toast.error(
           <div className="flex flex-col gap-2">
-            <span>{data.error}</span>
+            <span>{getErrorMessage(error, 'Caisse fermée — ouvrez la caisse du magasin.')}</span>
             <Button
               size="sm"
               variant="outline"
@@ -291,7 +292,7 @@ export default function DepensesV2() {
           { duration: 5000 }
         );
       } else {
-        toast.error(data?.error || 'Erreur lors de la création');
+        toast.error(getErrorMessage(error, 'Erreur lors de la création de la dépense'));
       }
     } finally {
       setSaving(false);
@@ -314,8 +315,8 @@ export default function DepensesV2() {
           loadSessionActive(selectedMagasin);
         }
       }
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Erreur lors de la suppression');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors de la suppression de la dépense'));
     }
   };
 
@@ -375,20 +376,20 @@ export default function DepensesV2() {
 
       {/* Caisse status alert */}
       {selectedMagasin && (
-        <Card className={`p-4 mb-6 ${sessionActive ? 'bg-success-50 dark:bg-success-500/10 border-success-200 dark:border-success-500/30' : 'bg-warning-50 dark:bg-warning-500/10 border-warning-200 dark:border-warning-500/30'}`}>
+        <Card className={`p-4 mb-6 ${sessionActive ? 'bg-success-50 border-success-200' : 'bg-warning-50 border-warning-200'}`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               {sessionActive ? (
                 <>
                   <div className="w-2 h-2 rounded-full bg-success-500" />
-                  <span className="text-success-800 dark:text-success-200 font-medium">
+                  <span className="text-success-800 font-medium">
                     Caisse ouverte — Les dépenses en espèces seront enregistrées
                   </span>
                 </>
               ) : (
                 <>
-                  <AlertCircle className="h-4 w-4 text-warning-600 dark:text-warning-300" />
-                  <span className="text-warning-800 dark:text-warning-200 font-medium">
+                  <AlertCircle className="h-4 w-4 text-warning-600" />
+                  <span className="text-warning-800 font-medium">
                     Caisse fermée — Ouvrez la caisse pour enregistrer des dépenses en espèces
                   </span>
                 </>
@@ -411,7 +412,7 @@ export default function DepensesV2() {
       <div className="grid gap-4 md:grid-cols-3 mb-6">
         <Card className="p-4">
           <div className="flex items-center gap-2">
-            <Receipt className="h-5 w-5 text-danger-600 dark:text-danger-300" />
+            <Receipt className="h-5 w-5 text-danger-600" />
             <div>
               <p className="text-sm text-muted-foreground">Total dépenses (page)</p>
               <p className="text-2xl font-bold">{formatCurrency(totalDepenses)}</p>
@@ -438,15 +439,15 @@ export default function DepensesV2() {
                 <div className="space-y-4 py-4">
                   {/* Cash warning */}
                   {isCashPayment && !sessionActive && (
-                    <div className="bg-warning-50 dark:bg-warning-500/10 border border-warning-200 dark:border-warning-500/30 p-3 rounded-lg flex items-start gap-2">
-                      <AlertCircle className="h-5 w-5 text-warning-600 dark:text-warning-300 mt-0.5" />
+                    <div className="bg-warning-50 border border-warning-200 p-3 rounded-lg flex items-start gap-2">
+                      <AlertCircle className="h-5 w-5 text-warning-600 mt-0.5" />
                       <div>
-                        <p className="text-warning-800 dark:text-warning-200 font-medium">Caisse fermée</p>
-                        <p className="text-warning-700 dark:text-warning-300 text-sm">
+                        <p className="text-warning-800 font-medium">Caisse fermée</p>
+                        <p className="text-warning-700 text-sm">
                           La caisse de ce magasin n'est pas ouverte.
                           <Button
                             variant="link"
-                            className="p-0 h-auto text-warning-800 dark:text-warning-200 underline"
+                            className="p-0 h-auto text-warning-800 underline"
                             onClick={() => { setOpenDialog(false); navigate('/caisse'); }}
                           >
                             Ouvrir la caisse →
@@ -458,11 +459,11 @@ export default function DepensesV2() {
 
                   {/* Cash info */}
                   {isCashPayment && sessionActive && (
-                    <div className="bg-success-50 dark:bg-success-500/10 border border-success-200 dark:border-success-500/30 p-3 rounded-lg flex items-start gap-2">
-                      <LinkIcon className="h-5 w-5 text-success-600 dark:text-success-300 mt-0.5" />
+                    <div className="bg-success-50 border border-success-200 p-3 rounded-lg flex items-start gap-2">
+                      <LinkIcon className="h-5 w-5 text-success-600 mt-0.5" />
                       <div>
-                        <p className="text-success-800 dark:text-success-200 font-medium">Cette dépense sera liée à la caisse</p>
-                        <p className="text-success-700 dark:text-success-300 text-sm">
+                        <p className="text-success-800 font-medium">Cette dépense sera liée à la caisse</p>
+                        <p className="text-success-700 text-sm">
                           Elle décrémentera le solde de la caisse ouverte du magasin.
                         </p>
                       </div>
@@ -558,7 +559,7 @@ export default function DepensesV2() {
                   >
                     {saving ? (
                       <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        <Spinner className="mr-2" />
                         Création…
                       </>
                     ) : (
@@ -616,12 +617,12 @@ export default function DepensesV2() {
                           {depense.description}
                         </TableCell>
                         <TableCell>{getMethodBadge(depense.methode_paiement)}</TableCell>
-                        <TableCell className="text-right font-medium text-danger-600 dark:text-danger-300">
+                        <TableCell className="text-right font-medium text-danger-600">
                           -{formatCurrency(depense.montant)}
                         </TableCell>
                         <TableCell className="text-center">
                           {depense.session_caisse_id ? (
-                            <LinkIcon className="h-4 w-4 text-success-600 dark:text-success-300 mx-auto" aria-label="Liée à la caisse" />
+                            <LinkIcon className="h-4 w-4 text-success-600 mx-auto" aria-label="Liée à la caisse" />
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
@@ -633,7 +634,7 @@ export default function DepensesV2() {
                             aria-label="Supprimer la dépense"
                             onClick={() => handleDelete(depense.id)}
                           >
-                            <Trash2 className="h-4 w-4 text-danger-600 dark:text-danger-300" />
+                            <Trash2 className="h-4 w-4 text-danger-600" />
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -658,7 +659,7 @@ export default function DepensesV2() {
                 <DataCardRow
                   label="Montant"
                   value={
-                    <span className="font-medium text-danger-600 dark:text-danger-300">
+                    <span className="font-medium text-danger-600">
                       -{formatCurrency(depense.montant)}
                     </span>
                   }
@@ -676,7 +677,7 @@ export default function DepensesV2() {
                       aria-label="Supprimer la dépense"
                       onClick={() => handleDelete(depense.id)}
                     >
-                      <Trash2 className="h-4 w-4 text-danger-600 dark:text-danger-300" />
+                      <Trash2 className="h-4 w-4 text-danger-600" />
                     </Button>
                   }
                 />

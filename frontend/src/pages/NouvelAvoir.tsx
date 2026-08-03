@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { ArrowLeft, Check, Plus, X } from 'lucide-react';
 import { creditNoteService, factureService } from '@/services/api';
 import { formatCurrency } from '@/utils/format';
+import { getErrorMessage } from '@/utils/errors';
 import { DocumentPicker, DocumentOption } from '@/components/DocumentPicker';
 import { useDraft } from '@/hooks/useDraft';
 import { TiersPicker } from '@/components/TiersPicker';
@@ -118,8 +119,8 @@ export default function NouvelAvoir() {
       clear();
       toast.success('Avoir créé avec succès');
       navigate('/avoirs');
-    } catch (error: any) {
-      toast.error(error?.response?.data?.error || 'Erreur lors de la création de l avoir');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Erreur lors de la création de l avoir'));
     } finally {
       setSubmitting(false);
     }

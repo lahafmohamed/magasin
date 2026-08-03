@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Loader2, ArrowLeft, PackageCheck } from 'lucide-react';
+import { ArrowLeft, PackageCheck } from 'lucide-react';
 import { api } from '../services/authService';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -8,10 +8,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { EmptyState } from '@/components/ui/empty-state';
+import { Spinner } from '@/components/ui/loading';
+import { QueryState } from '@/components/ui/query-state';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { formatFCFA } from '../utils/format';
+import { getErrorMessage } from '@/utils/errors';
 
 interface Order {
   id: number;
@@ -64,24 +66,12 @@ export default function Receptions() {
   const [locations, setLocations] = useState<StockLocation[]>([]);
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
   const [sort, setSort] = useState<SortState<OrderSortKey> | null>(null);
   const handleSort = (key: OrderSortKey) => setSort((s) => toggleSort(s, key));
 
-  useEffect(() => {
-    fetchPendingOrders();
-    fetchLocations();
-  }, []);
-
-  useEffect(() => {
-    const commandeId = searchParams.get('commande_id');
-    if (commandeId && orders.length > 0) {
-      const order = orders.find((o) => String(o.id) === commandeId);
-      if (order) selectOrder(order);
-    }
-  }, [orders, searchParams]);
-
-  const fetchLocations = async () => {
+  const fetchLocations = useCallback(async () => {
     try {
       const { data } = await api.get('/stock-locations');
       const allLocations: StockLocation[] = data.data || data;
@@ -94,23 +84,27 @@ export default function Receptions() {
       } else if (activeLocations[0]) {
         setSelectedLocationId(String(activeLocations[0].id));
       }
-    } catch {
-      toast.error('Erreur lors du chargement des emplacements');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des emplacements'));
     }
-  };
+  }, []);
 
-  const fetchPendingOrders = async () => {
+  const fetchPendingOrders = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
       const { data } = await api.get('/receptions/pending');
       setOrders(data.data || data);
-    } catch {
-      toast.error('Erreur chargement commandes');
+    } catch (err) {
+      setError(err);
+      setOrders([]);
+      toast.error(getErrorMessage(err, 'Erreur chargement commandes'));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const selectOrder = async (order: Order) => {
+  const selectOrder = useCallback(async (order: Order) => {
     try {
       const { data } = await api.get(`/receptions/order/${order.id}`);
       const orderDetail = data.data || data;
@@ -121,26 +115,73 @@ export default function Receptions() {
       });
       setReceivedQuantities(quantities);
       setNotes('');
-    } catch {
-      toast.error('Erreur chargement commande');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur chargement commande'));
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchPendingOrders();
+    fetchLocations();
+  }, [fetchPendingOrders, fetchLocations]);
+
+  useEffect(() => {
+    const commandeId = searchParams.get('commande_id');
+    if (commandeId && orders.length > 0) {
+      const order = orders.find((o) => String(o.id) === commandeId);
+      if (order) selectOrder(order);
+    }
+  }, [orders, searchParams, selectOrder]);
 
   const handleSubmit = async () => {
     if (!selectedOrder) return;
+
+    if (!selectedLocationId) {
+      toast.error('Sélectionnez un emplacement de réception');
+      return;
+    }
+
+    const lignes: {
+      produit_id: number;
+      quantite_commandee: number;
+      quantite_recue: number;
+      cout_unitaire: number;
+    }[] = [];
+
+    for (const ligne of selectedOrder.lignes) {
+      const quantiteRecue = receivedQuantities[ligne.produit_id] ?? 0;
+      if (!Number.isInteger(quantiteRecue) || quantiteRecue < 0) {
+        toast.error(`Quantité reçue invalide pour ${ligne.produit_nom}`);
+        return;
+      }
+      if (quantiteRecue > ligne.quantite) {
+        toast.error(`Quantité reçue supérieure à la quantité commandée pour ${ligne.produit_nom} (max ${ligne.quantite})`);
+        return;
+      }
+      const coutUnitaire = parseFloat(ligne.prix_unitaire);
+      if (!Number.isFinite(coutUnitaire) || coutUnitaire < 0) {
+        toast.error(`Prix unitaire invalide pour ${ligne.produit_nom}`);
+        return;
+      }
+      lignes.push({
+        produit_id: ligne.produit_id,
+        quantite_commandee: ligne.quantite,
+        quantite_recue: quantiteRecue,
+        cout_unitaire: coutUnitaire,
+      });
+    }
+
+    if (lignes.every((ligne) => ligne.quantite_recue === 0)) {
+      toast.error('Saisissez au moins une quantité reçue');
+      return;
+    }
+
     setSubmitting(true);
 
     try {
-      const lignes = selectedOrder.lignes.map((ligne) => ({
-        produit_id: ligne.produit_id,
-        quantite_commandee: ligne.quantite,
-        quantite_recue: receivedQuantities[ligne.produit_id] || 0,
-        cout_unitaire: parseFloat(ligne.prix_unitaire),
-      }));
-
       await api.post('/receptions', {
         commande_id: selectedOrder.id,
-        location_id: selectedLocationId ? parseInt(selectedLocationId, 10) : undefined,
+        location_id: parseInt(selectedLocationId, 10),
         lignes,
         notes: notes || undefined,
       });
@@ -148,8 +189,8 @@ export default function Receptions() {
       toast.success('Réception créée');
       setSelectedOrder(null);
       fetchPendingOrders();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Erreur création réception');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur création réception'));
     } finally {
       setSubmitting(false);
     }
@@ -173,17 +214,6 @@ export default function Receptions() {
     });
     return arr;
   }, [orders, sort]);
-
-  if (loading) {
-    return (
-      <div className="container mx-auto p-6">
-        <h1 className="text-2xl font-semibold tracking-tight mb-6">Réceptions de commandes</h1>
-        <div className="rounded-md border bg-card">
-          <TableSkeleton rows={10} columns={6} />
-        </div>
-      </div>
-    );
-  }
 
   if (selectedOrder) {
     return (
@@ -241,6 +271,8 @@ export default function Receptions() {
                         className="h-8 w-24 ml-auto text-right num"
                         value={receivedQuantities[ligne.produit_id] || 0}
                         min={0}
+                        max={ligne.quantite}
+                        aria-label={`Quantité reçue pour ${ligne.produit_nom}`}
                         onChange={(e) =>
                           setReceivedQuantities((prev) => ({
                             ...prev,
@@ -271,7 +303,7 @@ export default function Receptions() {
         <Button onClick={handleSubmit} disabled={submitting}>
           {submitting ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Spinner />
               Validation…
             </>
           ) : 'Valider la réception'}
@@ -284,9 +316,16 @@ export default function Receptions() {
     <div className="container mx-auto p-6">
       <h1 className="text-2xl font-semibold tracking-tight mb-6">Réceptions de commandes</h1>
 
-      {orders.length === 0 ? (
-        <EmptyState icon={PackageCheck} title="Aucune commande en attente de réception." />
-      ) : (
+      <QueryState
+        loading={loading}
+        error={error}
+        onRetry={fetchPendingOrders}
+        skeleton={<TableSkeleton rows={10} columns={6} />}
+        isEmpty={orders.length === 0}
+        emptyIcon={PackageCheck}
+        emptyTitle="Aucune commande en attente de réception"
+        emptyDescription="Les commandes validées ou expédiées apparaîtront ici."
+      >
         <div className="overflow-x-auto rounded-md border bg-card">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-left">
@@ -323,7 +362,7 @@ export default function Receptions() {
             </tbody>
           </table>
         </div>
-      )}
+      </QueryState>
     </div>
   );
 }

@@ -1,13 +1,17 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { produitService, commandeService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { EmptyState } from '@/components/ui/empty-state';
-import { Loader2, PackageSearch, ShoppingCart, AlertTriangle } from 'lucide-react';
+import { Spinner } from '@/components/ui/loading';
+import { QueryState } from '@/components/ui/query-state';
+import { TableSkeleton } from '@/components/ui/skeleton';
+import { PackageSearch, ShoppingCart, AlertTriangle } from 'lucide-react';
 import { formatFCFA } from '../utils/format';
+import { getErrorMessage } from '@/utils/errors';
 
 interface Suggestion {
   produit_id: number;
@@ -30,10 +34,12 @@ export default function Reapprovisionnement() {
   const navigate = useNavigate();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [generating, setGenerating] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await produitService.getReorderSuggestions();
       setRows(
@@ -43,14 +49,16 @@ export default function Reapprovisionnement() {
           quantite: s.quantite_suggeree,
         }))
       );
-    } catch {
-      toast.error('Erreur lors du chargement des suggestions');
+    } catch (err) {
+      setError(err);
+      setRows([]);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des suggestions'));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const setRow = (id: number, patch: Partial<Row>) =>
     setRows((rs) => rs.map((r) => (r.produit_id === id ? { ...r, ...patch } : r)));
@@ -86,8 +94,8 @@ export default function Reapprovisionnement() {
       }
       toast.success(`${ok} commande(s) fournisseur créée(s)`);
       navigate('/commandes');
-    } catch (e: any) {
-      toast.error(e?.response?.data?.error || `Erreur après ${ok} commande(s)`);
+    } catch (e) {
+      toast.error(getErrorMessage(e, `Erreur après ${ok} commande(s)`));
       load();
     } finally {
       setGenerating(false);
@@ -107,23 +115,28 @@ export default function Reapprovisionnement() {
           </div>
         </div>
         <Button onClick={generate} disabled={generating || groups.size === 0} className="gap-2">
-          {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShoppingCart className="h-4 w-4" />}
+          {generating ? <Spinner /> : <ShoppingCart className="h-4 w-4" />}
           Générer {groups.size > 0 ? `${groups.size} commande(s)` : 'les commandes'}
         </Button>
       </div>
 
       {sansFournisseur > 0 && (
-        <div className="flex items-center gap-2 rounded-md border border-warning-300 dark:border-warning-500/30 bg-warning-50 dark:bg-warning-500/10 p-3 text-sm text-warning-800 dark:text-warning-200">
+        <div className="flex items-center gap-2 rounded-md border border-warning-300 bg-warning-50 p-3 text-sm text-warning-800">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           {sansFournisseur} produit(s) sans fournisseur par défaut — non sélectionnables pour la génération automatique.
         </div>
       )}
 
-      {loading ? (
-        <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin" /></div>
-      ) : rows.length === 0 ? (
-        <EmptyState icon={PackageSearch} title="Aucun produit à réapprovisionner" description="Tous les stocks sont au-dessus du seuil minimum." />
-      ) : (
+      <QueryState
+        loading={loading}
+        error={error}
+        onRetry={load}
+        skeleton={<TableSkeleton rows={8} columns={7} />}
+        isEmpty={rows.length === 0}
+        emptyIcon={PackageSearch}
+        emptyTitle="Aucun produit à réapprovisionner"
+        emptyDescription="Tous les stocks sont au-dessus du seuil minimum."
+      >
         <div className="overflow-x-auto rounded-lg border">
           <Table>
             <TableHeader className="bg-muted/50">
@@ -141,18 +154,18 @@ export default function Reapprovisionnement() {
               {rows.map((r) => (
                 <TableRow key={r.produit_id} className={r.fournisseur_id == null ? 'opacity-60' : ''}>
                   <TableCell>
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={r.selected}
                       disabled={r.fournisseur_id == null}
                       onChange={(e) => setRow(r.produit_id, { selected: e.target.checked })}
+                      aria-label={`Sélectionner ${r.nom}`}
                     />
                   </TableCell>
                   <TableCell className="text-sm">
                     {r.nom}
                     <span className="block text-xs font-mono text-muted-foreground">{r.reference}</span>
                   </TableCell>
-                  <TableCell className="text-sm">{r.fournisseur_nom || <span className="text-warning-600 dark:text-warning-300">— manquant —</span>}</TableCell>
+                  <TableCell className="text-sm">{r.fournisseur_nom || <span className="text-warning-600">— manquant —</span>}</TableCell>
                   <TableCell className="text-right num">{r.stock}</TableCell>
                   <TableCell className="text-right num">{r.stock_min}</TableCell>
                   <TableCell className="text-right num">{formatFCFA(Number(r.prix_achat))}</TableCell>
@@ -171,7 +184,7 @@ export default function Reapprovisionnement() {
             </TableBody>
           </Table>
         </div>
-      )}
+      </QueryState>
     </div>
   );
 }

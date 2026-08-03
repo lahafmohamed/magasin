@@ -4,7 +4,6 @@ import {
   User as UserIcon,
   ShieldCheck,
   KeyRound,
-  Loader2,
   Check,
   X,
   Clock,
@@ -16,9 +15,11 @@ import { authService } from '../services/authService';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Spinner } from '@/components/ui/loading';
 import { PageHeader } from '@/components/ui/page-header';
 import { PasswordInput } from '@/components/ui/password-input';
 import { formatDate } from '../utils/format';
+import { getErrorMessage } from '@/utils/errors';
 import { isStrongPassword, passwordRules, PASSWORD_POLICY_MESSAGE } from '../utils/password';
 
 const ROLE_LABELS: Record<string, string> = {
@@ -83,8 +84,8 @@ export default function Profil() {
       await authService.changePassword(currentPassword, newPassword);
       toast.success('Mot de passe mis à jour. Veuillez vous reconnecter.');
       await logout();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.error || 'Erreur lors du changement de mot de passe.');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du changement de mot de passe.'));
     } finally {
       setSubmitting(false);
     }
@@ -187,7 +188,7 @@ export default function Profil() {
                     <li
                       key={rule.label}
                       className={`flex items-center gap-1.5 text-xs ${
-                        rule.ok ? 'text-success-600 dark:text-success-500' : 'text-muted-foreground'
+                        rule.ok ? 'text-success-600' : 'text-muted-foreground'
                       }`}
                     >
                       {rule.ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
@@ -222,7 +223,7 @@ export default function Profil() {
               <Button type="submit" disabled={submitting} className="w-full">
                 {submitting ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Spinner />
                     Mise à jour…
                   </>
                 ) : (

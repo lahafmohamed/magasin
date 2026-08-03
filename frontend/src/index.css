@@ -38,6 +38,59 @@
     --chart-negative: 0 72% 51%;
     --chart-grid: 214.3 31.8% 88%;
     --chart-axis: 215.4 16.3% 46.9%;
+
+    /* Statut / argent — rampes sémantiques (HSL). Consommées via tailwind.config.js
+       en hsl(var(--success-500) / <alpha-value>). Le bloc .dark inverse la rampe :
+       les teintes claires (50/100) deviennent des fonds sombres et les tons foncés
+       (700/800/900) deviennent du texte clair. Écrire `text-success-700` suffit donc
+       dans les deux thèmes — ne pas rajouter de variante `dark:`. */
+    --success: 161 94% 30%;
+    --success-50: 152 81% 96%;
+    --success-100: 149 80% 90%;
+    --success-200: 152 76% 80%;
+    --success-300: 156 72% 67%;
+    --success-400: 158 64% 52%;
+    --success-500: 161 94% 30%;
+    --success-600: 163 94% 24%;
+    --success-700: 163 88% 20%;
+    --success-800: 164 86% 16%;
+    --success-900: 166 91% 9%;
+
+    --warning: 32 95% 44%;
+    --warning-50: 48 100% 96%;
+    --warning-100: 48 96% 89%;
+    --warning-200: 48 97% 77%;
+    --warning-300: 46 97% 65%;
+    --warning-400: 43 96% 56%;
+    --warning-500: 32 95% 44%;
+    --warning-600: 26 90% 37%;
+    --warning-700: 23 83% 31%;
+    --warning-800: 22 78% 26%;
+    --warning-900: 21 92% 14%;
+
+    --danger: 0 72% 51%;
+    --danger-50: 0 86% 97%;
+    --danger-100: 0 93% 94%;
+    --danger-200: 0 96% 89%;
+    --danger-300: 0 94% 82%;
+    --danger-400: 0 91% 71%;
+    --danger-500: 0 72% 51%;
+    --danger-600: 0 74% 42%;
+    --danger-700: 0 70% 35%;
+    --danger-800: 0 63% 31%;
+    --danger-900: 0 75% 15%;
+
+    --info: 221 83% 53%;
+    --info-50: 214 100% 97%;
+    --info-100: 214 95% 93%;
+    --info-200: 213 97% 87%;
+    --info-300: 212 96% 78%;
+    --info-400: 213 94% 68%;
+    --info-500: 221 83% 53%;
+    --info-600: 224 76% 48%;
+    --info-700: 226 71% 40%;
+    --info-800: 224 64% 33%;
+    --info-900: 226 57% 21%;
   }
 
   .dark {
@@ -73,6 +126,57 @@
     --chart-negative: 0 84% 65%;
     --chart-grid: 217.2 32.6% 25%;
     --chart-axis: 215 20.2% 65.1%;
+
+    /* Rampes sémantiques inversées pour surface sombre : 50/100 = fonds teintés
+       sombres, 700/800/900 = texte clair. Les DEFAULT restent identiques au thème
+       clair (aplats pleins `bg-success` + `text-white`, déjà lisibles sur fond sombre). */
+    --success: 161 94% 30%;
+    --success-50: 161 60% 12%;
+    --success-100: 161 55% 16%;
+    --success-200: 160 50% 22%;
+    --success-300: 159 48% 30%;
+    --success-400: 158 55% 42%;
+    --success-500: 158 64% 52%;
+    --success-600: 158 68% 60%;
+    --success-700: 157 72% 70%;
+    --success-800: 156 76% 80%;
+    --success-900: 155 80% 90%;
+
+    --warning: 32 95% 44%;
+    --warning-50: 32 55% 12%;
+    --warning-100: 32 52% 16%;
+    --warning-200: 33 50% 22%;
+    --warning-300: 35 55% 32%;
+    --warning-400: 38 70% 45%;
+    --warning-500: 43 96% 56%;
+    --warning-600: 45 95% 64%;
+    --warning-700: 46 97% 72%;
+    --warning-800: 48 97% 82%;
+    --warning-900: 48 100% 91%;
+
+    --danger: 0 72% 51%;
+    --danger-50: 0 45% 13%;
+    --danger-100: 0 45% 17%;
+    --danger-200: 0 48% 24%;
+    --danger-300: 0 55% 34%;
+    --danger-400: 0 65% 48%;
+    --danger-500: 0 84% 65%;
+    --danger-600: 0 88% 72%;
+    --danger-700: 0 92% 79%;
+    --danger-800: 0 94% 86%;
+    --danger-900: 0 96% 93%;
+
+    --info: 221 83% 53%;
+    --info-50: 224 50% 14%;
+    --info-100: 224 48% 18%;
+    --info-200: 223 48% 25%;
+    --info-300: 221 52% 35%;
+    --info-400: 218 65% 50%;
+    --info-500: 213 94% 68%;
+    --info-600: 213 94% 74%;
+    --info-700: 212 96% 80%;
+    --info-800: 213 97% 87%;
+    --info-900: 214 100% 93%;
   }
 }
 
@@ -81,7 +185,8 @@
     @apply border-border;
   }
   html {
-    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    /* Source unique : la pile est définie par le token `fontFamily.sans`. */
+    @apply font-sans;
   }
   body {
     @apply bg-background text-foreground;

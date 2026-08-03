@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Plus, Users, Search, Download, Eye, Pencil, Power } from 'lucide-react';
+import { Plus, Users, Search, Download, Eye, Pencil, Power } from 'lucide-react';
 import { employeService } from '../services/api';
 import { toast } from 'sonner';
 import { MoneyInput } from '../components/ui/money-input';
@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { QueryState } from '@/components/ui/query-state';
+import { Spinner } from '@/components/ui/loading';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import { ListSkeleton } from '@/components/ui/skeleton';
@@ -21,6 +22,7 @@ import { Pagination } from '@/components/ui/pagination';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useExportExcel } from '../hooks/useExportExcel';
 import { formatFCFA } from '../utils/format';
+import { getErrorMessage } from '@/utils/errors';
 
 interface Employe {
   id: number;
@@ -143,8 +145,8 @@ export default function Employes() {
       const dateFin = new Date().toISOString().split('T')[0];
       const data = await employeService.getCommissionSummary(employe.id, dateDebut, dateFin);
       setCommissionSummary(data.data || data);
-    } catch {
-      toast.error('Erreur chargement commissions');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur chargement commissions'));
     }
   };
 
@@ -187,8 +189,8 @@ export default function Employes() {
       }
       setShowForm(false);
       fetchEmployes();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Erreur enregistrement employé');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur enregistrement employé'));
     } finally {
       setSubmitting(false);
     }
@@ -206,14 +208,14 @@ export default function Employes() {
       await employeService.update(e.id, { actif: next });
       toast.success(next ? 'Employé réactivé' : 'Employé désactivé');
       fetchEmployes();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Action impossible');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Action impossible'));
     }
   };
 
   const StatutBadge = ({ actif }: { actif: boolean }) => (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-      actif ? 'bg-success-100 dark:bg-success-500/20 text-success-700 dark:text-success-200' : 'bg-muted text-muted-foreground'
+      actif ? 'bg-success-100 text-success-700' : 'bg-muted text-muted-foreground'
     }`}>
       {actif ? 'Actif' : 'Inactif'}
     </span>
@@ -449,7 +451,7 @@ export default function Employes() {
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>Annuler</Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? (<><Loader2 className="h-4 w-4 animate-spin" /> Enregistrement…</>) : editing ? 'Modifier' : 'Créer'}
+                {submitting ? (<><Spinner /> Enregistrement…</>) : editing ? 'Modifier' : 'Créer'}
               </Button>
             </DialogFooter>
           </form>

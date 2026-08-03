@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, CheckCircle, Truck, Package, Clock, Loader2, X } from 'lucide-react';
+import { Bell, CheckCircle, Truck, Package, Clock, RefreshCw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/loading';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -57,8 +58,15 @@ export function NotificationBell() {
         <div className="flex items-center justify-between px-3 py-2 border-b">
           <h4 className="font-semibold text-sm">Notifications</h4>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refresh} disabled={isLoading}>
-              <Loader2 className={`h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              onClick={refresh}
+              disabled={isLoading}
+              aria-label="Actualiser les notifications"
+            >
+              {isLoading ? <Spinner className="h-3 w-3" /> : <RefreshCw className="h-3 w-3" />}
             </Button>
           </div>
         </div>
@@ -131,6 +139,7 @@ export function NotificationBell() {
                         variant="ghost"
                         size="icon"
                         className="h-5 w-5 shrink-0"
+                        aria-label="Ignorer cette notification"
                         onClick={(e) => {
                           e.stopPropagation();
                           dismissNotification(notification.id);

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
-import { Search as SearchIcon, Download, X } from 'lucide-react';
+import { Search as SearchIcon, Download, X, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
+import { getErrorMessage } from '@/utils/errors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -51,6 +53,11 @@ export interface ListResult<T> {
 export interface UseDocumentListOptions<T, S> {
   /** Clé de tri par défaut (ex. `date_facture`) — desc, retirée de l'URL. */
   defaultSortKey: string;
+  /**
+   * Filtres additionnels propres à la page (ex. `{ type: 'tous' }` pour les
+   * avoirs) : clé = paramètre d'URL, valeur = défaut (retiré de l'URL).
+   */
+  extraFilters?: Record<string, string>;
   /** Doit correspondre à la signature `service.getAll(...)`. */
   fetchList: (
     search: string,
@@ -58,7 +65,8 @@ export interface UseDocumentListOptions<T, S> {
     page: number,
     limit: number,
     sortKey: string,
-    sortDir: 'asc' | 'desc'
+    sortDir: 'asc' | 'desc',
+    extra: Record<string, string>
   ) => Promise<T[] | ListResult<T> | null | undefined>;
   fetchStats?: () => Promise<S>;
   loadErrorMessage: string;
@@ -69,6 +77,7 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
 ) {
   const [rows, setRows] = useState<T[]>([]);
   const [stats, setStats] = useState<S | null>(null);
+  const [statsError, setStatsError] = useState(false);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -88,6 +97,28 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
   const [committedSearch, setCommittedSearch] = useUrlState('q', '');
   const [page, setPage] = useUrlNumber('page', 1);
   const [limit, setLimit] = useUrlNumber('limit', 20);
+
+  // Filtres additionnels de la page, également portés par l'URL.
+  const extraDefaults = opts.extraFilters ?? {};
+  const extraKeys = Object.keys(extraDefaults);
+  const extra: Record<string, string> = {};
+  for (const key of extraKeys) {
+    extra[key] = sortParams.get(key) ?? extraDefaults[key];
+  }
+  const extraSignature = extraKeys.map((k) => `${k}=${extra[k]}`).join('&');
+
+  const setExtra = (key: string, value: string) => {
+    setSortParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (value === extraDefaults[key]) p.delete(key);
+        else p.set(key, value);
+        p.delete('page');
+        return p;
+      },
+      { replace: true }
+    );
+  };
 
   // Local text mirrors the committed search; debounced before it hits the URL/fetch.
   const [search, setSearch] = useState(committedSearch);
@@ -111,7 +142,10 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
     );
   };
 
-  const hasFilters = committedSearch !== '' || statusFilter !== 'all';
+  const hasFilters =
+    committedSearch !== '' ||
+    statusFilter !== 'all' ||
+    extraKeys.some((k) => extra[k] !== extraDefaults[k]);
 
   // Debounce the search box → committed search, resetting to page 1.
   useEffect(() => {
@@ -136,7 +170,8 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
         page,
         limit,
         sort.key,
-        sort.dir
+        sort.dir,
+        extra
       );
       const data = Array.isArray(response) ? response : response?.data ?? [];
       setRows(Array.isArray(data) ? data : []);
@@ -144,11 +179,11 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
       setTotal(pagination?.total ?? 0);
       setTotalPages(pagination?.totalPages ?? 0);
       setError(false);
-    } catch {
+    } catch (err) {
       // A fetch failure must NOT read as "no data" — surface an error + retry.
       setError(true);
       setRows([]);
-      toast.error(opts.loadErrorMessage);
+      toast.error(getErrorMessage(err, opts.loadErrorMessage));
     } finally {
       setLoading(false);
     }
@@ -157,10 +192,21 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [committedSearch, statusFilter, page, limit, sort.key, sort.dir]);
+  }, [committedSearch, statusFilter, page, limit, sort.key, sort.dir, extraSignature]);
+
+  // Les tuiles KPI ont leur propre état d'échec : sans lui elles resteraient
+  // bloquées sur « — », indiscernable d'un total réellement nul.
+  const loadStats = () => {
+    if (!opts.fetchStats) return;
+    setStatsError(false);
+    opts
+      .fetchStats()
+      .then((s) => setStats(s))
+      .catch(() => setStatsError(true));
+  };
 
   useEffect(() => {
-    opts.fetchStats?.().then(setStats).catch(() => {});
+    loadStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -169,6 +215,7 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
     setCommittedSearch('');
     setStatusFilter('all');
     setPage(1);
+    for (const key of extraKeys) setExtra(key, extraDefaults[key]);
   };
 
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
@@ -193,6 +240,10 @@ export function useDocumentList<T extends { id: number }, S = unknown>(
   return {
     rows,
     stats,
+    statsError,
+    reloadStats: loadStats,
+    extra,
+    setExtra,
     total,
     totalPages,
     loading,
@@ -260,6 +311,8 @@ export interface DocumentListPageProps<T extends { id: number }, S = unknown> {
   statTiles: (stats: S | null) => StatTile[];
   searchPlaceholder: string;
   statusChips: ReadonlyArray<{ value: string; label: string }>;
+  /** Slot : filtres additionnels rendus à droite de la recherche (Select…). */
+  extraFilters?: React.ReactNode;
   /** Raccourcis page : « / » focus recherche (intégré) + « n » création. */
   shortcuts: { newRoute: string; newDescription: string };
   csv: CsvExportConfig<T>;
@@ -318,8 +371,8 @@ export function DocumentListPage<T extends { id: number }, S = unknown>(
         rows
       );
       toast.success('Export CSV réussi');
-    } catch {
-      toast.error('Erreur lors de l\'export CSV');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de l\'export CSV'));
     }
   };
 
@@ -455,28 +508,34 @@ export function DocumentListPage<T extends { id: number }, S = unknown>(
 
   return (
     <div className={props.layoutClassName}>
-      <div className="flex justify-between items-center">
-        {props.subtitle ? (
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-              <TitleIcon className="h-8 w-8" /> {props.title}
-            </h1>
-            <p className="text-muted-foreground mt-1">{props.subtitle}</p>
-          </div>
-        ) : (
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <TitleIcon className="h-8 w-8" /> {props.title}
-          </h1>
-        )}
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={exportToCSV} className="gap-2">
-            <Download className="h-4 w-4" /> Exporter en CSV
-          </Button>
-          {props.createButton}
-        </div>
-      </div>
+      <PageHeader
+        title={props.title}
+        icon={TitleIcon}
+        description={props.subtitle}
+        actions={
+          <>
+            <Button variant="outline" onClick={exportToCSV} className="gap-2">
+              <Download className="h-4 w-4" aria-hidden="true" /> Exporter en CSV
+            </Button>
+            {props.createButton}
+          </>
+        }
+      />
 
-      <StatsBar tiles={props.statTiles(list.stats)} loading={!list.stats} />
+      {list.statsError ? (
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3" role="alert">
+            <p className="text-sm text-muted-foreground">
+              Les totaux n'ont pas pu être chargés.
+            </p>
+            <Button variant="outline" size="sm" onClick={list.reloadStats} className="gap-2">
+              <RefreshCw className="h-4 w-4" aria-hidden="true" /> Réessayer
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <StatsBar tiles={props.statTiles(list.stats)} loading={!list.stats} />
+      )}
 
       {/* Search and Filter */}
       <Card>
@@ -492,6 +551,7 @@ export function DocumentListPage<T extends { id: number }, S = unknown>(
                 className="pl-10"
               />
             </div>
+            {props.extraFilters}
             {list.hasFilters && (
               <Button
                 variant="ghost"
@@ -499,27 +559,27 @@ export function DocumentListPage<T extends { id: number }, S = unknown>(
                 onClick={list.clearFilters}
                 className="gap-1 text-muted-foreground"
               >
-                <X className="h-4 w-4" /> Effacer
+                <X className="h-4 w-4" aria-hidden="true" /> Effacer
               </Button>
             )}
           </div>
           {/* Quick status filter chips */}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrer par statut">
             {props.statusChips.map((c) => (
-              <button
+              <Button
                 key={c.value}
+                type="button"
+                size="sm"
+                variant={list.statusFilter === c.value ? 'default' : 'outline'}
+                aria-pressed={list.statusFilter === c.value}
                 onClick={() => {
                   list.setStatusFilter(c.value);
                   list.setPage(1);
                 }}
-                className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-                  list.statusFilter === c.value
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-input bg-background hover:bg-muted'
-                }`}
+                className="h-7 rounded-full px-3 text-xs"
               >
                 {c.label}
-              </button>
+              </Button>
             ))}
           </div>
         </CardContent>

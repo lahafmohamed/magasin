@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { factureService } from '../services/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { EmptyState } from '@/components/ui/empty-state';
+import { QueryState } from '@/components/ui/query-state';
+import { PageLoading } from '@/components/ui/loading';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Users, Download, TrendingUp, DollarSign, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/utils/errors';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { formatFCFA as formatXOF } from '../utils/format';
 import { downloadCsv } from '../utils/csv';
@@ -22,13 +24,11 @@ import {
 export default function ClientAnalytics() {
   const [topClients, setTopClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
 
-  useEffect(() => {
-    loadAnalytics();
-  }, []);
-
-  const loadAnalytics = async () => {
+  const loadAnalytics = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const topClientsData = await factureService.getTopClients(10);
 
@@ -37,13 +37,18 @@ export default function ClientAnalytics() {
         total_depenses: parseFloat(c.total_depenses) || 0,
         nombre_factures: parseInt(c.nombre_factures) || 0,
       })));
-    } catch (error) {
-      toast.error('Erreur lors du chargement');
-      console.error(error);
+    } catch (err) {
+      setError(err);
+      setTopClients([]);
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement des analyses clients'));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void loadAnalytics();
+  }, [loadAnalytics]);
 
   const exportToCSV = () => {
     const headers = ['Nom', 'Prénom', 'Email', 'Téléphone', 'NIF', 'Total Dépenses', 'Nb Factures'];
@@ -60,14 +65,6 @@ export default function ClientAnalytics() {
     downloadCsv('top-clients.csv', headers, rows);
     toast.success('Export CSV réussi');
   };
-
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-      </div>
-    );
-  }
 
   const totalRevenue = topClients.reduce((sum, c) => sum + c.total_depenses, 0);
   const avgPerClient = topClients.length > 0 ? totalRevenue / topClients.length : 0;
@@ -94,13 +91,23 @@ export default function ClientAnalytics() {
               Gérer les Contacts
             </Button>
           </Link>
-          <Button onClick={exportToCSV} className="gap-2">
+          <Button onClick={exportToCSV} className="gap-2" disabled={topClients.length === 0}>
             <Download className="h-4 w-4" />
             Exporter CSV
           </Button>
         </div>
       </div>
 
+      <QueryState
+        loading={loading}
+        error={error}
+        isEmpty={topClients.length === 0}
+        onRetry={loadAnalytics}
+        skeleton={<PageLoading />}
+        emptyIcon={BarChart3}
+        emptyTitle="Aucune donnée client"
+        emptyDescription="Aucune facture client enregistrée pour générer les analyses."
+      >
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card>
@@ -138,104 +145,94 @@ export default function ClientAnalytics() {
       </div>
 
       {/* Top Clients Chart */}
-      {topClients.length === 0 && (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BarChart3 className="h-5 w-5" />
+            Top 10 Clients par Montant Dépensé
+          </CardTitle>
+          <CardDescription>Classement des meilleurs clients</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={300} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+            <BarChart accessibilityLayer data={topClients}>
+              <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
+              <XAxis dataKey="nom" tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(value) => `${value.substring(0, 12)}...`} />
+              <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
+              <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
+              <Bar dataKey="total_depenses" fill={CHART_PRIMARY} name="Montant dépensé" />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Pie Chart */}
         <Card>
+          <CardHeader>
+            <CardTitle>Répartition du Chiffre d'Affaires</CardTitle>
+            <CardDescription>Top 7 clients</CardDescription>
+          </CardHeader>
           <CardContent>
-            <EmptyState icon={BarChart3} title="Aucune donnée client" description="Aucune activité client sur la période pour générer les analyses." />
+            <ResponsiveContainer width="100%" height={250} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
+              <PieChart accessibilityLayer>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, percent }) => `${String(name).substring(0, 15)} (${((percent ?? 0) * 100).toFixed(0)}%)`}
+                  outerRadius={80}
+                  fill={CHART_PRIMARY}
+                  dataKey="value"
+                >
+                  {pieData.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} />
+              </PieChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
-      )}
-      {topClients.length > 0 && (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart3 className="h-5 w-5" />
-                Top 10 Clients par Montant Dépensé
-              </CardTitle>
-              <CardDescription>Classement des meilleurs clients</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={300} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
-                <BarChart accessibilityLayer data={topClients}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} />
-                  <XAxis dataKey="nom" tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(value) => `${value.substring(0, 12)}...`} />
-                  <YAxis tick={{ fontSize: 11, fill: CHART_AXIS }} tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
-                  <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
-                  <Bar dataKey="total_depenses" fill={CHART_PRIMARY} name="Montant dépensé" />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Pie Chart */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Répartition du Chiffre d'Affaires</CardTitle>
-                <CardDescription>Top 7 clients</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={250} minWidth={0} initialDimension={{ width: 1, height: 1 }}>
-                  <PieChart accessibilityLayer>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, percent }) => `${String(name).substring(0, 15)} (${((percent ?? 0) * 100).toFixed(0)}%)`}
-                      outerRadius={80}
-                      fill={CHART_PRIMARY}
-                      dataKey="value"
-                    >
-                      {pieData.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value: any) => formatXOF(value)} contentStyle={CHART_TOOLTIP_STYLE} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Table */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Classement Détaillé</CardTitle>
-                <CardDescription>Top clients avec statistiques</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>#</TableHead>
-                      <TableHead>Client</TableHead>
-                      <TableHead className="text-right">Factures</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {topClients.map((client, index) => (
-                      <TableRow key={client.nom + client.prenom}>
-                        <TableCell className="font-bold">{index + 1}</TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="font-semibold">{client.nom} {client.prenom}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge variant="outline">{client.nombre_factures}</Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-bold">{formatXOF(client.total_depenses)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </div>
-        </>
-      )}
+        {/* Table */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Classement Détaillé</CardTitle>
+            <CardDescription>Top clients avec statistiques</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>#</TableHead>
+                  <TableHead>Client</TableHead>
+                  <TableHead className="text-right">Factures</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {topClients.map((client, index) => (
+                  <TableRow key={client.nom + client.prenom}>
+                    <TableCell className="font-bold">{index + 1}</TableCell>
+                    <TableCell>
+                      <div>
+                        <p className="font-semibold">{client.nom} {client.prenom}</p>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Badge variant="outline">{client.nombre_factures}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-bold">{formatXOF(client.total_depenses)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+      </QueryState>
     </div>
   );
 }

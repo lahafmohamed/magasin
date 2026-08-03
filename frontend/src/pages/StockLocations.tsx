@@ -1,18 +1,21 @@
 import { useState, useEffect } from 'react';
-import { Check, Loader2, Plus, Package, Warehouse } from 'lucide-react';
+import { Check, Plus, Package, Warehouse } from 'lucide-react';
 import { stockLocationService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Spinner } from '@/components/ui/loading';
 import { PageHeader } from '@/components/ui/page-header';
 import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { fuzzyScore } from '../utils/format';
+import { getErrorMessage } from '@/utils/errors';
 
 interface StockLocation {
   id: number;
@@ -74,8 +77,8 @@ export default function StockLocations() {
     try {
       const data = await stockLocationService.getStockLevels(locationId);
       setStockLevels(data.data || data);
-    } catch {
-      toast.error('Erreur chargement stock');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur chargement stock'));
     }
   };
 
@@ -99,16 +102,47 @@ export default function StockLocations() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+
+    const code = formData.code.trim();
+    const nom = formData.nom.trim();
+
+    if (!code) {
+      toast.error("Le code de l'emplacement est obligatoire");
+      return;
+    }
+    if (code.length > 20) {
+      toast.error('Le code ne doit pas dépasser 20 caractères');
+      return;
+    }
+    if (!nom) {
+      toast.error("Le nom de l'emplacement est obligatoire");
+      return;
+    }
+    if (nom.length > 100) {
+      toast.error('Le nom ne doit pas dépasser 100 caractères');
+      return;
+    }
+    if (locations.some((location) => location.code.toLowerCase() === code.toLowerCase())) {
+      toast.error('Ce code est déjà utilisé par un autre emplacement');
+      return;
+    }
+
     setSubmitting(true);
 
     try {
-      await stockLocationService.create(formData);
+      await stockLocationService.create({
+        ...formData,
+        code,
+        nom,
+        adresse: formData.adresse.trim(),
+      });
       toast.success('Emplacement créé');
       setShowCreateForm(false);
       setFormData({ code: '', nom: '', adresse: '', est_principal: false });
       fetchLocations();
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || "Erreur lors de la création de l'emplacement");
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Erreur lors de la création de l'emplacement"));
     } finally {
       setSubmitting(false);
     }
@@ -146,21 +180,20 @@ export default function StockLocations() {
               <Label htmlFor="loc-adresse">Adresse</Label>
               <Textarea id="loc-adresse" value={formData.adresse} onChange={(e) => setFormData({ ...formData, adresse: e.target.value })} />
             </div>
-            <label className="flex items-center justify-between gap-3 cursor-pointer">
-              <span className="text-sm font-medium">Emplacement principal</span>
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="loc-principal">Emplacement principal</Label>
+              <Checkbox
+                id="loc-principal"
                 checked={formData.est_principal}
                 onChange={(e) => setFormData({ ...formData, est_principal: e.target.checked })}
               />
-            </label>
+            </div>
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={() => setShowCreateForm(false)}>Annuler</Button>
               <Button type="submit" disabled={submitting}>
                 {submitting ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Spinner />
                     Création…
                   </>
                 ) : 'Créer'}

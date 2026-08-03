@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Download, Loader2, Search } from 'lucide-react';
+import { Download, Search } from 'lucide-react';
 import { api } from '../services/authService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -13,6 +13,9 @@ import { toast } from 'sonner';
 import { formatCurrency } from '../utils/format';
 import { PageHeader } from '@/components/ui/page-header';
 import { QueryState } from '@/components/ui/query-state';
+import { EmptyState } from '@/components/ui/empty-state';
+import { PageLoading, Spinner } from '@/components/ui/loading';
+import { getErrorMessage } from '@/utils/errors';
 import { downloadCsv } from '@/utils/csv';
 import {
   ReceivableBucket,
@@ -163,7 +166,7 @@ export default function Reporting() {
     } catch (e) {
       if (reqId !== reqIdRef.current) return;
       setError(e);
-      toast.error('Erreur lors du chargement des rapports');
+      toast.error(getErrorMessage(e, 'Erreur lors du chargement des rapports'));
     } finally {
       if (reqId === reqIdRef.current) setLoading(false);
     }
@@ -192,8 +195,8 @@ export default function Reporting() {
       } else {
         toast.success(`${exportedRows.length} créance(s) exportée(s)`);
       }
-    } catch {
-      toast.error("Impossible d'exporter les créances");
+    } catch (exportError) {
+      toast.error(getErrorMessage(exportError, "Impossible d'exporter les créances"));
     } finally {
       setExportingReceivables(false);
     }
@@ -218,7 +221,7 @@ export default function Reporting() {
         loading={loading}
         error={error}
         onRetry={fetchAllData}
-        skeleton={<div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}
+        skeleton={<PageLoading />}
       >
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'general' | 'margins')}>
       <TabsList className="mb-6">
@@ -320,7 +323,10 @@ export default function Reporting() {
                     </PieChart>
                   </ResponsiveContainer>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8 text-sm">Aucune donnée</p>
+                  <EmptyState
+                    title="Aucune vente sur la période"
+                    description="Aucune catégorie n'a enregistré de vente entre ces deux dates."
+                  />
                 )}
               </CardContent>
             </Card>
@@ -339,7 +345,10 @@ export default function Reporting() {
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8 text-sm">Aucune donnée</p>
+                  <EmptyState
+                    title="Aucun produit vendu sur la période"
+                    description="Aucune marge produit à classer entre ces deux dates."
+                  />
                 )}
               </CardContent>
             </Card>
@@ -407,7 +416,7 @@ export default function Reporting() {
                   className="gap-2"
                 >
                   {exportingReceivables
-                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    ? <Spinner />
                     : <Download className="h-4 w-4" />}
                   Exporter
                 </Button>
@@ -415,12 +424,14 @@ export default function Reporting() {
 
               {receivablesLoading ? (
                 <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground" aria-live="polite">
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <Spinner size="md" />
                   Chargement des créances…
                 </div>
               ) : receivablesError ? (
                 <div className="py-8 text-center" role="alert">
-                  <p className="text-sm text-danger-700">Impossible de charger les créances.</p>
+                  <p className="text-sm text-danger-700">
+                    {getErrorMessage(receivablesError, 'Impossible de charger les créances.')}
+                  </p>
                   <Button variant="outline" size="sm" className="mt-3" onClick={() => void fetchReceivables()}>
                     Réessayer
                   </Button>
@@ -491,9 +502,10 @@ export default function Reporting() {
                   />
                 </>
               ) : (
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  Aucune créance ne correspond aux filtres.
-                </p>
+                <EmptyState
+                  title="Aucune créance client"
+                  description="Aucun client débiteur ne correspond aux filtres appliqués."
+                />
               )}
             </CardContent>
           </Card>
@@ -528,7 +540,10 @@ export default function Reporting() {
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8 text-sm">Aucune donnée</p>
+                  <EmptyState
+                    title="Aucune marge mensuelle"
+                    description="Aucune vente enregistrée sur les mois de la période."
+                  />
                 )}
               </CardContent>
             </Card>
@@ -557,7 +572,10 @@ export default function Reporting() {
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8 text-sm">Aucune donnée</p>
+                  <EmptyState
+                    title="Aucune catégorie vendue"
+                    description="Aucun taux de marge calculable sur la période."
+                  />
                 )}
               </CardContent>
             </Card>
@@ -587,7 +605,10 @@ export default function Reporting() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8 text-sm">Aucune donnée</p>
+                  <EmptyState
+                    title="Aucun client facturé"
+                    description="Aucun client n'a généré de marge sur la période."
+                  />
                 )}
               </CardContent>
             </Card>
@@ -630,7 +651,10 @@ export default function Reporting() {
                     </table>
                   </div>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8 text-sm">Aucune donnée</p>
+                  <EmptyState
+                    title="Aucun produit vendu sur la période"
+                    description="Aucune rentabilité produit à afficher entre ces deux dates."
+                  />
                 )}
               </CardContent>
             </Card>

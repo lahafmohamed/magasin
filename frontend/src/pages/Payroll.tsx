@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Plus, Wallet, CheckCircle2, BadgeDollarSign, XCircle, Trash2, ArrowLeft, FileDown } from 'lucide-react';
+import { Plus, Wallet, CheckCircle2, BadgeDollarSign, XCircle, Trash2, ArrowLeft, FileDown } from 'lucide-react';
 import { payrollService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Spinner } from '@/components/ui/loading';
 import { PageHeader } from '@/components/ui/page-header';
 import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
@@ -18,6 +19,7 @@ import { Pagination } from '@/components/ui/pagination';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import { formatCurrency, formatDate } from '../utils/format';
+import { getErrorMessage } from '@/utils/errors';
 
 interface PayrollRun {
   id: number;
@@ -105,8 +107,8 @@ export default function Payroll() {
     try {
       setPayslipPage(1);
       setSelected(await payrollService.getById(id));
-    } catch {
-      toast.error('Erreur lors du chargement du cycle');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du chargement du cycle'));
     }
   };
 
@@ -120,8 +122,8 @@ export default function Payroll() {
       setNotes('');
       await loadRuns();
       if (run?.id) await openRun(run.id);
-    } catch (e: any) {
-      toast.error(e?.response?.data?.error || 'Erreur lors de la génération');
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Erreur lors de la génération'));
     } finally {
       setBusy(false);
     }
@@ -138,8 +140,8 @@ export default function Payroll() {
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-    } catch {
-      toast.error('Erreur lors du téléchargement du bulletin');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors du téléchargement du bulletin'));
     }
   };
 
@@ -150,8 +152,8 @@ export default function Payroll() {
       toast.success(okMsg);
       await loadRuns();
       if (updated?.id) setSelected(updated);
-    } catch (e: any) {
-      toast.error(e?.response?.data?.error || 'Action impossible');
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Action impossible'));
     } finally {
       setBusy(false);
     }
@@ -251,7 +253,16 @@ export default function Payroll() {
                 </TableRow>
               ))}
               {payslips.length === 0 && (
-                <TableRow><TableCell colSpan={10} className="py-6 text-center text-muted-foreground">Aucun bulletin</TableCell></TableRow>
+                <TableRow>
+                  <TableCell colSpan={10} className="p-0 sm:p-0">
+                    <EmptyState
+                      icon={Wallet}
+                      title="Aucun bulletin dans ce cycle"
+                      description="Aucun employé actif n'a été retenu lors de la génération de la période."
+                      className="py-8"
+                    />
+                  </TableCell>
+                </TableRow>
               )}
             </TableBody>
           </Table>
@@ -391,7 +402,7 @@ export default function Payroll() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={busy}>Annuler</Button>
             <Button onClick={handleCreate} disabled={busy}>
-              {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null} Générer
+              {busy ? <Spinner className="mr-1" /> : null} Générer
             </Button>
           </DialogFooter>
         </DialogContent>

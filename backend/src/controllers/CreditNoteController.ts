@@ -9,7 +9,7 @@ export class CreditNoteController {
 
   static async getAll(req: Request, res: Response): Promise<void> {
     try {
-      const { search, statut, tiers_id, client_id, page, limit, sort, order } = req.query;
+      const { search, statut, avoir_type, tiers_id, client_id, page, limit, sort, order } = req.query;
       const result = await creditNoteService.getAll(
         search as string,
         statut as string,
@@ -17,9 +17,23 @@ export class CreditNoteController {
         page ? parseInt(page as string) : 1,
         Math.min(200, (limit ? parseInt(limit as string) : 20) || 20),
         (sort as string) || 'date_avoir',
-        (order as string) || 'DESC'
+        (order as string) || 'DESC',
+        avoir_type as string
       );
       res.json({ success: true, data: result.data, pagination: result.pagination });
+    } catch (error: any) {
+      console.error('CreditNoteController:', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
+  static async getStats(req: Request, res: Response): Promise<void> {
+    try {
+      const { tiers_id, client_id } = req.query;
+      const stats = await creditNoteService.getStats(
+        (tiers_id || client_id) ? parseInt((tiers_id || client_id) as string) : undefined
+      );
+      res.json({ success: true, data: stats });
     } catch (error: any) {
       console.error('CreditNoteController:', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
