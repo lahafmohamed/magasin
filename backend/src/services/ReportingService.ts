@@ -659,9 +659,10 @@ export class ReportingService {
       pool.query(
         `SELECT c.id, c.numero_commande, c.date_commande, c.date_livraison_prevue,
                 COALESCE(t.raison_sociale, 'Fournisseur inconnu') as fournisseur_nom
-         FROM commandes c
+         FROM commandes_fournisseur c
          LEFT JOIN tiers t ON c.tiers_id = t.id
          WHERE c.statut NOT IN ('livree', 'annulee')
+           AND c.deleted_at IS NULL
            AND c.date_livraison_prevue < CURRENT_DATE
          ORDER BY c.date_livraison_prevue ASC
          LIMIT 20`
