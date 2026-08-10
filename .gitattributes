@@ -1,0 +1,4 @@
+# Les scripts shell tournent sur le VPS Linux : LF obligatoire même si le
+# checkout se fait sous Windows (CRLF casse les shebangs et heredocs).
+*.sh text eol=lf
+*.mjs text eol=lf

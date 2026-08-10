@@ -1,19 +1,25 @@
 /**
- * CI database bootstrap.
+ * Fresh-database bootstrap (CI + client provisioning).
  *
  * The migration chain is NOT fresh-DB replayable (early migrations alter
  * tables only the former legacy schema snapshot created; 010 uses CREATE INDEX
- * CONCURRENTLY; 001's shapes contradict 043). CI therefore loads a
+ * CONCURRENTLY; 001's shapes contradict 043). A fresh DB therefore loads a
  * pg_dump --schema-only baseline of the real database (src/db/ci-baseline.sql,
  * regenerate after adding a migration), the reference data every code path
  * assumes (roles, plan_comptable for the 072 auto-posting triggers,
- * three_way_match_config), then creates the admin test user and marks all
+ * three_way_match_config), then creates the admin user and marks all
  * migrations as applied (schema_migrations baseline).
  *
  * Usage:  node scripts/ci-db-setup.mjs   (reads DB_* from the environment)
  * Local:  safe to point at a scratch database only — it assumes empty.
  * Tests:  --reset-test-db drops/recreates public only after the strict test
  *         environment/database-name guard passes.
+ *
+ * Provisioning (deploy/provision-client.sh) overrides the CI defaults via env:
+ *   ADMIN_USERNAME ADMIN_PASSWORD ADMIN_EMAIL ADMIN_FULLNAME
+ *   ADMIN_MUST_CHANGE_PASSWORD=true   (force le changement au 1er login)
+ *   MAGASIN_CODE MAGASIN_NAME
+ * Defaults are the historical CI values — CI behaviour is unchanged.
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -78,22 +84,31 @@ await client.query(loadSql('ci-ref-data.sql'));
 // The pg_dump preamble left this connection with search_path = '' — restore it.
 await client.query('SET search_path TO public');
 
-console.log('Creating admin test user...');
-const hash = await bcrypt.hash('admin123', 12);
+const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+const adminEmail = process.env.ADMIN_EMAIL || 'admin@ci.local';
+const adminFullName = process.env.ADMIN_FULLNAME || 'CI Admin';
+const mustChangePassword = process.env.ADMIN_MUST_CHANGE_PASSWORD === 'true';
+const magasinCode = process.env.MAGASIN_CODE || 'MAG-CI';
+const magasinName = process.env.MAGASIN_NAME || 'Magasin CI';
+
+console.log(`Creating admin user "${adminUsername}"...`);
+const hash = await bcrypt.hash(adminPassword, 12);
 await client.query(
   `INSERT INTO utilisateurs (username, email, password_hash, nom_complet, role_id, actif, must_change_password)
-   SELECT 'admin', 'admin@ci.local', $1, 'CI Admin', r.id, true, false
+   SELECT $2, $3, $1, $4, r.id, true, $5
    FROM roles r WHERE r.nom = 'admin'
    ON CONFLICT (username) DO NOTHING`,
-  [hash]
+  [hash, adminUsername, adminEmail, adminFullName, mustChangePassword]
 );
 
 console.log('Creating default magasin location...');
 // Sales flows resolve the active magasin from stock_locations (StockMagasinService).
 await client.query(
   `INSERT INTO stock_locations (code, nom, location_type, actif, est_principal)
-   VALUES ('MAG-CI', 'Magasin CI', 'magasin', true, true)
-   ON CONFLICT (code) DO NOTHING`
+   VALUES ($1, $2, 'magasin', true, true)
+   ON CONFLICT (code) DO NOTHING`,
+  [magasinCode, magasinName]
 );
 
 await client.end();

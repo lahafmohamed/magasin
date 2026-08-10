@@ -26,7 +26,7 @@ French-language **ERP** for a retail + wholesale electronics business ("magasin 
 - Tests: **vitest** + Testing Library + jsdom. `playwright` is a devDep but **unused** (no config/specs).
 - PWA assets (`public/sw.js`, `manifest.json`) are **live**: `index.html` links the manifest and `main.tsx` registers the service worker outside localhost — it ships in production.
 
-**Ops:** PM2 (`ecosystem.config.js`) manages the **backend only** (secrets read from env). Frontend is a static Vite build (no deploy step in repo). **CI:** GitHub Actions (`.github/workflows/ci.yml`).
+**Ops:** PM2 (`ecosystem.config.js`) manages the **backend only** (secrets read from env). Frontend is a static Vite build served by nginx (`deploy/nginx-client.conf.template`). Multi-client provisioning/backup/suspension tooling lives in `deploy/` (see its README). **CI:** GitHub Actions (`.github/workflows/ci.yml`).
 
 ## Architecture
 
@@ -93,7 +93,9 @@ npm test               # vitest run (60% coverage threshold configured; currentl
 ```bash
 pm2 start ecosystem.config.js   # backend only (app "hitektest-api", dist/server.js)
 ```
-> `ecosystem.config.js` now reads `JWT_SECRET`/`DB_*` from env (no committed secrets). Frontend static-serving is undocumented.
+> `ecosystem.config.js` now reads `JWT_SECRET`/`DB_*` from env (no committed secrets).
+
+**Multi-client (SaaS) ops — `deploy/`** (see [deploy/README.md](deploy/README.md)): `provision-client.sh <slug> <domaine> <port> [--demo]` provisions a full per-client instance (DB+user, clone, `.env`, build, **fresh-DB bootstrap via `scripts/ci-db-setup.mjs`** — the migration chain is not fresh-DB replayable — pm2, nginx vhost from `nginx-client.conf.template`, backup cron). `suspend-client.sh <slug> on|off` = payment suspension via nginx flag file (no sudo/reload). `backup-all-clients.sh` (daily cron) + `test-restore.sh <slug>` (restore into scratch DB + ledger balance check). `update-client.sh <slug>|--all` = backup→pull→build→migrate→restart→health. `reset-demo.sh` = nightly demo re-seed. `ci-db-setup.mjs` accepts `ADMIN_*`/`MAGASIN_*` env overrides (CI defaults unchanged).
 
 **CI:** `.github/workflows/ci.yml` runs on push/PR to `main`. **Backend:** postgres:18 service + `scripts/ci-db-setup.mjs` (loads `src/db/ci-baseline.sql` schema dump + `ci-ref-data.sql` + admin user + `migrate.mjs --baseline`), then `npm ci` → `tsc --noEmit` → lint → **full integration test suite against the service DB** → build. **Regenerate `ci-baseline.sql` (pg_dump --schema-only) after adding a migration.** **Frontend:** `npm ci` → `tsc -b` → lint → test → build.
 
