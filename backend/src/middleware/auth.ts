@@ -78,7 +78,10 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
 
     // Block all requests except the change-password endpoint itself when a
     // password change is required — otherwise the user is permanently locked out.
-    const isChangePasswordRequest = req.path.endsWith('/change-password');
+    // Match the exact method+path (not a loose suffix) so no future route ending
+    // in `/change-password` can silently become an unintended bypass.
+    const isChangePasswordRequest =
+      req.method === 'PUT' && `${req.baseUrl}${req.path}` === '/api/auth/change-password';
     if (decoded.must_change_password && !isChangePasswordRequest) {
       res.status(403).json({
         success: false,

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { CreditNoteService } from '../services/CreditNoteService';
 import { pdfService } from '../services/PDFService';
 import { AuthRequest } from '../middleware/auth';
+import { respondWithError } from '../utils/errors';
 
 const creditNoteService = new CreditNoteService();
 
@@ -95,20 +96,7 @@ export class CreditNoteController {
 
       res.status(201).json({ success: true, data: result });
     } catch (error: any) {
-      const msg = error?.message || 'Erreur lors de la création de l\'avoir';
-      const isBusinessError =
-        msg.includes('facture') ||
-        msg.includes('Facture') ||
-        msg.includes('client') ||
-        msg.includes('Client') ||
-        msg.includes('avoir') ||
-        msg.includes('validée') ||
-        msg.includes('annulée') ||
-        msg.includes('tiers') ||
-        msg.includes('introuvable') ||
-        msg.includes('line');
-
-      res.status(isBusinessError ? 400 : 500).json({ success: false, error: msg });
+      respondWithError(res, error, 'création avoir', 'Erreur lors de la création de l\'avoir');
     }
   }
 
@@ -148,12 +136,7 @@ export class CreditNoteController {
       await creditNoteService.applyToFacture(parseInt(id), parseInt(facture_id), req);
       res.json({ success: true, message: 'Avoir appliqué à la facture' });
     } catch (error: any) {
-      const isBusinessError =
-        error.message?.includes('non trouvé') ||
-        error.message?.includes('doit être') ||
-        error.message?.includes('Impossible') ||
-        error.message?.includes('même client');
-      res.status(isBusinessError ? 400 : 500).json({ success: false, error: error.message });
+      respondWithError(res, error, 'application avoir');
     }
   }
 

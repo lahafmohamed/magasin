@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { checkPeriodIsOpen } from './PeriodService';
+import { businessError } from '../utils/errors';
 
 interface PieceInput {
   journal: string;
@@ -50,14 +51,14 @@ export class ComptabiliteService {
     const { journal = 'OD', date_ecriture, libelle, lignes, reference_type, reference_id, cree_par } = input;
 
     if (!lignes || lignes.length < 2) {
-      throw new Error('Une pièce doit contenir au moins 2 lignes');
+      throw businessError(422, 'Une pièce doit contenir au moins 2 lignes');
     }
 
     const totalDebit = lignes.reduce((s, l) => s + l.debit, 0);
     const totalCredit = lignes.reduce((s, l) => s + l.credit, 0);
 
     if (Math.abs(totalDebit - totalCredit) > 0.01) {
-      throw new Error(`Écriture non équilibrée: débit ${totalDebit} ≠ crédit ${totalCredit}`);
+      throw businessError(422, `Écriture non équilibrée: débit ${totalDebit} ≠ crédit ${totalCredit}`);
     }
 
     const { rows: seqRows } = await pool.query("SELECT nextval('piece_comptable_seq') as num");

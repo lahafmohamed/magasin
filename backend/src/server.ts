@@ -99,6 +99,9 @@ app.use(requestLogger);
 // Routes API
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+// change-password verifies the current password with bcrypt; throttle it like the
+// other credential endpoints so an authenticated session cannot grind it.
+app.use('/api/auth/change-password', authLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/produits', produitsRoutes);
 app.use('/api/tiers', tiersRoutes);

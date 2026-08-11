@@ -8,29 +8,47 @@ import { NotificationService } from '../services/NotificationService';
 const router = Router();
 
 // SSE stream authenticates via the httpOnly auth_token cookie (sent automatically
-// by EventSource for same-origin). Falls back to ?token= for transitional clients.
+// by EventSource for same-origin) or an Authorization: Bearer header. The token is
+// never accepted from the query string: a URL-borne JWT leaks into browser history,
+// Referer headers, and proxy/nginx access logs.
 router.get('/stream', async (req: Request, res: Response) => {
-  const token = extractToken(req) || (req.query.token as string);
+  const token = extractToken(req);
   if (!token) {
     res.status(401).json({ success: false, error: 'Token manquant' });
     return;
   }
+  let decoded: { must_change_password?: boolean };
   try {
-    jwt.verify(token, JWT_SECRET as string, { algorithms: ['HS256'] });
+    decoded = jwt.verify(token, JWT_SECRET as string, { algorithms: ['HS256'] }) as {
+      must_change_password?: boolean;
+    };
   } catch {
     res.status(401).json({ success: false, error: 'Token invalide' });
     return;
   }
-  // Enforce session revocation/expiry like `authenticate` does — fail closed:
-  // a token without a live session row (revoked, expired, or never issued) is rejected.
+  // A user locked to the change-password flow must not open a live data stream.
+  if (decoded.must_change_password) {
+    res.status(403).json({ success: false, error: 'Changement de mot de passe requis' });
+    return;
+  }
+  // Fail closed exactly like `authenticate`: require a live, unrevoked, unexpired
+  // session row AND an active owning user — a deactivated employee is cut off at once.
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const { rows } = await pool.query(
-      'SELECT revoked_at, expires_at FROM user_sessions WHERE token_hash = $1 AND is_active = true',
+      `SELECT s.revoked_at, s.expires_at, u.actif AS user_actif
+       FROM user_sessions s
+       JOIN utilisateurs u ON u.id = s.utilisateur_id
+       WHERE s.token_hash = $1 AND s.is_active = true`,
       [tokenHash]
     );
     const session = rows[0];
-    if (!session || session.revoked_at || new Date(session.expires_at) < new Date()) {
+    if (
+      !session ||
+      session.revoked_at ||
+      session.user_actif === false ||
+      new Date(session.expires_at) < new Date()
+    ) {
       res.status(401).json({ success: false, error: 'Session révoquée ou expirée' });
       return;
     }

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { successResponse } from '../utils/response';
+import { respondWithError } from '../utils/errors';
 import { userLocationAssignmentService } from '../services/UserLocationAssignmentService';
 import { AuthRequest } from '../middleware/auth';
 
@@ -73,11 +74,7 @@ export class UserLocationAssignmentController {
 
       successResponse(res, null, 'Affectations mises a jour avec succes');
     } catch (error: any) {
-      const status =
-        /non trouve|invalides|inactives|defaut|affectee/.test(error.message)
-          ? 400
-          : 500;
-      res.status(status).json({ success: false, error: error.message });
+      respondWithError(res, error, 'mise à jour affectations');
     }
   }
 }

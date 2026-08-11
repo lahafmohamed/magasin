@@ -1,5 +1,21 @@
 import { describe, it, expect } from 'vitest';
-import { businessError, businessStatusOf } from './errors';
+import { businessError, businessStatusOf, respondWithError } from './errors';
+
+function mockRes() {
+  const res = {
+    statusCode: 0,
+    body: undefined as unknown,
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload: unknown) {
+      this.body = payload;
+      return this;
+    },
+  };
+  return res;
+}
 
 describe('utils/errors', () => {
   describe('businessError', () => {
@@ -49,6 +65,49 @@ describe('utils/errors', () => {
       expect(businessStatusOf(undefined)).toBeNull();
       expect(businessStatusOf('string error')).toBeNull();
       expect(businessStatusOf({ statusCode: 'not-a-number' })).toBeNull();
+    });
+  });
+
+  describe('respondWithError', () => {
+    it('surfaces the message of a 4xx business error verbatim', () => {
+      const res = mockRes();
+      respondWithError(res, businessError(409, 'Le matricule EMP-1 existe déjà'), 'ctx');
+      expect(res.statusCode).toBe(409);
+      expect(res.body).toEqual({ success: false, error: 'Le matricule EMP-1 existe déjà' });
+    });
+
+    it('never leaks a raw pg/internal error to the client', () => {
+      const res = mockRes();
+      // A pg unique-violation error carries no statusCode and its text names the
+      // constraint — it must NOT reach the client.
+      const pgError: any = new Error(
+        'duplicate key value violates unique constraint "utilisateurs_username_key"'
+      );
+      pgError.code = '23505';
+      pgError.table = 'utilisateurs';
+
+      respondWithError(res, pgError, 'ctx');
+
+      expect(res.statusCode).toBe(500);
+      expect(res.body).toEqual({ success: false, error: 'Erreur interne du serveur' });
+      expect(JSON.stringify(res.body)).not.toContain('utilisateurs_username_key');
+      expect(JSON.stringify(res.body)).not.toContain('constraint');
+    });
+
+    it('honors a custom fallback message for internal errors', () => {
+      const res = mockRes();
+      respondWithError(res, new Error('boom'), 'ctx', 'Erreur lors de la création de l\'avoir');
+      expect(res.statusCode).toBe(500);
+      expect(res.body).toEqual({ success: false, error: 'Erreur lors de la création de l\'avoir' });
+    });
+
+    it('treats a 5xx statusCode as internal (generic message, not surfaced)', () => {
+      const res = mockRes();
+      const err: any = new Error('upstream exploded at 10.0.0.5');
+      err.statusCode = 503;
+      respondWithError(res, err, 'ctx');
+      expect(res.statusCode).toBe(500);
+      expect(JSON.stringify(res.body)).not.toContain('10.0.0.5');
     });
   });
 });

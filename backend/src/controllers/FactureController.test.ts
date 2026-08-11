@@ -140,7 +140,7 @@ describe('Factures API (Integration)', () => {
           ],
         });
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(422);
       expect(res.body.success).toBe(false);
       expect(res.body.error).toMatch(/Stock insuffisant/);
     });
@@ -159,8 +159,10 @@ describe('Factures API (Integration)', () => {
           ],
         });
 
-      // Will fail due to foreign key constraint
-      expect(res.status).toBe(400);
+      // Unknown tiers is validated in the service and rejected as 404 — not
+      // allowed to surface as a raw foreign-key violation.
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
     });
   });
 

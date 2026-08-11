@@ -3,6 +3,7 @@ import { authenticate, authorize } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
 import { enregistrerPieceSchema } from '../validation/schemas';
 import { comptabiliteService } from '../services/ComptabiliteService';
+import { respondWithError } from '../utils/errors';
 
 const router = Router();
 router.use(authenticate);
@@ -57,8 +58,7 @@ router.post('/ecritures', validateBody(enregistrerPieceSchema), async (req: Requ
     });
     res.status(201).json({ success: true, data: result });
   } catch (error: any) {
-    console.error('POST /api/comptabilite/ecritures error:', error);
-    res.status(400).json({ success: false, error: error.message || 'Erreur serveur' });
+    respondWithError(res, error, 'POST /api/comptabilite/ecritures');
   }
 });
 

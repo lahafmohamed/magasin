@@ -1,5 +1,6 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
+import { businessError } from '../utils/errors';
 
 export interface AssignmentUser {
   id: number;
@@ -97,11 +98,11 @@ class UserLocationAssignmentService {
     const uniqueLocationIds = Array.from(new Set(locationIds));
 
     if (uniqueLocationIds.length === 0) {
-      throw new Error('Au moins une location doit etre affectee');
+      throw businessError(400, 'Au moins une location doit etre affectee');
     }
 
     if (defaultLocationId && !uniqueLocationIds.includes(defaultLocationId)) {
-      throw new Error('La location par defaut doit faire partie des affectations');
+      throw businessError(400, 'La location par defaut doit faire partie des affectations');
     }
 
     const client = await pool.connect();
@@ -110,7 +111,7 @@ class UserLocationAssignmentService {
 
       const userCheck = await client.query('SELECT id FROM utilisateurs WHERE id = $1', [userId]);
       if (userCheck.rowCount === 0) {
-        throw new Error('Utilisateur non trouve');
+        throw businessError(404, 'Utilisateur non trouve');
       }
 
       const locationCheck = await client.query(
@@ -122,7 +123,7 @@ class UserLocationAssignmentService {
       );
 
       if ((locationCheck.rowCount || 0) !== uniqueLocationIds.length) {
-        throw new Error('Une ou plusieurs locations sont invalides ou inactives');
+        throw businessError(400, 'Une ou plusieurs locations sont invalides ou inactives');
       }
 
       await client.query('DELETE FROM utilisateur_locations WHERE utilisateur_id = $1', [userId]);

@@ -85,7 +85,17 @@ await client.query(loadSql('ci-ref-data.sql'));
 await client.query('SET search_path TO public');
 
 const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+// The weak default is confined to CI/test bootstrapping. Any other invocation
+// (a manual or production provision) must supply ADMIN_PASSWORD explicitly —
+// fail closed rather than silently create a known-credential administrator.
+const isCiOrTest = process.env.CI === 'true' || process.env.NODE_ENV === 'test';
+const adminPassword = process.env.ADMIN_PASSWORD || (isCiOrTest ? 'admin123' : null);
+if (!adminPassword) {
+  console.error(
+    'ADMIN_PASSWORD is required outside CI/test. Refusing to seed a default admin password.'
+  );
+  process.exit(1);
+}
 const adminEmail = process.env.ADMIN_EMAIL || 'admin@ci.local';
 const adminFullName = process.env.ADMIN_FULLNAME || 'CI Admin';
 const mustChangePassword = process.env.ADMIN_MUST_CHANGE_PASSWORD === 'true';

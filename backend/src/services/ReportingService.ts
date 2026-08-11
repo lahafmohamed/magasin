@@ -579,7 +579,8 @@ export class ReportingService {
    * Dashboard consolidé multi-magasins
    */
   async getConsolidatedDashboard(magasinId?: number): Promise<any> {
-    const locationFilter = magasinId ? `AND l.id = ${magasinId}` : '';
+    const locationFilter = magasinId ? 'AND l.id = $1' : '';
+    const locationParams = magasinId ? [magasinId] : [];
 
     const [stats, stockValue, recentActivity] = await Promise.all([
       pool.query(`
@@ -604,7 +605,7 @@ export class ReportingService {
         JOIN stock_locations l ON spl.location_id = l.id
         JOIN produits p ON p.id = spl.produit_id
         WHERE l.actif = true ${locationFilter}
-      `),
+      `, locationParams),
       pool.query(`
         SELECT 'facture' as type, f.numero_facture as reference, f.total, f.date_facture as date,
                t.raison_sociale as tiers_nom

@@ -3,6 +3,7 @@ import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
+import { businessError } from '../utils/errors';
 import { checkPeriodIsOpen } from './PeriodService';
 import { ClientAllocationService } from './ClientAllocationService';
 
@@ -265,11 +266,11 @@ export class CreditNoteService {
       const { facture_origine_id, retour_id, lignes, avoir_type, notes, location_id, cree_par, req } = input;
 
       if (!lignes || lignes.length === 0) {
-        throw new Error('Credit note must have at least one line');
+        throw businessError(422, 'Un avoir doit comporter au moins une ligne');
       }
 
       if (!facture_origine_id) {
-        throw new Error('Un avoir doit être rattaché à une facture validée');
+        throw businessError(422, 'Un avoir doit être rattaché à une facture validée');
       }
 
       const { rows: factureRows } = await client.query(
@@ -282,18 +283,18 @@ export class CreditNoteService {
       );
 
       if (factureRows.length === 0) {
-        throw new Error('Facture d\'origine introuvable');
+        throw businessError(404, 'Facture d\'origine introuvable');
       }
 
       const facture = factureRows[0];
 
       if (Number(facture.tiers_id) !== Number(tiers_id)) {
-        throw new Error('Le tiers de l\'avoir doit correspondre à la facture d\'origine');
+        throw businessError(422, 'Le tiers de l\'avoir doit correspondre à la facture d\'origine');
       }
 
       // An invoice must be validated (not cancelled) to allow credit note creation
       if (facture.statut === 'annulee') {
-        throw new Error('On ne peut pas créer un avoir sur une facture annulée');
+        throw businessError(422, 'On ne peut pas créer un avoir sur une facture annulée');
       }
 
       // Generate avoir number
@@ -371,7 +372,7 @@ export class CreditNoteService {
   async updateStatut(id: number, statut: string, req?: any): Promise<void> {
     const validStatuts = ['brouillon', 'valide', 'annule', 'utilise'];
     if (!validStatuts.includes(statut)) {
-      throw new Error('Invalid statut');
+      throw businessError(400, 'Statut invalide');
     }
 
     await pool.query(
@@ -409,11 +410,11 @@ export class CreditNoteService {
         [avoirId]
       );
       if (avoirRows.length === 0) {
-        throw new Error('Avoir non trouvé');
+        throw businessError(404, 'Avoir non trouvé');
       }
       const avoir = avoirRows[0];
       if (avoir.statut !== 'valide') {
-        throw new Error('L\'avoir doit être au statut "valide" pour être appliqué');
+        throw businessError(422, 'L\'avoir doit être au statut "valide" pour être appliqué');
       }
 
       const { rows: factureRows } = await client.query(
@@ -421,14 +422,14 @@ export class CreditNoteService {
         [factureId]
       );
       if (factureRows.length === 0) {
-        throw new Error('Facture non trouvée');
+        throw businessError(404, 'Facture non trouvée');
       }
       const facture = factureRows[0];
       if (facture.statut === 'annulee') {
-        throw new Error('Impossible d\'appliquer un avoir sur une facture annulée');
+        throw businessError(422, 'Impossible d\'appliquer un avoir sur une facture annulée');
       }
       if (Number(facture.tiers_id) !== Number(avoir.tiers_id)) {
-        throw new Error('L\'avoir et la facture doivent appartenir au même tiers');
+        throw businessError(422, 'L\'avoir et la facture doivent appartenir au même tiers');
       }
 
       await client.query(

@@ -419,13 +419,15 @@ export class AuthController {
         actif,
       });
 
-      // Deactivating a user must terminate their live sessions immediately,
-      // not wait for JWT expiry.
-      if (actif === false) {
+      // Deactivating or changing a user's role must terminate their live
+      // sessions immediately, not wait for JWT expiry: the role is carried
+      // inside the JWT and only re-read at login, so a demoted user would
+      // otherwise keep their old privileges until the token expires.
+      if (actif === false || role_id !== undefined) {
         try {
           await revokeAllUserSessions(userId);
         } catch (e) {
-          logger.warn({ err: e }, 'session revocation on user deactivation failed (non-fatal)');
+          logger.warn({ err: e }, 'session revocation on user update failed (non-fatal)');
         }
       }
 

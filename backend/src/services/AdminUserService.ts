@@ -84,7 +84,8 @@ export class AdminUserService {
         new_values: { username, role_id },
       });
 
-      return userRes.rows[0];
+      const { password_hash: _omit, ...safeUser } = userRes.rows[0];
+      return safeUser;
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -154,8 +155,11 @@ export class AdminUserService {
 
       await client.query('COMMIT');
 
-      // A deactivated or password-reset user must lose all live sessions at once.
-      if (actif === false || password) {
+      // A deactivated, password-reset, or role-changed user must lose all live
+      // sessions at once: the role is carried inside the JWT and re-read only on
+      // login, so without revocation a demoted user keeps their old privileges
+      // until the token expires (up to JWT_EXPIRATION).
+      if (actif === false || password || role_id !== undefined) {
         await revokeAllUserSessions(id);
       }
 

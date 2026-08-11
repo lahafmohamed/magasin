@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { BaseService } from './BaseService';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { businessError } from '../utils/errors';
 
 export interface EmployeRecord {
   id: number;
@@ -138,7 +139,7 @@ export class EmployeService extends BaseService<EmployeRecord> {
       // Check if matricule already exists
       const { rows: existingRows } = await client.query('SELECT id FROM employes WHERE matricule = $1', [matricule]);
       if (existingRows.length > 0) {
-        throw new Error(`Le matricule ${matricule} existe déjà`);
+        throw businessError(409, `Le matricule ${matricule} existe déjà`);
       }
 
       const { rows } = await client.query(
@@ -181,14 +182,14 @@ export class EmployeService extends BaseService<EmployeRecord> {
 
       const { rows: existing } = await client.query('SELECT id FROM employes WHERE id = $1 FOR UPDATE', [id]);
       if (existing.length === 0) {
-        throw new Error('Employé non trouvé');
+        throw businessError(404, 'Employé non trouvé');
       }
 
       // Matricule uniqueness (if changed)
       if (input.matricule !== undefined) {
         const { rows: dup } = await client.query('SELECT id FROM employes WHERE matricule = $1 AND id <> $2', [input.matricule, id]);
         if (dup.length > 0) {
-          throw new Error(`Le matricule ${input.matricule} existe déjà`);
+          throw businessError(409, `Le matricule ${input.matricule} existe déjà`);
         }
       }
 
@@ -257,7 +258,7 @@ export class EmployeService extends BaseService<EmployeRecord> {
       );
 
       if (employeRows.length === 0) {
-        throw new Error('Employé non trouvé ou inactif');
+        throw businessError(404, 'Employé non trouvé ou inactif');
       }
 
       const commissionTaux = employeRows[0].commission_taux;
@@ -270,7 +271,7 @@ export class EmployeService extends BaseService<EmployeRecord> {
       );
 
       if (factureRows.length === 0) {
-        throw new Error('Facture non trouvée');
+        throw businessError(404, 'Facture non trouvée');
       }
 
       // Insert commission record

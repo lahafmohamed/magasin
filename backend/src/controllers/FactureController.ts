@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { consoleError } from '../utils/logError';
+import { businessStatusOf } from '../utils/errors';
 import { factureService } from '../services/FactureService';
 import { AuthRequest } from '../middleware/auth';
 import { parsePagination, EXPORT_MAX_ROWS } from '../utils/pagination';
@@ -76,12 +77,17 @@ export class FactureController {
       });
       res.status(201).json({ success: true, data: result, message: 'Facture créée et stock mis à jour' });
     } catch (error: any) {
-      const status = typeof error?.statusCode === 'number' ? error.statusCode : 400;
-      const payload: any = { success: false, error: error.message };
-      if (Array.isArray(error?.offending_lines)) {
-        payload.offending_lines = error.offending_lines;
+      const status = businessStatusOf(error);
+      if (status) {
+        const payload: any = { success: false, error: error.message };
+        if (Array.isArray(error?.offending_lines)) {
+          payload.offending_lines = error.offending_lines;
+        }
+        res.status(status).json(payload);
+        return;
       }
-      res.status(status).json(payload);
+      consoleError('création facture', error);
+      res.status(500).json({ success: false, error: 'Erreur interne du serveur' });
     }
   }
 

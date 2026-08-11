@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { employeService } from '../services/EmployeService';
 import { successResponse, paginatedResponse } from '../utils/response';
+import { respondWithError } from '../utils/errors';
 
 export class EmployeController {
   /**
@@ -97,8 +98,7 @@ export class EmployeController {
 
       successResponse(res, employee, 'Employé mis à jour avec succès');
     } catch (error: any) {
-      const status = /existe déjà|non trouvé/.test(error.message) ? 400 : 500;
-      res.status(status).json({ success: false, error: error.message });
+      respondWithError(res, error, 'mise à jour employé');
     }
   }
 

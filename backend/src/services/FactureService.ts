@@ -3,6 +3,7 @@ import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
+import { businessError } from '../utils/errors';
 import { ClientAllocationService } from './ClientAllocationService';
 import { checkPeriodIsOpen } from './PeriodService';
 import { creditService } from './CreditService';
@@ -248,7 +249,7 @@ export class FactureService {
       const effectiveLocationId = await this.resolveMagasinLocationId(client, input.location_id);
 
       if (!lignes || lignes.length === 0) {
-        throw new Error('La facture doit contenir au moins un produit');
+        throw businessError(422, 'La facture doit contenir au moins un produit');
       }
 
       // Verify stock availability and collect purchase prices — one query for
@@ -257,7 +258,7 @@ export class FactureService {
       const purchasePricesMap = new Map<number, number>();
       for (const ligne of lignes) {
         if (!Number.isInteger(ligne.quantite) || ligne.quantite <= 0) {
-          throw new Error(`Quantité invalide pour le produit ID ${ligne.produit_id} (doit être un entier positif)`);
+          throw businessError(422, `Quantité invalide pour le produit ID ${ligne.produit_id} (doit être un entier positif)`);
         }
       }
       {
@@ -273,10 +274,11 @@ export class FactureService {
         for (const ligne of lignes) {
           const info = infoByProduit.get(ligne.produit_id);
           if (!info) {
-            throw new Error(`Produit ID ${ligne.produit_id} non trouvé`);
+            throw businessError(404, `Produit ID ${ligne.produit_id} non trouvé`);
           }
           if (parseInt(info.stock_location, 10) < ligne.quantite) {
-            throw new Error(
+            throw businessError(
+              422,
               `Stock insuffisant pour "${info.nom}" dans cette location (disponible: ${info.stock_location}, demande: ${ligne.quantite})`
             );
           }
@@ -301,7 +303,7 @@ export class FactureService {
       );
 
       if (clientRows.length === 0) {
-        throw new Error(`Tiers ID ${tiers_id} non trouvé`);
+        throw businessError(404, `Tiers ID ${tiers_id} non trouvé`);
       }
 
       // Calculate totals (no TVA)
@@ -406,7 +408,7 @@ export class FactureService {
         const balances = isLegacy ? legacyStock : splStock;
         const currentStock = balances.get(ligne.produit_id) ?? 0;
         if (currentStock < ligne.quantite) {
-          throw new Error(`Stock insuffisant pour le produit ${ligne.produit_id}. Stock location disponible: ${currentStock}, quantite demandee: ${ligne.quantite}`);
+          throw businessError(422, `Stock insuffisant pour le produit ${ligne.produit_id}. Stock location disponible: ${currentStock}, quantite demandee: ${ligne.quantite}`);
         }
         balances.set(ligne.produit_id, currentStock - ligne.quantite);
         const deductions = isLegacy ? deductLegacy : deductSpl;
@@ -432,7 +434,7 @@ export class FactureService {
         if (updated.length !== ids.length) {
           const ok = new Set(updated.map((r: any) => Number(r.produit_id)));
           const failed = ids.find((id) => !ok.has(id));
-          throw new Error(`Stock insuffisant (race) pour le produit ${failed} dans cette location`);
+          throw businessError(422, `Stock insuffisant (race) pour le produit ${failed} dans cette location`);
         }
       }
       if (deductLegacy.size > 0) {
@@ -449,7 +451,7 @@ export class FactureService {
         if (updated.length !== ids.length) {
           const ok = new Set(updated.map((r: any) => Number(r.id)));
           const failed = ids.find((id) => !ok.has(id));
-          throw new Error(`Stock insuffisant (race) pour le produit ${failed}`);
+          throw businessError(422, `Stock insuffisant (race) pour le produit ${failed}`);
         }
       }
 
