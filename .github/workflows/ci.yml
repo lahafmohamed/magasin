@@ -57,6 +57,28 @@ jobs:
         run: npm run lint
       - name: Set up database (baseline + ref data + admin user + migration baseline)
         run: node scripts/ci-db-setup.mjs
+      # Exercise the provisioning path (deploy/provision-client.sh) on a second
+      # fresh DB: the ADMIN_*/MAGASIN_* overrides otherwise only run on a real
+      # client provision, where a typo would surface far too late.
+      - name: Verify provisioning env overrides (fresh DB)
+        env:
+          DB_NAME: magasin_provision
+          ADMIN_USERNAME: gerant
+          ADMIN_PASSWORD: 'Provision-CI-Only-1!'
+          ADMIN_EMAIL: gerant@ci.local
+          ADMIN_FULLNAME: Gérant CI
+          ADMIN_MUST_CHANGE_PASSWORD: 'true'
+          MAGASIN_CODE: MAG-01
+          MAGASIN_NAME: Magasin principal
+          PGPASSWORD: postgres
+        run: |
+          createdb -h localhost -U postgres magasin_provision
+          node scripts/ci-db-setup.mjs
+          psql -h localhost -U postgres -d magasin_provision -v ON_ERROR_STOP=1 -tAc \
+            "SELECT 1 FROM utilisateurs u JOIN roles r ON r.id = u.role_id
+             WHERE u.username = 'gerant' AND u.must_change_password AND r.nom = 'admin'" | grep -q 1
+          psql -h localhost -U postgres -d magasin_provision -v ON_ERROR_STOP=1 -tAc \
+            "SELECT 1 FROM stock_locations WHERE code = 'MAG-01' AND est_principal" | grep -q 1
       - name: Test (integration, against service postgres)
         run: npm test
       - name: Build

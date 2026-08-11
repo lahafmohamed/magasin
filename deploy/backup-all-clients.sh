@@ -9,6 +9,8 @@
 #   0 2 * * * /chemin/deploy/backup-all-clients.sh >> ~/backups/backup.log 2>&1
 #
 # Vérifier la restauration régulièrement : deploy/test-restore.sh <slug>
+# Pas de -e volontairement : un client en échec ne doit pas empêcher la
+# sauvegarde des suivants (le compteur FAILURES fait foi en fin de run).
 set -uo pipefail
 
 CLIENTS_DIR="$HOME/clients"
@@ -25,13 +27,12 @@ for envfile in "$CLIENTS_DIR"/*/magasin/backend/.env; do
 
   echo "--- $SLUG ---"
   # Sous-shell : le .env d'un client ne fuit pas vers le suivant
-  (
+  if ! (
     set -a; . "$envfile"; set +a
     export PGPASSWORD="${DB_PASSWORD:-}"
     cd "$APP_BACKEND"
     ./scripts/backup-db.sh "$OUT_DIR"
-  )
-  if [ $? -ne 0 ]; then
+  ); then
     echo "ERREUR: sauvegarde de '$SLUG' en échec."
     FAILURES=$((FAILURES + 1))
   fi

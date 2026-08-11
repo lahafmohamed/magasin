@@ -23,6 +23,10 @@ const pool = new Pool({
 });
 
 const DAYS = parseInt(process.argv.find((a, i) => process.argv[i - 1] === '--days') || '30');
+if (!Number.isInteger(DAYS) || DAYS < 2 || DAYS > 365) {
+  console.error('Usage : node seed-month-activity.mjs [--days N]  (N entier entre 2 et 365)');
+  process.exit(1);
+}
 const YEAR = new Date().getFullYear();
 
 // ---------- helpers aléatoires ----------
@@ -304,13 +308,16 @@ async function main() {
       }
     }
 
-    await db.query('COMMIT');
-
-    // ---------- vérifications post-commit ----------
+    // ---------- vérifications d'invariants (avant COMMIT : rollback si violés) ----------
     const { rows: [neg] } = await db.query(
       'SELECT COUNT(*)::int n FROM stock_par_location WHERE quantite < 0');
     const { rows: [gl] } = await db.query(
       `SELECT COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) AS ecart FROM ecritures_comptables`);
+    if (neg.n > 0 || Number(gl.ecart) !== 0) {
+      throw new Error(`Invariants violés (stocks négatifs=${neg.n}, écart GL=${gl.ecart}) — aucune donnée insérée`);
+    }
+
+    await db.query('COMMIT');
 
     console.log('\n==========================================');
     console.log('  ACTIVITÉ 1 MOIS — RÉSUMÉ');

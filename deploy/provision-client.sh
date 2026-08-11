@@ -142,8 +142,15 @@ cat > "$BASE/suspendu.html" <<'EOF'
 <p>L'accès à cette application est suspendu.<br>Veuillez contacter votre fournisseur pour régulariser votre abonnement.</p>
 </div></body></html>
 EOF
-# nginx (www-data) doit pouvoir traverser le home et lire le dist
-chmod o+x "$HOME" "$BASE" || true
+# nginx (www-data) doit pouvoir traverser jusqu'au dist. ACL execute-only
+# pour www-data seul ; repli sur o+x (traverse pour tous les utilisateurs
+# locaux) si les ACL sont indisponibles sur le système de fichiers.
+if command -v setfacl >/dev/null 2>&1 && setfacl -m u:www-data:--x "$HOME" "$BASE" 2>/dev/null; then
+  echo "      ACL www-data:--x posée sur \$HOME et $BASE."
+else
+  chmod o+x "$HOME" "$BASE" || true
+  echo "      ATTENTION: ACL indisponibles — repli sur chmod o+x."
+fi
 
 # --- 8. Cron sauvegarde -----------------------------------------------------
 echo "[8/8] Cron de sauvegarde quotidienne ..."
