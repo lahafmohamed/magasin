@@ -174,8 +174,8 @@ async function main() {
           const payAt = new Date(Math.min(plusDays(ev.at, rnd(0, 5)).getTime(), Date.now() - 3600e3));
           await db.query(
             `INSERT INTO paiements(facture_id,montant,methode_paiement,date_paiement,source,magasin_id,cree_par)
-             VALUES($1,$2,$3,$4,'direct',1,$5)`,
-            [facId, montant, pickW(METHODES_CLIENT), payAt, userId]);
+             VALUES($1,$2,$3,$4,'direct',$5,$6)`,
+            [facId, montant, pickW(METHODES_CLIENT), payAt, locId, userId]);
           cPay++; caFacture.encaisse += montant;
           // le trigger update_facture_payment_status recalcule statut/montant_paye/remaining_due
         }
@@ -252,13 +252,14 @@ async function main() {
              VALUES($1,'commande',$2,$3,$4,$5,$6,$7,$8)`,
             [l.id, l.qte, s.qte, s.qte + l.qte, `Réception — ${nRec}`, nRec, recAt, locId]);
           // restock + CMP moyen pondéré (le trigger recalcule valeur_stock)
-          await db.query(
+          const { rows: [maj] } = await db.query(
             `UPDATE stock_par_location
              SET cmp = ROUND(((quantite * cmp) + ($1::numeric * $2::numeric)) / NULLIF(quantite + $1, 0), 2),
                  quantite = quantite + $1
-             WHERE produit_id=$3 AND location_id=$4`, [l.qte, l.cout, l.id, locId]);
-          s.cmp = Math.round((((s.qte * s.cmp) + (l.qte * l.cout)) / (s.qte + l.qte)) * 100) / 100;
-          s.qte += l.qte; cMvt++; cLig++;
+             WHERE produit_id=$3 AND location_id=$4
+             RETURNING cmp::numeric AS cmp, quantite::int AS qte`, [l.qte, l.cout, l.id, locId]);
+          s.cmp = Number(maj.cmp);
+          s.qte = maj.qte; cMvt++; cLig++;
         }
 
         // facture fournisseur 0-3 jours après réception (trigger auto-poste au GL)

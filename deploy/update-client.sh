@@ -30,11 +30,20 @@ update_one() {
     ./scripts/backup-db.sh "$HOME/backups/$SLUG"
   )
 
-  # Les checkouts VPS accumulent du bruit régénéré (package-lock, tsbuildinfo)
-  (cd "$APP" && git checkout -- . && git pull --ff-only)
+  # Refus si modifications locales : un hotfix appliqué sur le VPS ne doit
+  # jamais être écrasé silencieusement. (npm ci ne touche pas package-lock,
+  # donc un arbre sale signale un vrai changement, pas du bruit de build.)
+  local DIRTY
+  DIRTY="$(cd "$APP" && git status --porcelain)"
+  if [ -n "$DIRTY" ]; then
+    echo "ERREUR: modifications locales dans $APP — commit/stash avant mise à jour :"
+    echo "$DIRTY"
+    return 1
+  fi
+  (cd "$APP" && git pull --ff-only)
 
-  (cd "$APP/backend" && npm install && npm run build)
-  (cd "$APP/frontend" && npm install && npm run build)
+  (cd "$APP/backend" && npm ci && npm run build)
+  (cd "$APP/frontend" && npm ci && npm run build)
   (cd "$APP/backend" && node migrate.mjs)
 
   pm2 restart "${SLUG}-api" --update-env

@@ -3,35 +3,38 @@ node_modules/
 .pnp/
 .pnp.js
 
-# Environment variables — NEVER commit secrets
+# Environment variables — never commit secrets
 .env
-.env.local
-.env.*.local
-backend/.env
-frontend/.env
-!.env.example
+.env.*
 !**/.env.example
 
 # Build output
 dist/
 build/
-backend/dist/
-frontend/dist/
+out/
 *.tsbuildinfo
-frontend/tsconfig.tsbuildinfo
 
-# Vite
+# Bundler / framework output
 .vite/
-frontend/.vite/
+.next/
+.nuxt/
+.parcel-cache/
+.turbo/
 
 # Test / coverage
 coverage/
 .nyc_output/
+.vitest/
+test-results/
+playwright-report/
+blob-report/
 *.lcov
 
-# Logs
+# Logs / process state
 logs/
 *.log
+*.pid
+*.pid.lock
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -40,20 +43,20 @@ lerna-debug.log*
 
 # Caches
 .cache/
-.parcel-cache/
 .eslintcache
 .stylelintcache
-.turbo/
-.next/
-.nuxt/
 
-# IDE / editors
-.vscode/
+# Local tool, IDE, and editor settings
+.claude/settings.local.json
+.codex/
+.vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
 .idea/
 *.swp
 *.swo
+*.orig
+*.rej
 *~
 .qwen/
 
@@ -70,10 +73,10 @@ $RECYCLE.BIN/
 *.db
 *.sql.bak
 *.dump
+*.backup
 
 # Uploads / runtime data
 uploads/
-backend/uploads/
 tmp/
 temp/
 

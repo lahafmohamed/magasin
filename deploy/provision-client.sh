@@ -61,9 +61,11 @@ echo "=== Provisioning client '$SLUG' ($DOMAIN, API :$API_PORT) ==="
 # --- 1. PostgreSQL ----------------------------------------------------------
 DB_PASS="$(openssl rand -hex 24)"
 echo "[1/8] Création DB $DB_NAME_C + utilisateur $DB_USER_C ..."
-psql -d postgres -v ON_ERROR_STOP=1 \
-  -c "CREATE USER $DB_USER_C WITH PASSWORD '$DB_PASS'" \
-  -c "CREATE DATABASE $DB_NAME_C OWNER $DB_USER_C"
+# SQL via stdin : le mot de passe n'apparaît jamais dans la ligne de commande (ps)
+psql -d postgres -v ON_ERROR_STOP=1 <<SQL
+CREATE USER $DB_USER_C WITH PASSWORD '$DB_PASS';
+CREATE DATABASE $DB_NAME_C OWNER $DB_USER_C;
+SQL
 
 # --- 2. Clone ---------------------------------------------------------------
 echo "[2/8] Clone du dépôt ..."
@@ -154,6 +156,16 @@ else
 fi
 
 # --- Résumé -----------------------------------------------------------------
+# Identifiants dans un fichier 600, jamais sur stdout : la sortie du script
+# finit souvent dans un log ou le scrollback du terminal.
+CRED_FILE="$BASE/admin-credentials.txt"
+umask 077
+cat > "$CRED_FILE" <<EOF
+Client   : $SLUG
+URL      : https://$DOMAIN
+Login    : $ADMIN_USERNAME
+Password : $ADMIN_PASSWORD
+EOF
 cat <<EOF
 
 ==========================================================
@@ -162,7 +174,7 @@ cat <<EOF
   URL           : https://$DOMAIN  (après nginx + certbot)
   API           : http://localhost:$API_PORT  (pm2: ${SLUG}-api)
   Base          : $DB_NAME_C (user $DB_USER_C — mot de passe dans backend/.env)
-  Connexion app : $ADMIN_USERNAME / $ADMIN_PASSWORD
+  Connexion app : voir $CRED_FILE (à supprimer après transmission au client)
 EOF
 if [ "$MUST_CHANGE" = "true" ]; then
   echo "                  (changement de mot de passe forcé au 1er login)"
