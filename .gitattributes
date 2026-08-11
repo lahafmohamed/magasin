@@ -2,3 +2,5 @@
 # checkout se fait sous Windows (CRLF casse les shebangs et heredocs).
 *.sh text eol=lf
 *.mjs text eol=lf
+# Consommé par sed sur le VPS (provision-client.sh)
+*.template text eol=lf
