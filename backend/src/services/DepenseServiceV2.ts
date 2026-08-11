@@ -109,9 +109,17 @@ export class DepenseServiceV2 {
    */
   async canAccessMagasin(userId: number, userRole: string, magasinId: number): Promise<boolean> {
     if (userRole === 'admin') return true;
-    
+
     const role = await caisseMagasinService.getUserMagasinRole(userId, magasinId);
     return role !== 'none';
+  }
+
+  /**
+   * Magasins a user may see: every active magasin for admin/manager, otherwise
+   * only the ones they are assigned to. Used to scope the unfiltered list.
+   */
+  async getAccessibleMagasins(userId: number, userRole: string): Promise<{ id: number }[]> {
+    return caisseMagasinService.getMagasinsForUser(userId, userRole);
   }
 
   /**
@@ -532,6 +540,7 @@ export class DepenseServiceV2 {
    */
   async getAll(filters: {
     magasin_id?: number;
+    magasin_ids?: number[];
     categorie_id?: number;
     methode_paiement?: string;
     date_debut?: string;
@@ -540,12 +549,12 @@ export class DepenseServiceV2 {
     page?: number;
     limit?: number;
   }): Promise<any> {
-    const { 
-      magasin_id, categorie_id, methode_paiement, 
+    const {
+      magasin_id, magasin_ids, categorie_id, methode_paiement,
       date_debut, date_fin, search,
-      page = 1, limit = 20 
+      page = 1, limit = 20
     } = filters;
-    
+
     const offset = (page - 1) * limit;
 
     let whereClause = 'WHERE d.deleted_at IS NULL';
@@ -555,6 +564,14 @@ export class DepenseServiceV2 {
     if (magasin_id) {
       whereClause += ` AND d.magasin_id = $${paramIndex++}`;
       params.push(magasin_id);
+    }
+
+    // Location scoping: when no single magasin is requested, a non-privileged
+    // caller is confined to the magasins they are assigned to. An empty list
+    // means "assigned to none" and must match zero rows, never all of them.
+    if (!magasin_id && magasin_ids) {
+      whereClause += ` AND d.magasin_id = ANY($${paramIndex++}::int[])`;
+      params.push(magasin_ids);
     }
 
     if (categorie_id) {

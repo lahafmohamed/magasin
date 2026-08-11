@@ -77,6 +77,59 @@ describe('Security hardening regressions', () => {
     });
   });
 
+  describe('expense list is location-scoped for non-privileged roles', () => {
+    let magasinId: number;
+    let categorieId: number;
+    let depenseId: number;
+
+    beforeAll(async () => {
+      const suffix = `${fixtures[0].id}`;
+      const cat = await pool.query(
+        `INSERT INTO categories_depenses (code, nom, actif)
+         VALUES ($1, $2, true) RETURNING id`,
+        [`SEC-CAT-${suffix}`, 'Sécurité test']
+      );
+      categorieId = Number(cat.rows[0].id);
+
+      const mag = await pool.query(
+        `INSERT INTO magasins (code, nom, actif) VALUES ($1, $2, true) RETURNING id`,
+        [`SEC-MAG-${suffix}`, 'Magasin sécurité test']
+      );
+      magasinId = Number(mag.rows[0].id);
+
+      const dep = await pool.query(
+        `INSERT INTO depenses (numero_depense, magasin_id, categorie_id, montant, description, date_depense)
+         VALUES ($1, $2, $3, 12345, 'Dépense confidentielle', CURRENT_DATE) RETURNING id`,
+        [`SEC-DEP-${suffix}`, magasinId, categorieId]
+      );
+      depenseId = Number(dep.rows[0].id);
+    });
+
+    afterAll(async () => {
+      await pool.query('DELETE FROM depenses WHERE id = $1', [depenseId]);
+      await pool.query('DELETE FROM magasins WHERE id = $1', [magasinId]);
+      await pool.query('DELETE FROM categories_depenses WHERE id = $1', [categorieId]);
+    });
+
+    it('hides other stores\' expenses from an unassigned caissier (no magasin_id filter)', async () => {
+      const res = await request(app)
+        .get('/api/depenses')
+        .set('Authorization', `Bearer ${tokenOf.get('caissier')}`);
+      expect(res.status).toBe(200);
+      const ids = (res.body.data as { id: number }[]).map((d) => d.id);
+      expect(ids).not.toContain(depenseId);
+    });
+
+    it('still shows every store to an admin', async () => {
+      const res = await request(app)
+        .get('/api/depenses?limit=1000')
+        .set('Authorization', `Bearer ${tokenOf.get('admin')}`);
+      expect(res.status).toBe(200);
+      const ids = (res.body.data as { id: number }[]).map((d) => d.id);
+      expect(ids).toContain(depenseId);
+    });
+  });
+
   describe('must_change_password gate', () => {
     let username: string;
     let password: string;

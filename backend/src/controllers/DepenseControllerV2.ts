@@ -30,8 +30,21 @@ export class DepenseControllerV2 {
         }
       }
 
+      // Without a specific magasin filter, a non-privileged caller must not see
+      // the whole company's expenses: confine the result to the magasins they
+      // are assigned to. Admins/managers keep the unscoped view.
+      let allowedMagasinIds: number[] | undefined;
+      if (!magasin_id && authReq.user!.role !== 'admin' && authReq.user!.role !== 'manager') {
+        const magasins = await depenseServiceV2.getAccessibleMagasins(
+          authReq.user!.id,
+          authReq.user!.role
+        );
+        allowedMagasinIds = magasins.map((m) => m.id);
+      }
+
       const result = await depenseServiceV2.getAll({
         magasin_id: magasin_id ? parseInt(magasin_id as string) : undefined,
+        magasin_ids: allowedMagasinIds,
         categorie_id: categorie_id ? parseInt(categorie_id as string) : undefined,
         methode_paiement: methode_paiement as string,
         date_debut: date_debut as string,
