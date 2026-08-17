@@ -1,6 +1,28 @@
 import PDFDocument from 'pdfkit';
 import pool from '../db/connection';
 
+/**
+ * Formate un nombre à la française pour un PDF.
+ *
+ * `toLocaleString('fr-FR')` sépare les milliers avec une ESPACE FINE INSÉCABLE
+ * (U+202F) depuis les ICU récents (Node 20+). Les polices standard de pdfkit
+ * (Helvetica & co) sont encodées en WinAnsi, qui ne possède pas ce glyphe :
+ * chaque séparateur sortait imprimé en « / » — « 3 650 000 » devenait
+ * « 3 /650 /000 » sur TOUS les montants de TOUS les PDF (facture, devis, BL,
+ * avoir, relevé, bon de commande, reçu). On repasse donc en espace ordinaire,
+ * qui, elle, existe en WinAnsi.
+ *
+ * Ne pas remplacer par `toLocaleString` sans re-tester un PDF imprimé.
+ */
+export function formatNombrePdf(value: unknown): string {
+  const n = Number(value ?? 0);
+  // U+202F espace fine insécable · U+00A0 espace insécable · U+2009 espace fine.
+  // Échappements explicites : ces caractères sont invisibles en source, un
+  // éditeur qui les normaliserait ferait silencieusement revenir le bug.
+  const SEPARATEURS_UNICODE = /[\u202F\u00A0\u2009]/g;
+  return (Number.isFinite(n) ? n : 0).toLocaleString('fr-FR').replace(SEPARATEURS_UNICODE, ' ');
+}
+
 interface LedgerRow {
   numero_piece?: string;
   date_ecriture?: string;
@@ -268,7 +290,7 @@ export class PDFService {
       espece: 'Espèces', carte: 'Carte bancaire', cheque: 'Chèque', virement: 'Virement',
       mobile_money: 'Mobile Money', orange_money: 'Orange Money', mtn_money: 'MTN Money', wave: 'Wave',
     };
-    const fmt = (v: any) => Number(v || 0).toLocaleString('fr-FR');
+    const fmt = (v: any) => formatNombrePdf(v);
 
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 40, size: 'A4' });
@@ -362,7 +384,7 @@ export class PDFService {
     );
     if (!rows[0]) throw new Error('Bulletin introuvable');
     const ps = rows[0];
-    const fmt = (v: any) => Number(v || 0).toLocaleString('fr-FR');
+    const fmt = (v: any) => formatNombrePdf(v);
 
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 40, size: 'A4' });
@@ -444,7 +466,7 @@ export class PDFService {
     subtitle: string
   ): Promise<Buffer> {
     const devise = settings.devise || 'FCFA';
-    const fmt = (v: number) => Number(v || 0).toLocaleString('fr-FR');
+    const fmt = (v: number) => formatNombrePdf(v);
 
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 40, size: 'A4' });
@@ -529,7 +551,7 @@ export class PDFService {
     const { tiersService } = await import('./TiersService');
     const releve = await tiersService.getReleveDetaille(tiersId, { from, to });
     if (!releve) throw new Error('Tiers introuvable');
-    const fmt = (v: any) => (v == null || v === '' ? '' : Number(v).toLocaleString('fr-FR'));
+    const fmt = (v: any) => (v == null || v === '' ? '' : formatNombrePdf(v));
 
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
@@ -546,15 +568,19 @@ export class PDFService {
       doc.moveDown(0.8);
 
       const startX = 30;
+      // A4 paysage = 841.89 pt ; avec 30 pt de marge de chaque côté il reste
+      // 781.89 pt utiles. Les largeurs précédentes totalisaient 840 pt : la
+      // colonne SOLDE — la plus importante d'un relevé — sortait de la page et
+      // était tronquée à l'impression. Total actuel : 778 pt.
       const cols = [
-        { k: 'date', label: 'DATE', w: 70, align: 'left' },
-        { k: 'facture', label: 'FACTURE N°', w: 110, align: 'left' },
-        { k: 'designation', label: 'DÉSIGNATION', w: 250, align: 'left' },
-        { k: 'quantite', label: 'QTÉ', w: 50, align: 'right' },
-        { k: 'prix_unitaire', label: 'PRIX UNIT.', w: 90, align: 'right' },
-        { k: 'montant', label: 'MONTANT', w: 90, align: 'right' },
-        { k: 'versement', label: 'VERSEMENT', w: 90, align: 'right' },
-        { k: 'solde', label: 'SOLDE', w: 90, align: 'right' },
+        { k: 'date', label: 'DATE', w: 60, align: 'left' },
+        { k: 'facture', label: 'FACTURE N°', w: 92, align: 'left' },
+        { k: 'designation', label: 'DÉSIGNATION', w: 210, align: 'left' },
+        { k: 'quantite', label: 'QTÉ', w: 40, align: 'right' },
+        { k: 'prix_unitaire', label: 'PRIX UNIT.', w: 94, align: 'right' },
+        { k: 'montant', label: 'MONTANT', w: 94, align: 'right' },
+        { k: 'versement', label: 'VERSEMENT', w: 94, align: 'right' },
+        { k: 'solde', label: 'SOLDE', w: 94, align: 'right' },
       ];
       const totalW = cols.reduce((a, c) => a + c.w, 0);
 
@@ -709,9 +735,9 @@ export class PDFService {
           String(index + 1),
           ligne.produit_nom || ligne.description || '-',
           String(ligne.quantite_recue || ligne.quantite || 0),
-          Number(ligne.cout_unitaire || ligne.prix_unitaire || 0).toLocaleString('fr-FR'),
+          formatNombrePdf(ligne.cout_unitaire || ligne.prix_unitaire || 0),
           ligne.remise ? `${ligne.remise}%` : '-',
-          Number(ligne.total_ligne || (ligne.quantite * ligne.prix_unitaire) || 0).toLocaleString('fr-FR'),
+          formatNombrePdf(ligne.total_ligne || (ligne.quantite * ligne.prix_unitaire) || 0),
         ];
         if (index % 2 === 0) {
           doc.rect(40, y, totalWidth, 14).fill('#fafafa');
@@ -731,7 +757,7 @@ export class PDFService {
         return sum + Number(l.total_ligne || (l.quantite * l.prix_unitaire) || 0);
       }, 0) : 0;
       doc.fontSize(10).font('Helvetica-Bold');
-      doc.text(`Total: ${total.toLocaleString('fr-FR')} ${devise}`, { align: 'right' });
+      doc.text(`Total: ${formatNombrePdf(total)} ${devise}`, { align: 'right' });
 
       // Footer
       doc.moveDown(2);
