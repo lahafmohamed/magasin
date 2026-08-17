@@ -1,4 +1,4 @@
-import { Menu, PanelLeft, Search, Sun, Moon, User, LogOut, Command, KeyRound, ChevronDown, Monitor } from 'lucide-react';
+import { Menu, PanelLeft, Search, Sun, Moon, User, LogOut, Command, KeyRound, ChevronDown, Monitor, Settings } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -28,7 +28,7 @@ export function Topbar({
   onToggleSidebar: () => void;
   onOpenMobile: () => void;
 }) {
-  const { user, logout } = useAuth();
+  const { user, logout, hasRole } = useAuth();
   const { theme, resolvedTheme, setTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
 
@@ -131,6 +131,19 @@ export function Topbar({
                   Changer mon mot de passe
                 </Link>
               </DropdownMenuItem>
+              {/*
+                Les paramètres de l'entreprise (identité, logo, devise, modules
+                activés) n'étaient atteignables que par le raccourci G+S : aucun
+                lien nulle part. Même filtre de rôle que la route /settings.
+              */}
+              {hasRole('admin', 'manager') && (
+                <DropdownMenuItem asChild>
+                  <Link to="/settings" className="cursor-pointer">
+                    <Settings className="h-4 w-4" />
+                    Paramètres de l'entreprise
+                  </Link>
+                </DropdownMenuItem>
+              )}
 
               <DropdownMenuSeparator />
 

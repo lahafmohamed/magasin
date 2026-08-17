@@ -26,6 +26,7 @@ import {
   History,
   Undo2,
   PhoneCall,
+  Building2,
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { useModules } from '../lib/ModulesContext';
@@ -148,6 +149,7 @@ export function useNavCategories(): NavCategory[] {
       items: [
         { path: '/admin/users', label: 'Utilisateurs', icon: Users },
         { path: '/admin/audit', label: "Journal d'audit", icon: History },
+        { path: '/settings', label: 'Paramètres entreprise', icon: Building2 },
         { path: '/admin/parametres-finance', label: 'Paramètres paie & achats', icon: Settings2 },
       ],
     }] : []),
