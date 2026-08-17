@@ -1520,6 +1520,8 @@ export interface CompanySettings {
   devise: string;
   logo_url: string | null;
   taux_conversion: number;
+  /** Modules masqués dans l'interface — liste d'exclusion (migration 098). */
+  modules_desactives: string[];
 }
 
 let cachedSettings: CompanySettings | null = null;

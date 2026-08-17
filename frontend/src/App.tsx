@@ -1,6 +1,8 @@
 import { Suspense, lazy, type ComponentProps, type ReactNode } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './lib/AuthContext';
+import { ModulesProvider } from './lib/ModulesContext';
+import ModuleGuard from './components/ModuleGuard';
 import { Toaster } from 'sonner';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfirmProvider } from './components/ui/confirm-dialog';
@@ -81,7 +83,9 @@ function protectedPage(
   requiredRoles?: RequiredRoles,
   withErrorBoundary = false,
 ) {
-  const layout = <Layout>{page}</Layout>;
+  // ModuleGuard à l'intérieur du Layout : un module désactivé affiche une page
+  // d'explication dans le cadre habituel, au lieu d'un écran nu.
+  const layout = <Layout><ModuleGuard>{page}</ModuleGuard></Layout>;
   return (
     <ProtectedRoute requiredRoles={requiredRoles}>
       {withErrorBoundary ? <ErrorBoundary>{layout}</ErrorBoundary> : layout}
@@ -191,12 +195,14 @@ function AppWithShortcuts() {
 export default function App() {
   return (
     <AuthProvider>
-      <ConfirmProvider>
-        <Toaster position="top-right" richColors closeButton />
-        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-          <AppWithShortcuts />
-        </BrowserRouter>
-      </ConfirmProvider>
+      <ModulesProvider>
+        <ConfirmProvider>
+          <Toaster position="top-right" richColors closeButton />
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <AppWithShortcuts />
+          </BrowserRouter>
+        </ConfirmProvider>
+      </ModulesProvider>
     </AuthProvider>
   );
 }

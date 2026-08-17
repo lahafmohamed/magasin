@@ -6,12 +6,16 @@ import { getErrorMessage } from '@/utils/errors';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { QueryState } from '@/components/ui/query-state';
 import { FormSkeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/loading';
+import { MODULES, CATEGORIES_MODULES } from '@/config/modules';
+import { useModules } from '@/lib/ModulesContext';
 
 export default function CompanySettingsPage() {
+  const { rafraichir: rafraichirModules } = useModules();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
@@ -30,6 +34,7 @@ export default function CompanySettingsPage() {
     devise: 'FCFA',
     logo_url: '/logo.png',
     taux_conversion: 1,
+    modules_desactives: [],
   });
 
   const loadSettings = useCallback(async () => {
@@ -96,12 +101,24 @@ export default function CompanySettingsPage() {
       const updated = await companySettingsService.update(settings);
       setSettings(updated);
       setDirty(false);
+      // Le menu et les gardes de route lisent ce contexte : sans rafraîchissement,
+      // un module réactivé resterait invisible jusqu'au prochain rechargement.
+      await rafraichirModules();
       toast.success('Paramètres mis à jour avec succès');
     } catch (err) {
       toast.error(getErrorMessage(err, "Erreur lors de la mise à jour des paramètres de l'entreprise"));
     } finally {
       setSaving(false);
     }
+  };
+
+  /** Bascule un module dans la liste d'exclusion enregistrée avec les paramètres. */
+  const toggleModule = (key: string) => {
+    const actuels = settings.modules_desactives || [];
+    const desactives = actuels.includes(key)
+      ? actuels.filter((k) => k !== key)
+      : [...actuels, key];
+    updateSettings({ modules_desactives: desactives });
   };
 
   const field = (label: string, key: keyof CompanySettings, placeholder?: string) => (
@@ -245,6 +262,64 @@ export default function CompanySettingsPage() {
                   </div>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Modules du programme</CardTitle>
+              <CardDescription>
+                Décochez ce que vous n'utilisez pas : ces écrans disparaissent du menu.
+                Les données déjà enregistrées ne sont pas supprimées et réapparaissent
+                si vous réactivez le module.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {CATEGORIES_MODULES.map((categorie) => {
+                const modules = MODULES.filter((m) => m.categorie === categorie);
+                if (modules.length === 0) return null;
+                return (
+                  <div key={categorie}>
+                    <p className="text-sm font-semibold mb-2">{categorie}</p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {modules.map((m) => {
+                        const actif = !(settings.modules_desactives || []).includes(m.key);
+                        return (
+                          <label
+                            key={m.key}
+                            className={`flex items-start gap-3 rounded-lg border p-3 ${
+                              m.verrouille
+                                ? 'bg-muted/40 cursor-not-allowed'
+                                : 'cursor-pointer hover:bg-muted/50'
+                            }`}
+                          >
+                            <Checkbox
+                              checked={actif}
+                              disabled={m.verrouille}
+                              onChange={() => toggleModule(m.key)}
+                              aria-label={`Activer ${m.label}`}
+                              className="mt-0.5"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium">
+                                {m.label}
+                                {m.verrouille && (
+                                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                                    (toujours actif)
+                                  </span>
+                                )}
+                              </span>
+                              <span className="block text-xs text-muted-foreground">
+                                {m.description}
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </CardContent>
           </Card>
 

@@ -16,6 +16,11 @@ export interface CompanySettings {
   devise: string;
   logo_url: string | null;
   taux_conversion: number;
+  /**
+   * Clés des modules masqués dans l'interface (liste d'EXCLUSION : un module
+   * absent de cette liste est actif). Voir migration 098.
+   */
+  modules_desactives: string[];
 }
 
 export class CompanySettingsService {
@@ -44,8 +49,16 @@ export class CompanySettingsService {
           devise VARCHAR(10) DEFAULT 'FCFA',
           logo_url TEXT DEFAULT '/logo.png',
           taux_conversion NUMERIC(10,4) DEFAULT 1.0000,
+          modules_desactives JSONB NOT NULL DEFAULT '[]'::jsonb,
           CONSTRAINT one_row CHECK (id = 1)
         );
+      `);
+
+      // Bases créées avant la 098 : la table existe déjà, seul le CREATE ci-dessus
+      // est sauté. Sans cet ALTER, `modules_desactives` resterait absente.
+      await pool.query(`
+        ALTER TABLE company_settings
+          ADD COLUMN IF NOT EXISTS modules_desactives JSONB NOT NULL DEFAULT '[]'::jsonb;
       `);
 
       await pool.query(`
@@ -92,17 +105,22 @@ export class CompanySettingsService {
       cb = oldSettings.cb ?? '',
       devise = oldSettings.devise || 'FCFA',
       logo_url = oldSettings.logo_url ?? '/logo.png',
-      taux_conversion = oldSettings.taux_conversion ?? 1
+      taux_conversion = oldSettings.taux_conversion ?? 1,
+      modules_desactives = oldSettings.modules_desactives ?? []
     } = settings;
+
+    // Dédoublonnage : la liste sert de test d'appartenance, un doublon n'a pas
+    // de sens et gonflerait le JSON à chaque enregistrement.
+    const modules = [...new Set((modules_desactives ?? []).map((m) => String(m)))];
 
     const { rows } = await pool.query(
       `UPDATE company_settings
        SET nom = $1, adresse = $2, telephone = $3, email = $4, site_web = $5,
            nif = $6, rc = $7, ai = $8, cb = $9, devise = $10, logo_url = $11,
-           taux_conversion = $12
+           taux_conversion = $12, modules_desactives = $13::jsonb
        WHERE id = 1
        RETURNING *`,
-      [nom, adresse, telephone, email, site_web, nif, rc, ai, cb, devise, logo_url, taux_conversion]
+      [nom, adresse, telephone, email, site_web, nif, rc, ai, cb, devise, logo_url, taux_conversion, JSON.stringify(modules)]
     );
 
     this.cachedSettings = rows[0];

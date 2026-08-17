@@ -28,6 +28,7 @@ import {
   PhoneCall,
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
+import { useModules } from '../lib/ModulesContext';
 
 export interface NavItem {
   path: string;
@@ -54,6 +55,7 @@ export const DASHBOARD_ITEM: NavItem = {
  */
 export function useNavCategories(): NavCategory[] {
   const { hasRole } = useAuth();
+  const { estCheminActif } = useModules();
 
   const isAdminOrManager = hasRole('admin', 'manager');
   const isDepotStaff = hasRole('depot_staff');
@@ -149,5 +151,9 @@ export function useNavCategories(): NavCategory[] {
         { path: '/admin/parametres-finance', label: 'Paramètres paie & achats', icon: Settings2 },
       ],
     }] : []),
-  ].filter(cat => cat.items.length > 0);
+  ]
+    // Les modules désactivés dans les paramètres disparaissent du menu, et une
+    // rubrique vidée de toutes ses entrées disparaît avec elles.
+    .map(cat => ({ ...cat, items: cat.items.filter(item => estCheminActif(item.path)) }))
+    .filter(cat => cat.items.length > 0);
 }

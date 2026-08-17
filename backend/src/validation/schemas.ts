@@ -393,6 +393,13 @@ export const companySettingsSchema = z.object({
   devise: z.string().min(1, 'Devise requise').max(10, 'Devise max 10 caractères').optional(),
   logo_url: z.string().max(2 * 1024 * 1024, 'Le logo ne doit pas dépasser 2 Mo').nullable().optional().or(z.literal('')),
   taux_conversion: z.coerce.number().positive('Taux de conversion doit être positif').max(999999).optional(),
+  // Modules masqués dans l'interface (migration 098). Le catalogue des clés vit
+  // côté frontend : on ne valide donc que la forme, pas l'appartenance — sinon
+  // toute nouvelle entrée du catalogue exigerait un déploiement backend.
+  modules_desactives: z
+    .array(z.string().regex(/^[a-z0-9-]{1,50}$/, 'Clé de module invalide'))
+    .max(200, 'Trop de modules désactivés')
+    .optional(),
 });
 
 // ============================================
