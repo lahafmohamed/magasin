@@ -172,8 +172,10 @@ export default function TiersPage() {
     } catch { toast.error('Impossible de supprimer ce contact'); }
   };
 
+  // Même convention que TiersDetail : solde_net > 0 → ils nous doivent (créance,
+  // favorable → vert) ; < 0 → nous leur devons (dette → rouge).
   const soldeNetColor = (net: number) =>
-    net > 0 ? 'text-danger-600' : net < 0 ? 'text-success-600' : 'text-muted-foreground';
+    net > 0 ? 'text-success-600' : net < 0 ? 'text-danger-600' : 'text-muted-foreground';
 
   return (
     <div className="container mx-auto px-4 py-6 max-w-7xl">

@@ -11,6 +11,7 @@ import { History, Filter } from 'lucide-react';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/utils/errors';
 import { formatCurrency, formatDateShort } from '@/utils/format';
+import { formatPaymentMethod } from '@/utils/paymentMethod';
 import { PageHeader } from '@/components/ui/page-header';
 import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
@@ -264,7 +265,7 @@ export default function CaisseHistorique() {
                   <div className="rounded-md border divide-y">
                     {Object.entries(detail.totaux_par_methode).map(([methode, t]) => (
                       <div key={methode} className="flex justify-between px-3 py-1.5">
-                        <span className="capitalize">{methode.replace('_', ' ')}</span>
+                        <span>{formatPaymentMethod(methode)}</span>
                         <span className="font-mono">
                           +{formatCurrency(t.in)} / -{formatCurrency(t.out)}
                         </span>

@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { Users } from 'lucide-react';
 import { userLocationAssignmentService } from '../services/api';
 import { getErrorMessage } from '@/utils/errors';
+import { formatRole } from '@/utils/roles';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/loading';
@@ -120,13 +121,13 @@ export default function AffectationsLocations() {
         default_location_id: defaultLocationId,
       });
 
-      toast.success('Affectations mises a jour');
+      toast.success('Affectations mises à jour');
 
       const usersData = await userLocationAssignmentService.getUsers();
       const usersList: AssignmentUser[] = usersData.data || usersData;
       setUsers(usersList);
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur mise a jour affectations'));
+      toast.error(getErrorMessage(err, 'Erreur lors de la mise à jour des affectations'));
     } finally {
       setSaving(false);
     }
@@ -179,7 +180,7 @@ export default function AffectationsLocations() {
                         </TableCell>
                         <TableCell>
                           <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs">
-                            {user.role}
+                            {formatRole(user.role)}
                           </span>
                         </TableCell>
                         <TableCell>

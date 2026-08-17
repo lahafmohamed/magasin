@@ -820,8 +820,8 @@ export default function CommandeDetail() {
                         <TableCell className="text-right num">{l.qte_commandee}</TableCell>
                         <TableCell className="text-right num">{l.qte_recue}</TableCell>
                         <TableCell className="text-right num">{l.qte_facturee}</TableCell>
-                        <TableCell className="text-right num">{l.prix_commande ?? '—'}</TableCell>
-                        <TableCell className="text-right num">{l.prix_facture ?? '—'}</TableCell>
+                        <TableCell className="text-right num">{l.prix_commande != null ? formatCurrency(Number(l.prix_commande)) : '—'}</TableCell>
+                        <TableCell className="text-right num">{l.prix_facture != null ? formatCurrency(Number(l.prix_facture)) : '—'}</TableCell>
                         <TableCell className="text-center">
                           {l.coherent ? <CheckCircle className="h-4 w-4 text-success-600 inline" />
                             : l.within_tolerance ? <Clock className="h-4 w-4 text-warning-500 inline" />

@@ -34,10 +34,10 @@ const ligneSchema = z.object({
 const blSchema = z.object({
   tiers: z
     .custom<Tiers | null>()
-    .refine((t) => !!t?.id, 'Veuillez selectionner un client'),
+    .refine((t) => !!t?.id, 'Veuillez sélectionner un client'),
   devisId: z
     .string()
-    .refine((v) => Number(v) > 0, 'Le numero de devis est obligatoire'),
+    .refine((v) => Number(v) > 0, 'Le numéro de devis est obligatoire'),
   notes: z.string().optional(),
   lignes: z.array(ligneSchema).min(1, 'Veuillez ajouter au moins un produit'),
 });
@@ -125,7 +125,7 @@ export default function NouveauBonLivraison() {
     }
 
     if (getValues('lignes').some((l) => l.produit_id === produit.id)) {
-      toast.warning('Ce produit est deja dans le bon de livraison');
+      toast.warning('Ce produit est déjà dans le bon de livraison');
       return;
     }
 
@@ -170,10 +170,10 @@ export default function NouveauBonLivraison() {
       });
 
       clear();
-      toast.success(`Bon de livraison ${result.numero_bl || ''} cree avec succes`.trim());
+      toast.success(`Bon de livraison ${result.numero_bl || ''} créé avec succès`.trim());
       navigate('/bons-livraison');
     } catch (error) {
-      toast.error(getErrorMessage(error, 'Erreur lors de la creation du bon de livraison'));
+      toast.error(getErrorMessage(error, 'Erreur lors de la création du bon de livraison'));
     } finally {
       setSubmitting(false);
     }
@@ -191,7 +191,7 @@ export default function NouveauBonLivraison() {
             <Truck className="h-8 w-8" />
             Nouveau Bon de Livraison
           </h1>
-          <p className="text-muted-foreground mt-1">Creez un nouveau bon de livraison client</p>
+          <p className="text-muted-foreground mt-1">Créez un nouveau bon de livraison client</p>
         </div>
       </div>
 
@@ -262,7 +262,7 @@ export default function NouveauBonLivraison() {
         <Card>
           <CardHeader>
             <CardTitle>Client<span className="text-destructive"> *</span></CardTitle>
-            <CardDescription>Selectionnez le client</CardDescription>
+            <CardDescription>Sélectionnez le client</CardDescription>
           </CardHeader>
           <CardContent>
             <Controller
@@ -286,7 +286,7 @@ export default function NouveauBonLivraison() {
               <Users className="h-5 w-5" />
               Produits
             </CardTitle>
-            <CardDescription>Ajoutez les produits a livrer</CardDescription>
+            <CardDescription>Ajoutez les produits à livrer</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Label htmlFor="bl-produit-search" className="block mb-1.5">
@@ -447,7 +447,7 @@ export default function NouveauBonLivraison() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Informations complementaires</CardTitle>
+            <CardTitle>Informations complémentaires</CardTitle>
           </CardHeader>
           <CardContent>
             <Textarea
@@ -461,12 +461,12 @@ export default function NouveauBonLivraison() {
         <Card>
           <CardContent className="pt-6 flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">Total estime</p>
+              <p className="text-sm text-muted-foreground">Total estimé</p>
               <p className="text-2xl font-bold">{formatCurrency(total)}</p>
             </div>
             <Button type="submit" disabled={submitting || !selectedClient || fields.length === 0}>
               <Check className="h-4 w-4 mr-2" />
-              {submitting ? 'Creation...' : 'Creer le bon de livraison'}
+              {submitting ? 'Création…' : 'Créer le bon de livraison'}
             </Button>
           </CardContent>
         </Card>

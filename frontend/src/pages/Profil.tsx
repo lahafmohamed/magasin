@@ -21,15 +21,7 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { formatDate } from '../utils/format';
 import { getErrorMessage } from '@/utils/errors';
 import { isStrongPassword, passwordRules, PASSWORD_POLICY_MESSAGE } from '../utils/password';
-
-const ROLE_LABELS: Record<string, string> = {
-  admin: 'Administrateur',
-  manager: 'Manager',
-  caissier: 'Caissier',
-  depot_staff: 'Personnel dépôt',
-  magasin_staff: 'Personnel magasin',
-  viewer: 'Consultation',
-};
+import { ROLE_LABELS } from '../utils/roles';
 
 /** Ligne libellé / valeur de la carte identité. */
 function InfoRow({

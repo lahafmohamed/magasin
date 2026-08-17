@@ -61,6 +61,7 @@ import {
   LineChart,
 } from 'recharts';
 import { formatFCFA as formatXOF } from '../utils/format';
+import { formatPaymentMethod } from '../utils/paymentMethod';
 import {
   CHART_COLORS as COLORS,
   CHART_PRIMARY,
@@ -1142,8 +1143,8 @@ export default function Dashboard() {
                   >
                     <div className="flex items-center justify-between">
                       <Wallet className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-xs uppercase font-medium text-muted-foreground">
-                        {m.methode}
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {formatPaymentMethod(m.methode)}
                       </span>
                     </div>
                     <p className="mt-2 text-lg font-bold">

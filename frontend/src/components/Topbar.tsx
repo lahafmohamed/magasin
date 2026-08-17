@@ -12,15 +12,7 @@ import {
 import { useAuth } from '../lib/AuthContext';
 import { useTheme } from '../lib/ThemeContext';
 import { NotificationBell } from './NotificationBell';
-
-const ROLE_LABELS: Record<string, string> = {
-  admin: 'Administrateur',
-  manager: 'Manager',
-  caissier: 'Caissier',
-  depot_staff: 'Personnel dépôt',
-  magasin_staff: 'Personnel magasin',
-  viewer: 'Consultation',
-};
+import { ROLE_LABELS } from '../utils/roles';
 
 /** Opens the GlobalSearch command palette (it listens for Ctrl/Cmd+K on document). */
 function openGlobalSearch() {

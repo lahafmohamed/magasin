@@ -203,7 +203,7 @@ export default function DevisDetail() {
           <p><strong>Date:</strong> {devis.date_devis ? new Date(devis.date_devis).toLocaleDateString('fr-FR') : '-'}</p>
           <p><strong>Validité:</strong> {devis.date_validite ? new Date(devis.date_validite).toLocaleDateString('fr-FR') : '-'}</p>
           <p className="flex items-center gap-2"><strong>Statut:</strong> {devis.statut ? <StatusBadge type="devis" statut={devis.statut} /> : '-'}</p>
-          <p><strong>Total:</strong> <span className="tabular-nums font-semibold">{new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF' }).format(Number(total || 0))}</span></p>
+          <p><strong>Total:</strong> <span className="tabular-nums font-semibold">{formatCurrency(Number(total || 0))}</span></p>
         </CardContent>
       </Card>
 

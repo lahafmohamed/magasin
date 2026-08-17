@@ -70,6 +70,14 @@ const TYPE_BADGE: Record<string, string> = {
   produit: 'bg-primary-100 text-primary-700',
 };
 
+const TYPE_LABELS: Record<string, string> = {
+  actif: 'Actif',
+  passif: 'Passif',
+  capitaux_propres: 'Capitaux propres',
+  charge: 'Charge',
+  produit: 'Produit',
+};
+
 const formatNum = (s: string) =>
   new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Math.round(parseFloat(s) || 0));
 
@@ -229,6 +237,7 @@ export default function GeneralLedger() {
   };
 
   const exportToCSV = async () => {
+    let exportFailed = false;
     if (activeTab === 'ecritures') {
       // Pull the full (capped) set from the dedicated export endpoint — the
       // table only holds the current page now that écritures are paginated.
@@ -248,6 +257,7 @@ export default function GeneralLedger() {
         }
       } catch (err) {
         toast.error(getErrorMessage(err, 'Export CSV incomplet — export de la page courante.'));
+        exportFailed = true;
       }
       const headers = ['N° pièce', 'Date', 'Journal', 'Compte', 'Description', 'Débit', 'Crédit'];
       const rows = allEcritures.map((e) => [
@@ -265,7 +275,7 @@ export default function GeneralLedger() {
       const rows = chartOfAccounts.map((c) => [
         c.numero,
         c.intitule,
-        c.type_compte,
+        TYPE_LABELS[c.type_compte] || c.type_compte,
         c.categorie || '',
         c.actif ? 'Actif' : 'Inactif',
       ]);
@@ -281,7 +291,7 @@ export default function GeneralLedger() {
       ]);
       downloadCsv(`balance_${dateDebut}_${dateFin}.csv`, headers, rows);
     }
-    toast.success('Export CSV réussi');
+    if (!exportFailed) toast.success('Export CSV réussi');
   };
 
   return (
@@ -489,7 +499,7 @@ export default function GeneralLedger() {
                       <td className="px-3 py-2">{compte.intitule}</td>
                       <td className="px-3 py-2">
                         <span className={`${BADGE_BASE} ${TYPE_BADGE[compte.type_compte] || 'bg-muted text-muted-foreground'}`}>
-                          {compte.type_compte}
+                          {TYPE_LABELS[compte.type_compte] || compte.type_compte}
                         </span>
                       </td>
                       <td className="px-3 py-2 text-muted-foreground">{compte.categorie || '—'}</td>

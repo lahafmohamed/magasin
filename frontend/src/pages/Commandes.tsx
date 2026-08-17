@@ -919,7 +919,7 @@ export default function Commandes() {
                       <TableCell className="font-mono font-bold text-primary group-hover:underline">{c.numero_commande}</TableCell>
                       <TableCell className="font-semibold">{c.fournisseur_nom}</TableCell>
                       <TableCell>{new Date(c.date_commande).toLocaleDateString('fr-FR')}</TableCell>
-                      <TableCell className="font-bold">{formatCurrency(c.sous_total)}</TableCell>
+                      <TableCell className="text-right font-bold num">{formatCurrency(c.sous_total)}</TableCell>
                       <TableCell>
                         {c.date_livraison_prevue ? (
                           <span className={`inline-flex items-center gap-1 font-semibold ${isLate ? 'text-destructive' : ''}`}>

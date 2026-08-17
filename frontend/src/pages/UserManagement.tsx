@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingState, Spinner } from '@/components/ui/loading';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
 import { getErrorMessage } from '@/utils/errors';
+import { formatRole, formatLocationType } from '@/utils/roles';
 
 interface User {
   id: number;
@@ -275,7 +276,7 @@ export default function UserManagement() {
                     </td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">
-                        {user.role}
+                        {formatRole(user.role)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -386,7 +387,7 @@ export default function UserManagement() {
                   </SelectTrigger>
                   <SelectContent>
                     {roles.map(r => (
-                      <SelectItem key={r.id} value={String(r.id)}>{r.nom} - {r.description}</SelectItem>
+                      <SelectItem key={r.id} value={String(r.id)}>{formatRole(r.nom)} — {r.description}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -425,7 +426,7 @@ export default function UserManagement() {
                     />
                     <div className="flex flex-col">
                       <span className="text-sm font-medium">{loc.nom}</span>
-                      <span className="text-xs text-muted-foreground uppercase">{loc.location_type}</span>
+                      <span className="text-xs text-muted-foreground">{formatLocationType(loc.location_type)}</span>
                     </div>
                   </label>
                 ))}

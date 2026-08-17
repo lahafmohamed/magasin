@@ -872,7 +872,7 @@ export default function TiersDetail() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {METHODES.map(m => <SelectItem key={m} value={m}>{m.replace('_', ' ')}</SelectItem>)}
+                  {METHODES.map(m => <SelectItem key={m} value={m}>{formatPaymentMethod(m)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -923,7 +923,7 @@ export default function TiersDetail() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {METHODES.map(m => <SelectItem key={m} value={m}>{m.replace('_', ' ')}</SelectItem>)}
+                  {METHODES.map(m => <SelectItem key={m} value={m}>{formatPaymentMethod(m)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -1019,7 +1019,7 @@ export default function TiersDetail() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {METHODES.map(m => <SelectItem key={m} value={m}>{m.replace('_', ' ')}</SelectItem>)}
+                    {METHODES.map(m => <SelectItem key={m} value={m}>{formatPaymentMethod(m)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
