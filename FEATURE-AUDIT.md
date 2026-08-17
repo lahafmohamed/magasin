@@ -52,7 +52,7 @@ Effort: **S** ≤ ½ day · **M** = 1–3 days · **L** = 1+ week.
 
 | # | Feature | State | Work needed | Effort | Prio |
 |---|---|---|---|---|---|
-| F-1 | **Retours clients** (customer returns) | Backend complete: `routes/retours.ts`, `ReturnService` (restock on approval, guarded state machine, period-checked, reversal on cancel), Zod schemas, `avoirs/from-retour` | `retourService` in `api.ts` + `Retours.tsx` list + `NouveauRetour.tsx` (pick facture → lines → qty) + `RetourDetail.tsx` (approve/cancel) + nav entry | M | **P1** |
+| F-1 | ✅ **Retours clients** (customer returns) — **DONE 2026-08-17** | Backend complete: `routes/retours.ts`, `ReturnService` (restock on approval, guarded state machine, period-checked, reversal on cancel), Zod schemas, `avoirs/from-retour` | Shipped: `retourService` in `api.ts` + `Retours.tsx` (list + stats + facture-scoped create dialog + detail dialog + approve/cancel with stock-effect confirms) + `/retours` route + nav entry. Note: create must send `client_id` from `factures.tiers_id` — `client_id` is a legacy alias absent from the projection | M | **P1** |
 | F-2 | **Transferts inter-caisses** | `routes/caisses-hierarchy.ts`: caisse principale, per-magasin caisses, `POST /transferts`, transfer history, per-caisse balance, consolidated report | `caisseHierarchyService` + a "Trésorerie / Caisses" screen (tree of caisses, balances, transfer dialog, history) | M | **P1** |
 | F-3 | **POS / ticket de caisse** | `routes/pos.ts`: open/close session, quick sale, session summary, `GET /scan` barcode | Decide: wire into `CaisseV2.tsx` (barcode field + quick-sale) or delete the slice. See AUDIT.md §4 | M | P2 |
 | F-4 | **Allocation repair UI** | `POST /admin/allocation/recompute-all`, `/test/:clientId`, `/recompute/:clientId` (+ the new supplier-side `POST /tiers/:id/recompute-allocation`) | Admin maintenance panel button with confirm + result summary | S | P3 |
@@ -169,7 +169,7 @@ Verified: backend `tsc` clean · 0 lint errors · **295/295 backend tests** (+6)
 Ordered by value-per-hour, not by section.
 
 **Wave 1 — unlock what already exists + account self-service (≈1 week)**
-1. F-1 Retours clients UI — the biggest capability gain in the repo (backend is done and tested). **← next**
+1. ✅ F-1 Retours clients UI (2026-08-17) — the biggest capability gain in the repo; backend was already done and tested.
 2. ✅ F-14 Profile page, topbar user menu, voluntary password change (2026-07-23). Remaining: F-13 admin password reset.
 3. ✅ F-6 + F-7 Bon de commande fournisseur PDF + reçu de paiement PDF (2026-07-23) — plus the four broken sales-document PDFs repaired.
 4. ✅ GlobalSearch scope + deep-links; CaisseV2 keyboard/autofocus (2026-07-23).
