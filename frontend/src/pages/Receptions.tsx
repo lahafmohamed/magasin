@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowLeft, PackageCheck } from 'lucide-react';
+import { ArrowLeft, PackageCheck, Search } from 'lucide-react';
 import { api } from '../services/authService';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,8 @@ import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { formatFCFA } from '../utils/format';
 import { getErrorMessage } from '@/utils/errors';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import StatusBadge from '@/components/StatusBadge';
 
 interface Order {
   id: number;
@@ -52,12 +54,8 @@ interface StockLocation {
 
 type OrderSortKey = 'numero_commande' | 'fournisseur_nom' | 'date_commande' | 'statut' | 'sous_total';
 
-const STATUT_BADGE: Record<string, string> = {
-  validee: 'bg-warning-100 text-warning-800',
-  expediee: 'bg-info-100 text-info-700',
-};
-
 export default function Receptions() {
+  const confirm = useConfirm();
   const [searchParams] = useSearchParams();
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
@@ -65,6 +63,7 @@ export default function Receptions() {
   const [notes, setNotes] = useState('');
   const [locations, setLocations] = useState<StockLocation[]>([]);
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -176,6 +175,17 @@ export default function Receptions() {
       return;
     }
 
+    // La réception écrit le stock et recalcule le CMP : on récapitule avant.
+    const totalRecu = lignes.reduce((sum, l) => sum + l.quantite_recue, 0);
+    const totalValeur = lignes.reduce((sum, l) => sum + l.quantite_recue * l.cout_unitaire, 0);
+    const emplacement = locations.find((l) => String(l.id) === selectedLocationId);
+    const confirmed = await confirm({
+      title: 'Valider cette réception ?',
+      description: `${totalRecu} article(s) pour ${formatFCFA(totalValeur)} seront ajoutés au stock de ${emplacement?.nom || "l'emplacement sélectionné"}. Le prix de revient moyen des produits sera recalculé.`,
+      confirmLabel: 'Valider la réception',
+    });
+    if (!confirmed) return;
+
     setSubmitting(true);
 
     try {
@@ -196,9 +206,21 @@ export default function Receptions() {
     }
   };
 
+  // La liste des commandes en attente est chargée en entier : le filtre reste
+  // côté client, sur le numéro et le fournisseur.
+  const filteredOrders = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter(
+      (o) =>
+        o.numero_commande.toLowerCase().includes(q) ||
+        (o.fournisseur_nom || '').toLowerCase().includes(q)
+    );
+  }, [orders, search]);
+
   const sortedOrders = useMemo(() => {
-    if (!sort) return orders;
-    const arr = [...orders];
+    if (!sort) return filteredOrders;
+    const arr = [...filteredOrders];
     arr.sort((a, b) => {
       let cmp: number;
       if (sort.key === 'sous_total') {
@@ -213,7 +235,7 @@ export default function Receptions() {
       return sort.dir === 'asc' ? cmp : -cmp;
     });
     return arr;
-  }, [orders, sort]);
+  }, [filteredOrders, sort]);
 
   if (selectedOrder) {
     return (
@@ -314,17 +336,33 @@ export default function Receptions() {
 
   return (
     <div className="container mx-auto p-6">
-      <h1 className="text-2xl font-semibold tracking-tight mb-6">Réceptions de commandes</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+        <h1 className="text-2xl font-semibold tracking-tight">Réceptions de commandes</h1>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Rechercher par n° de commande ou fournisseur…"
+            aria-label="Rechercher une commande à réceptionner"
+            className="pl-9 w-full sm:w-80"
+          />
+        </div>
+      </div>
 
       <QueryState
         loading={loading}
         error={error}
         onRetry={fetchPendingOrders}
         skeleton={<TableSkeleton rows={10} columns={6} />}
-        isEmpty={orders.length === 0}
+        isEmpty={sortedOrders.length === 0}
         emptyIcon={PackageCheck}
-        emptyTitle="Aucune commande en attente de réception"
-        emptyDescription="Les commandes validées ou expédiées apparaîtront ici."
+        emptyTitle={search ? 'Aucune commande ne correspond à cette recherche' : 'Aucune commande en attente de réception'}
+        emptyDescription={
+          search
+            ? 'Vérifiez le numéro de commande ou le nom du fournisseur.'
+            : 'Les commandes validées ou expédiées apparaîtront ici.'
+        }
       >
         <div className="overflow-x-auto rounded-md border bg-card">
           <table className="w-full text-sm">
@@ -345,11 +383,7 @@ export default function Receptions() {
                   <td className="px-3 py-2">{order.fournisseur_nom}</td>
                   <td className="px-3 py-2 num">{new Date(order.date_commande).toLocaleDateString('fr-FR')}</td>
                   <td className="px-3 py-2">
-                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                      STATUT_BADGE[order.statut] || 'bg-muted text-muted-foreground'
-                    }`}>
-                      {order.statut}
-                    </span>
+                    <StatusBadge type="commande" statut={order.statut} />
                   </td>
                   <td className="px-3 py-2 text-right num">{formatFCFA(order.sous_total)}</td>
                   <td className="px-3 py-2">

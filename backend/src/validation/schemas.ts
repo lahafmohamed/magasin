@@ -37,6 +37,7 @@ export const changePasswordSchema = z.object({
 export const createProduitSchema = z.object({
   reference: z.string().min(1, 'Référence requise').max(50),
   nom: z.string().min(1, 'Nom requis').max(255),
+  code_barre: z.string().max(50, 'Code-barres trop long (50 caractères maximum)').optional().or(z.literal('')),
   description: z.string().max(1000).optional().or(z.literal('')),
   categorie: z.string().max(100).optional().or(z.literal('')),
   prix_achat: z.coerce.number().nonnegative('Prix d\'achat doit être positif'),
@@ -59,6 +60,7 @@ export const createProduitSchema = z.object({
 export const updateProduitSchema = z.object({
   reference: z.string().min(1).max(50).optional(),
   nom: z.string().min(1).max(255).optional(),
+  code_barre: z.string().max(50, 'Code-barres trop long (50 caractères maximum)').optional().or(z.literal('')).optional(),
   description: z.string().max(1000).optional().or(z.literal('')).optional(),
   categorie: z.string().max(100).optional().or(z.literal('')).optional(),
   prix_achat: z.coerce.number().nonnegative().optional(),

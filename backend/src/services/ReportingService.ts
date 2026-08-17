@@ -77,6 +77,11 @@ export class ReportingService {
            c.id AS client_id,
            c.raison_sociale AS nom,
            c.prenom,
+           c.telephone,
+           c.email,
+           -- Date de la plus ancienne facture encore due : c'est l'ancienneté
+           -- de la créance qui décide d'une relance, pas son montant.
+           MIN(f.date_facture) AS plus_ancienne_facture,
            COALESCE(SUM(f.remaining_due), 0) AS total_du,
            COALESCE(SUM(f.remaining_due) FILTER (
              WHERE f.date_facture >= CURRENT_DATE - INTERVAL '30 days'
@@ -106,7 +111,7 @@ export class ReportingService {
              $1::text IS NULL
              OR CONCAT_WS(' ', c.raison_sociale, c.prenom, c.code) ILIKE '%' || $1 || '%'
            )
-         GROUP BY c.id, c.raison_sociale, c.prenom
+         GROUP BY c.id, c.raison_sociale, c.prenom, c.telephone, c.email
        ),
        filtered AS (
          SELECT *

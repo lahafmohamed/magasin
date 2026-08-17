@@ -2,6 +2,7 @@ export interface Produit {
   id: number;
   reference: string;
   nom: string;
+  code_barre: string | null;
   description: string | null;
   categorie: string | null;
   prix_achat: number;
@@ -54,7 +55,10 @@ export interface FactureLigne {
 export interface Facture {
   id: number;
   numero_facture: string;
-  client_id: number;
+  /** Colonne réelle en base (`factures.tiers_id`). */
+  tiers_id?: number;
+  /** Alias hérité : absent de la plupart des projections — préférer `tiers_id`. */
+  client_id?: number;
   client_nom: string;
   client_prenom: string | null;
   date_facture: string;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { X, Plus, FileText } from 'lucide-react';
+import { X, Plus, FileText, Search } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CardSkeleton, TableSkeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/loading';
@@ -106,6 +106,18 @@ export default function FacturesFournisseur() {
   const [loadError, setLoadError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
   const [filterStatut, setFilterStatut] = useState<string>('');
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // Recherche serveur (n° interne, n° fournisseur, raison sociale) — débouncée
+  // pour ne pas requêter à chaque frappe.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   // Pagination serveur (l'API renvoie { data, pagination: { total, totalPages } }).
   const [page, setPage] = useState(1);
@@ -143,7 +155,7 @@ export default function FacturesFournisseur() {
     setLoading(true);
     setLoadError(null);
     try {
-      const data = await factureFournisseurService.getAll(undefined, filterStatut || undefined, undefined, page, limit);
+      const data = await factureFournisseurService.getAll(debouncedSearch || undefined, filterStatut || undefined, undefined, page, limit);
       const rows = data.data || data;
       setFactures(Array.isArray(rows) ? rows : []);
       setTotal(data.pagination?.total ?? (Array.isArray(rows) ? rows.length : 0));
@@ -154,7 +166,7 @@ export default function FacturesFournisseur() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatut, page, limit]);
+  }, [debouncedSearch, filterStatut, page, limit]);
 
   const fetchReceptions = async () => {
     try {
@@ -348,6 +360,16 @@ export default function FacturesFournisseur() {
         className="mb-6"
         actions={
           <>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Rechercher par n° de facture ou fournisseur…"
+                aria-label="Rechercher une facture fournisseur"
+                className="pl-9 w-full sm:w-80"
+              />
+            </div>
             <Select
               value={filterStatut === '' ? '__all' : filterStatut}
               onValueChange={(v) => {

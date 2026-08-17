@@ -12,6 +12,7 @@ import { TableSkeleton } from '@/components/ui/skeleton';
 import { PackageSearch, ShoppingCart, AlertTriangle } from 'lucide-react';
 import { formatFCFA } from '../utils/format';
 import { getErrorMessage } from '@/utils/errors';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 interface Suggestion {
   produit_id: number;
@@ -32,6 +33,7 @@ interface Row extends Suggestion {
 
 export default function Reapprovisionnement() {
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -77,6 +79,20 @@ export default function Reapprovisionnement() {
 
   const generate = async () => {
     if (groups.size === 0) { toast.error('Aucune ligne sélectionnée avec un fournisseur'); return; }
+
+    const fournisseurs = [...groups.values()].map((g) => g.nom).join(', ');
+    const totalLignes = [...groups.values()].reduce((sum, g) => sum + g.rows.length, 0);
+    const totalMontant = [...groups.values()].reduce(
+      (sum, g) => sum + g.rows.reduce((s, r) => s + r.quantite * (Number(r.prix_achat) || 0), 0),
+      0
+    );
+    const confirmed = await confirm({
+      title: `Générer ${groups.size} commande(s) fournisseur ?`,
+      description: `${totalLignes} ligne(s) pour ${formatFCFA(totalMontant)} seront commandées auprès de : ${fournisseurs}. Une commande distincte est créée par fournisseur.`,
+      confirmLabel: 'Générer les commandes',
+    });
+    if (!confirmed) return;
+
     setGenerating(true);
     let ok = 0;
     try {
@@ -145,7 +161,7 @@ export default function Reapprovisionnement() {
                 <TableHead>Produit</TableHead>
                 <TableHead>Fournisseur</TableHead>
                 <TableHead className="text-right">Stock</TableHead>
-                <TableHead className="text-right">Min</TableHead>
+                <TableHead className="text-right">Seuil mini</TableHead>
                 <TableHead className="text-right">Prix achat</TableHead>
                 <TableHead className="text-right w-[110px]">Qté à commander</TableHead>
               </TableRow>
@@ -177,6 +193,7 @@ export default function Reapprovisionnement() {
                       onChange={(e) => setRow(r.produit_id, { quantite: Math.max(1, parseInt(e.target.value) || 1) })}
                       className="h-8 w-24 text-right"
                       disabled={r.fournisseur_id == null}
+                      aria-label={`Quantité à commander pour ${r.nom}`}
                     />
                   </TableCell>
                 </TableRow>

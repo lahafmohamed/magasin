@@ -46,6 +46,8 @@ const BonsLivraison = lazy(() => import('./pages/BonsLivraison'));
 const NouveauBonLivraison = lazy(() => import('./pages/NouveauBonLivraison'));
 const BonLivraisonDetail = lazy(() => import('./pages/BonLivraisonDetail'));
 const Avoirs = lazy(() => import('./pages/Avoirs'));
+const Retours = lazy(() => import('./pages/Retours'));
+const Relances = lazy(() => import('./pages/Relances'));
 const NouvelAvoir = lazy(() => import('./pages/NouvelAvoir'));
 const AvoirDetail = lazy(() => import('./pages/AvoirDetail'));
 const Caisse = lazy(() => import('./pages/CaisseV2'));
@@ -151,6 +153,8 @@ function AppWithShortcuts() {
         <Route path="/avoirs" element={protectedPage(<Avoirs />, ACCESS.managers)} />
         <Route path="/avoirs/nouveau" element={protectedPage(<NouvelAvoir />, ACCESS.managers)} />
         <Route path="/avoirs/:id" element={protectedPage(<AvoirDetail />, ACCESS.managers)} />
+        <Route path="/retours" element={protectedPage(<Retours />, ACCESS.managers)} />
+        <Route path="/relances" element={protectedPage(<Relances />, ACCESS.managers)} />
 
         {/* Stock */}
         <Route path="/stock-valuation" element={protectedPage(<StockValuation />, ACCESS.managers)} />

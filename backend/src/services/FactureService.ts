@@ -7,6 +7,7 @@ import { businessError } from '../utils/errors';
 import { ClientAllocationService } from './ClientAllocationService';
 import { checkPeriodIsOpen } from './PeriodService';
 import { creditService } from './CreditService';
+import { NotificationService } from './NotificationService';
 import {
   resolveSalesLocationId,
 } from './StockMagasinService';
@@ -496,6 +497,18 @@ export class FactureService {
       );
 
       await client.query('COMMIT');
+
+      // Notifications temps réel — après le COMMIT et non bloquantes : une panne
+      // de notification ne doit jamais annuler une vente déjà enregistrée.
+      NotificationService.safely(() =>
+        NotificationService.invoiceCreated({
+          id: factureId,
+          numero: numeroFacture,
+          total,
+          client_nom: clientRows[0].nom,
+        })
+      );
+      NotificationService.safely(() => NotificationService.checkLowStock(produitIds));
 
       return { id: factureId, numero_facture: numeroFacture, total };
     } catch (error) {

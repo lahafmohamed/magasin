@@ -170,12 +170,12 @@ export async function findOffendingDepotLines(
  * for the products picker on Ventes pages.
  *
  * Result columns:
- *   id, reference, nom, description, categorie, prix_achat, prix_vente,
+ *   id, reference, nom, code_barre, description, categorie, prix_achat, prix_vente,
  *   stock (SUM across magasin locations only), stock_min, created_at, updated_at
  *
  * Caller is responsible for adding ORDER BY / LIMIT / OFFSET / extra filters.
  *
- * @param search optional substring on nom or reference
+ * @param search optional substring on nom or reference, or an exact code_barre (scanner input)
  * @param categorie optional categorie filter
  */
 export function buildMagasinProductsQuery(opts: {
@@ -202,7 +202,8 @@ export function buildMagasinProductsQuery(opts: {
   if (opts.search) {
     params.push(`%${opts.search}%`);
     const sIdx = params.length;
-    where += ` AND (p.nom ILIKE $${sIdx} OR p.reference ILIKE $${sIdx})`;
+    params.push(opts.search);
+    where += ` AND (p.nom ILIKE $${sIdx} OR p.reference ILIKE $${sIdx} OR COALESCE(p.code_barre,'') = $${params.length})`;
   }
   if (opts.categorie) {
     params.push(opts.categorie);
@@ -212,7 +213,7 @@ export function buildMagasinProductsQuery(opts: {
   // SUM only counts joined rows where sl matched the magasin predicate, so dépôt rows are excluded.
   const sql = `
     SELECT
-      p.id, p.reference, p.nom, p.description, p.categorie,
+      p.id, p.reference, p.nom, p.code_barre, p.description, p.categorie,
       p.prix_achat, p.prix_vente,
       COALESCE(SUM(CASE WHEN sl.id IS NOT NULL THEN spl.quantite ELSE 0 END), 0) AS stock,
       p.stock_min, p.created_at, p.updated_at

@@ -41,11 +41,14 @@ export function normalizeApiResponseBody(body: unknown): unknown {
   return body.data;
 }
 
-type CreateProduitPayload = Omit<Produit, 'id' | 'stock'> & {
+type CreateProduitPayload = Omit<Produit, 'id' | 'stock' | 'code_barre'> & {
   stock?: number;
   location_id?: number;
   initial_stock?: number;
   fournisseur_id?: number | null;
+  // Optionnel côté serveur : une chaîne vide est enregistrée comme NULL
+  // (la colonne est UNIQUE, deux '' entreraient en conflit).
+  code_barre?: string | null;
 };
 
 type UpdateProduitPayload = Partial<Omit<Produit, 'id'>> & {
@@ -1276,6 +1279,42 @@ export const creditNoteService = {
   },
 };
 
+// ========== RETOURS CLIENTS ==========
+export const retourService = {
+  getAll: async (page = 1, limit = 20): Promise<Page<any>> => {
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    const { data } = await api.get(`/retours?${params}`);
+    return data;
+  },
+
+  getStats: async (): Promise<any> => {
+    const { data } = await api.get('/retours/stats');
+    return data;
+  },
+
+  getById: async (id: number): Promise<any> => {
+    const { data } = await api.get(`/retours/${id}`);
+    return data;
+  },
+
+  /**
+   * Le backend attend `client_id` (createReturnSchema) — toutes les lignes
+   * portent la facture d'origine, et le stock n'est réintégré qu'à l'approbation.
+   */
+  create: async (retour: {
+    client_id: number;
+    lignes: { facture_id: number; produit_id: number; quantite: number; raison: string }[];
+    notes?: string;
+  }): Promise<{ id: number; numero_retour: string; total: number }> => {
+    const { data } = await api.post('/retours', retour);
+    return data;
+  },
+
+  updateStatut: async (id: number, statut: 'en_attente' | 'traite' | 'annule'): Promise<void> => {
+    await api.put(`/retours/${id}/statut`, { statut });
+  },
+};
+
 // ========== CAISSE ==========
 export const caisseService = {
   getMagasins: async (): Promise<any[]> => {
@@ -1513,6 +1552,22 @@ export const companySettingsService = {
 export const crmService = {
   getInteractions: async (tiersId: number): Promise<any[]> => {
     const { data } = await api.get(`/crm/interactions/${tiersId}`);
+    return data?.data || data || [];
+  },
+
+  /** Interactions tous tiers confondus, filtrables par type (ex. « relance »). */
+  listInteractions: async (params: {
+    type?: string;
+    tiers_id?: number;
+    page?: number;
+    limit?: number;
+  } = {}): Promise<any[]> => {
+    const query = new URLSearchParams();
+    if (params.type) query.append('type', params.type);
+    if (params.tiers_id) query.append('tiers_id', String(params.tiers_id));
+    query.append('page', String(params.page ?? 1));
+    query.append('limit', String(params.limit ?? 200));
+    const { data } = await api.get(`/crm/interactions?${query}`);
     return data?.data || data || [];
   },
 

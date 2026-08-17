@@ -20,6 +20,7 @@ import {
 import StatusBadge from '@/components/StatusBadge';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/utils/format';
+import { AVOIR_TYPE_LABELS } from '@/utils/avoirTypes';
 import { creditNoteService } from '@/services/api';
 import {
   DocumentListPage,
@@ -54,13 +55,7 @@ interface AvoirStats {
   moisTotal: number;
 }
 
-// Valeurs imposées par la contrainte CHECK de `factures_avoir.avoir_type`.
-const TYPE_LABEL: Record<string, string> = {
-  erreur: 'Erreur facturation',
-  retour: 'Retour marchandise',
-  echange: 'Échange',
-  remise_commerciale: 'Remise commerciale',
-};
+const TYPE_LABEL = AVOIR_TYPE_LABELS;
 
 const TYPE_VARIANT: Record<string, 'warning' | 'info' | 'success' | 'secondary'> = {
   erreur: 'warning',

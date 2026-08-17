@@ -17,9 +17,11 @@ router.get('/stream', async (req: Request, res: Response) => {
     res.status(401).json({ success: false, error: 'Token manquant' });
     return;
   }
-  let decoded: { must_change_password?: boolean };
+  let decoded: { id?: number; role?: string; must_change_password?: boolean };
   try {
     decoded = jwt.verify(token, JWT_SECRET as string, { algorithms: ['HS256'] }) as {
+      id?: number;
+      role?: string;
       must_change_password?: boolean;
     };
   } catch {
@@ -56,7 +58,9 @@ router.get('/stream', async (req: Request, res: Response) => {
     res.status(401).json({ success: false, error: 'Token invalide' });
     return;
   }
-  NotificationService.addClient(req, res);
+  // Le rôle est mémorisé avec le client : les événements porteurs de montants ne
+  // sont poussés qu'aux rôles qui y ont accès dans l'application.
+  NotificationService.addClient(req, res, { id: decoded.id ?? 0, role: decoded.role ?? '' });
 });
 
 // Endpoint pour récupérer l'état du service (admin/manager-only)

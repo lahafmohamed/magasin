@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { DatePicker } from '@/components/ui/date-picker';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Spinner } from '@/components/ui/loading';
-import { ArrowLeft, Search, Minus, Plus, X, AlertCircle, ScanLine, ShoppingCart } from 'lucide-react';
+import { ArrowLeft, Search, Minus, Plus, X, AlertCircle, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
 import { getValidSalePrice } from '../utils/salesPrice';
 import { getErrorMessage } from '@/utils/errors';
@@ -246,6 +246,20 @@ export default function NouvelleFacture() {
     setShowProduitDropdown(false);
   };
 
+  // Douchette code-barres : le scanner tape le code puis Entrée dans le champ de
+  // recherche. Un code-barres est unique, donc une correspondance exacte est sans
+  // ambiguïté — on ajoute la ligne directement au lieu d'obliger à cliquer.
+  useEffect(() => {
+    const scanned = produitSearch.trim();
+    if (!scanned) return;
+    const match = produits.find((p) => p.code_barre && p.code_barre === scanned);
+    if (match) {
+      setProduits([]);
+      addProduit(match);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [produits, produitSearch]);
+
   const removeLigne = (idx: number) => remove(idx);
 
   const totals = useMemo(() => {
@@ -454,12 +468,6 @@ export default function NouvelleFacture() {
                   · {lignes.length}
                 </span>
               </h2>
-              <button
-                type="button"
-                className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-              >
-                <ScanLine className="h-3.5 w-3.5" /> Scanner code-barres
-              </button>
             </div>
 
             <Label
@@ -473,7 +481,7 @@ export default function NouvelleFacture() {
               <input
                 id="facture-produit-search"
                 className="w-full pl-10 pr-3 py-2.5 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="Rechercher un produit par nom ou référence…"
+                placeholder="Rechercher un produit par nom, référence ou code-barres…"
                 value={produitSearch}
                 onChange={(e) => {
                   setProduitSearch(e.target.value);

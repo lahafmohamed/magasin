@@ -8,6 +8,7 @@ import { ArrowLeft, Check, Plus, X } from 'lucide-react';
 import { creditNoteService, factureService } from '@/services/api';
 import { formatCurrency } from '@/utils/format';
 import { getErrorMessage } from '@/utils/errors';
+import { AVOIR_TYPES, AVOIR_TYPE_LABELS } from '@/utils/avoirTypes';
 import { DocumentPicker, DocumentOption } from '@/components/DocumentPicker';
 import { useDraft } from '@/hooks/useDraft';
 import { TiersPicker } from '@/components/TiersPicker';
@@ -16,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
@@ -31,7 +33,8 @@ const avoirSchema = z.object({
     .refine((t) => !!t?.id, 'Le tiers (client) est obligatoire'),
   factureId: z
     .string()
-    .refine((v) => Number(v) > 0, "La facture d origine est obligatoire"),
+    .refine((v) => Number(v) > 0, "La facture d'origine est obligatoire"),
+  avoirType: z.enum(AVOIR_TYPES),
   notes: z.string().optional(),
   lignes: z.array(ligneSchema).min(1, 'Ajoutez au moins une ligne'),
 });
@@ -68,6 +71,7 @@ export default function NouvelAvoir() {
     defaultValues: {
       tiers: null,
       factureId: '',
+      avoirType: 'retour',
       notes: '',
       lignes: [{ description: '', quantite: 1, prix_unitaire: 0 }],
     },
@@ -114,13 +118,13 @@ export default function NouvelAvoir() {
           prix_unitaire: Number(ligne.prix_unitaire),
         })),
         notes: values.notes || undefined,
-        avoir_type: 'erreur',
+        avoir_type: values.avoirType,
       });
       clear();
       toast.success('Avoir créé avec succès');
       navigate('/avoirs');
     } catch (error) {
-      toast.error(getErrorMessage(error, 'Erreur lors de la création de l avoir'));
+      toast.error(getErrorMessage(error, "Erreur lors de la création de l'avoir"));
     } finally {
       setSubmitting(false);
     }
@@ -172,7 +176,7 @@ export default function NouvelAvoir() {
         <Card>
           <CardHeader>
             <CardTitle>Références</CardTitle>
-            <CardDescription>Un avoir doit être lié à une facture d origine</CardDescription>
+            <CardDescription>Un avoir doit être lié à une facture d'origine</CardDescription>
           </CardHeader>
           <CardContent className="grid sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
@@ -193,7 +197,7 @@ export default function NouvelAvoir() {
               )}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="avoir-facture-origine">Facture d origine<span className="text-destructive"> *</span></Label>
+              <Label htmlFor="avoir-facture-origine">Facture d'origine<span className="text-destructive"> *</span></Label>
               <Controller
                 control={control}
                 name="factureId"
@@ -216,6 +220,30 @@ export default function NouvelAvoir() {
                   {errors.factureId.message}
                 </p>
               )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="avoir-type">Motif de l'avoir<span className="text-destructive"> *</span></Label>
+              <Controller
+                control={control}
+                name="avoirType"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger id="avoir-type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {AVOIR_TYPES.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {AVOIR_TYPE_LABELS[t]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              <p className="text-xs text-muted-foreground">
+                Sert à retrouver et filtrer les avoirs par motif dans la liste.
+              </p>
             </div>
           </CardContent>
         </Card>

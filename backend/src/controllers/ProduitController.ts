@@ -13,6 +13,14 @@ import { AuthRequest } from '../middleware/auth';
 import { logAudit } from '../middleware/audit';
 import { parsePagination } from '../utils/pagination';
 
+/** `produits` carries two UNIQUE columns — name the offending one. */
+function uniqueViolationMessage(error: { constraint?: string }): string {
+  if (error.constraint?.includes('code_barre')) {
+    return 'Ce code-barres est déjà attribué à un autre produit';
+  }
+  return 'Cette référence existe déjà';
+}
+
 export class ProduitController {
 
   /**
@@ -178,7 +186,7 @@ export class ProduitController {
       res.status(201).json(successResponse(produit, 'Produit créé'));
     } catch (error: any) {
       if (error.code === '23505') {
-        res.status(400).json({ success: false, error: 'Cette référence existe déjà' });
+        res.status(400).json({ success: false, error: uniqueViolationMessage(error) });
         return;
       }
       if (error.message === 'Depot invalide ou inactif' || error.message === 'Stock initial invalide') {
@@ -220,6 +228,10 @@ export class ProduitController {
     } catch (error: any) {
       if (error.message === 'Aucun champ à mettre à jour') {
         res.status(400).json({ success: false, error: error.message });
+        return;
+      }
+      if (error.code === '23505') {
+        res.status(400).json({ success: false, error: uniqueViolationMessage(error) });
         return;
       }
       loggerError('PUT /api/produits/:id', error);

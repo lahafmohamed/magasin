@@ -97,6 +97,7 @@ export default function Inventaire() {
   const [formData, setFormData] = useState({
     reference: '',
     nom: '',
+    code_barre: '',
     description: '',
     categorie: '',
     prix_achat: 0,
@@ -251,6 +252,7 @@ export default function Inventaire() {
         await produitService.update(editingProduit.id, {
           reference,
           nom,
+          code_barre: formData.code_barre.trim(),
           description: formData.description,
           categorie: formData.categorie,
           prix_achat: formData.prix_achat,
@@ -263,6 +265,7 @@ export default function Inventaire() {
         await produitService.create({
           reference,
           nom,
+          code_barre: formData.code_barre.trim(),
           description: formData.description,
           categorie: formData.categorie,
           prix_achat: formData.prix_achat,
@@ -289,6 +292,7 @@ export default function Inventaire() {
     setFormData({
       reference: produit.reference,
       nom: produit.nom,
+      code_barre: produit.code_barre || '',
       description: produit.description || '',
       categorie: produit.categorie || '',
       prix_achat: parseFloat(produit.prix_achat as any) || 0,
@@ -413,6 +417,7 @@ export default function Inventaire() {
     setFormData({
       reference: '',
       nom: '',
+      code_barre: '',
       description: '',
       categorie: '',
       prix_achat: 0,
@@ -489,7 +494,7 @@ export default function Inventaire() {
   };
 
   const exportToCSV = () => {
-    const headers = ['Référence', 'Nom', 'Catégorie', 'Prix Achat', 'Prix Vente', 'Marge', 'Stock', 'Stock Min'];
+    const headers = ['Référence', 'Code-barres', 'Nom', 'Catégorie', 'Prix Achat', 'Prix Vente', 'Marge', 'Stock', 'Stock Min'];
     const rows = produits.map(p => {
       const prixAchat = parseFloat(p.prix_achat as any) || 0;
       const prixVente = parseFloat(p.prix_vente as any) || 0;
@@ -497,6 +502,7 @@ export default function Inventaire() {
       const margePercent = prixAchat > 0 ? ((marge / prixAchat) * 100).toFixed(1) : '0';
       return [
         p.reference,
+        p.code_barre || '',
         p.nom,
         p.categorie || '',
         prixAchat.toFixed(2),
@@ -565,6 +571,11 @@ export default function Inventaire() {
         </TableCell>
         <TableCell className="font-semibold">
           <span className="font-semibold">{p.nom}</span>
+          {p.code_barre && (
+            <span className="block text-xs font-mono font-normal text-muted-foreground">
+              Code-barres {p.code_barre}
+            </span>
+          )}
         </TableCell>
         <TableCell>
           {p.categorie
@@ -589,7 +600,7 @@ export default function Inventaire() {
             </span>
           )}
         </TableCell>
-        <TableCell>{getStockBadge(stock, stockMin)}</TableCell>
+        <TableCell className="text-right">{getStockBadge(stock, stockMin)}</TableCell>
 
         <TableCell className="text-right">
           <div className="flex justify-end gap-0.5">
@@ -749,7 +760,7 @@ export default function Inventaire() {
             <div className="relative flex-1 min-w-[250px]">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Rechercher par nom ou référence..."
+                  placeholder="Rechercher par nom, référence ou code-barres…"
                   className="pl-12 sm:pl-12 h-10"
                   value={search}
                   onChange={(e) => { setSearch(e.target.value); setPage(1); }}
@@ -926,8 +937,20 @@ export default function Inventaire() {
                   required
                   value={formData.nom}
                   onChange={(e) => setFormData({ ...formData, nom: e.target.value })}
-                  placeholder="Nom du produit"
+                  placeholder="Ex : Clavier Logitech K120"
                 />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="code_barre">Code-barres</Label>
+                <Input
+                  id="code_barre"
+                  value={formData.code_barre}
+                  onChange={(e) => setFormData({ ...formData, code_barre: e.target.value })}
+                  placeholder="Douchette ou saisie — ex : 3245678901234"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Permet de retrouver le produit en le scannant lors d'une vente.
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="categorie">Catégorie</Label>
@@ -935,7 +958,7 @@ export default function Inventaire() {
                   id="categorie"
                   value={formData.categorie}
                   onChange={(e) => setFormData({ ...formData, categorie: e.target.value })}
-                  placeholder="Catégorie"
+                  placeholder="Ex : Périphériques"
                 />
               </div>
               <div className="space-y-2">
@@ -1095,7 +1118,7 @@ export default function Inventaire() {
                   <SortableHeader columnKey="categorie" sort={sortState} onSort={handleSort}>Catégorie</SortableHeader>
                   <SortableHeader columnKey="prix_vente" sort={sortState} onSort={handleSort} align="right">Prix Vente</SortableHeader>
                   <TableHead className="text-right">Marge</TableHead>
-                  <SortableHeader columnKey="stock" sort={sortState} onSort={handleSort}>Stock</SortableHeader>
+                  <SortableHeader columnKey="stock" sort={sortState} onSort={handleSort} align="right">Stock</SortableHeader>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>

@@ -24,6 +24,8 @@ import {
   PenSquare,
   LineChart,
   History,
+  Undo2,
+  PhoneCall,
 } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 
@@ -68,6 +70,7 @@ export function useNavCategories(): NavCategory[] {
         { path: '/devis', label: 'Devis', icon: FilePlus },
         { path: '/bons-livraison', label: 'Bons de Livraison', icon: FileCheck },
         ...((isAdminOrManager) ? [
+          { path: '/retours', label: 'Retours clients', icon: Undo2 },
           { path: '/avoirs', label: 'Avoirs', icon: FileX },
         ] : []),
       ],
@@ -91,6 +94,7 @@ export function useNavCategories(): NavCategory[] {
       icon: Users,
       items: [
         { path: '/tiers', label: 'Contacts', icon: UserCheck },
+        { path: '/relances', label: 'Relances clients', icon: PhoneCall },
         { path: '/clients/analytics', label: 'Analyse clients', icon: LineChart },
         { path: '/employes', label: 'Employés', icon: UserCheck },
         { path: '/paie', label: 'Paie', icon: UserCheck },

@@ -6,6 +6,7 @@ export interface ProduitRecord {
   id: number;
   reference: string;
   nom: string;
+  code_barre: string | null;
   description: string | null;
   categorie: string | null;
   prix_achat: string;
@@ -20,6 +21,7 @@ export interface ProduitRecord {
 export interface CreateProduitInput {
   reference: string;
   nom: string;
+  code_barre?: string;
   description?: string;
   categorie?: string;
   prix_achat: number;
@@ -35,6 +37,7 @@ export interface CreateProduitInput {
 export interface UpdateProduitInput {
   reference?: string;
   nom?: string;
+  code_barre?: string | null;
   description?: string;
   categorie?: string;
   prix_achat?: number;
@@ -45,9 +48,18 @@ export interface UpdateProduitInput {
   modifie_par?: number;
 }
 
+/**
+ * `produits.code_barre` is UNIQUE, so a blank barcode must land as NULL —
+ * two products saved with '' would collide on the constraint.
+ */
+function normalizeCodeBarre(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
 export class ProduitService extends BaseService<ProduitRecord> {
   protected tableName = 'produits';
-  protected selectColumns = 'id, reference, nom, description, categorie, prix_achat, prix_vente, stock, stock_min, fournisseur_id, created_at, updated_at';
+  protected selectColumns = 'id, reference, nom, code_barre, description, categorie, prix_achat, prix_vente, stock, stock_min, fournisseur_id, created_at, updated_at';
   protected defaultSortColumn = 'nom';
   protected allowedSortColumns = ['nom', 'reference', 'categorie', 'prix_vente', 'stock', 'created_at'];
 
@@ -94,8 +106,8 @@ export class ProduitService extends BaseService<ProduitRecord> {
       for (const word of words) {
         const pattern = `%${word}%`;
         const n = params.length;
-        baseQuery += ` AND (p.nom ILIKE $${n + 1} OR p.reference ILIKE $${n + 2} OR COALESCE(p.categorie,'') ILIKE $${n + 3} OR COALESCE(p.description,'') ILIKE $${n + 4})`;
-        params.push(pattern, pattern, pattern, pattern);
+        baseQuery += ` AND (p.nom ILIKE $${n + 1} OR p.reference ILIKE $${n + 2} OR COALESCE(p.categorie,'') ILIKE $${n + 3} OR COALESCE(p.description,'') ILIKE $${n + 4} OR COALESCE(p.code_barre,'') = $${n + 5})`;
+        params.push(pattern, pattern, pattern, pattern, word);
       }
     }
 
@@ -107,8 +119,8 @@ export class ProduitService extends BaseService<ProduitRecord> {
     const havingClause = lowStock ? ' HAVING COALESCE(SUM(spl.quantite), 0) <= p.stock_min' : '';
 
     const dataQuery = `
-      SELECT p.id, p.reference, p.nom, p.description, p.categorie, 
-             p.prix_achat, p.prix_vente, 
+      SELECT p.id, p.reference, p.nom, p.code_barre, p.description, p.categorie,
+             p.prix_achat, p.prix_vente,
              COALESCE(SUM(spl.quantite), 0)::integer as stock,
              p.stock_min, p.created_at, p.updated_at
       ${baseQuery}
@@ -192,12 +204,13 @@ export class ProduitService extends BaseService<ProduitRecord> {
       const initialProductStock = effectiveLocationId ? 0 : requestedInitialStock;
 
       const { rows: insertRows } = await client.query(
-        `INSERT INTO produits (reference, nom, description, categorie, prix_achat, prix_vente, stock, stock_min, fournisseur_id, cree_par)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO produits (reference, nom, code_barre, description, categorie, prix_achat, prix_vente, stock, stock_min, fournisseur_id, cree_par)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *`,
         [
           input.reference,
           input.nom,
+          normalizeCodeBarre(input.code_barre),
           input.description || null,
           input.categorie || null,
           input.prix_achat,
@@ -245,6 +258,7 @@ export class ProduitService extends BaseService<ProduitRecord> {
 
     if (input.reference !== undefined) { fields.push(`reference = $${paramIndex++}`); params.push(input.reference); }
     if (input.nom !== undefined) { fields.push(`nom = $${paramIndex++}`); params.push(input.nom); }
+    if (input.code_barre !== undefined) { fields.push(`code_barre = $${paramIndex++}`); params.push(normalizeCodeBarre(input.code_barre)); }
     if (input.description !== undefined) { fields.push(`description = $${paramIndex++}`); params.push(input.description || null); }
     if (input.categorie !== undefined) { fields.push(`categorie = $${paramIndex++}`); params.push(input.categorie || null); }
     if (input.prix_achat !== undefined) { fields.push(`prix_achat = $${paramIndex++}`); params.push(input.prix_achat); }
@@ -441,39 +455,41 @@ export class ProduitService extends BaseService<ProduitRecord> {
 
     try {
       const { rows } = await pool.query(
-        `SELECT 
-          p.id, 
-          p.reference, 
-          p.nom, 
-          p.description, 
-          p.categorie, 
-          p.prix_achat, 
+        `SELECT
+          p.id,
+          p.reference,
+          p.nom,
+          p.code_barre,
+          p.description,
+          p.categorie,
+          p.prix_achat,
           p.prix_vente,
           p.stock,
-          p.stock_min, 
-          p.created_at, 
+          p.stock_min,
+          p.created_at,
           p.updated_at,
-          GREATEST(
+          CASE WHEN p.code_barre = $1 THEN 1 ELSE GREATEST(
             similarity(p.nom, $1),
             similarity(p.reference, $1) * 0.9,
             similarity(COALESCE(p.description, ''), $1) * 0.7,
             similarity(COALESCE(p.categorie, ''), $1) * 0.5
-          ) as similarity
+          ) END as similarity
         FROM produits p
         WHERE p.deleted_at IS NULL
           AND (
-            p.nom % $1 
-            OR p.reference % $1 
+            p.nom % $1
+            OR p.reference % $1
             OR COALESCE(p.description, '') % $1
             OR p.nom ILIKE '%' || $1 || '%'
             OR p.reference ILIKE '%' || $1 || '%'
+            OR p.code_barre = $1
           )
-          AND GREATEST(
+          AND (p.code_barre = $1 OR GREATEST(
             similarity(p.nom, $1),
             similarity(p.reference, $1) * 0.9,
             similarity(COALESCE(p.description, ''), $1) * 0.7,
             similarity(COALESCE(p.categorie, ''), $1) * 0.5
-          ) > $2
+          ) > $2)
         ORDER BY similarity DESC, p.nom ASC
         LIMIT $3`,
         [searchTerm, threshold, limit]
@@ -483,27 +499,29 @@ export class ProduitService extends BaseService<ProduitRecord> {
       // Fallback to simple ILIKE search if pg_trgm is not available
       if (error.message?.includes('similarity') || error.message?.includes('operator does not exist')) {
         const { rows } = await pool.query(
-          `SELECT 
-            p.id, 
-            p.reference, 
-            p.nom, 
-            p.description, 
-            p.categorie, 
-            p.prix_achat, 
+          `SELECT
+            p.id,
+            p.reference,
+            p.nom,
+            p.code_barre,
+            p.description,
+            p.categorie,
+            p.prix_achat,
             p.prix_vente,
             p.stock,
-            p.stock_min, 
-            p.created_at, 
+            p.stock_min,
+            p.created_at,
             p.updated_at,
-            0.5 as similarity
+            CASE WHEN p.code_barre = $1 THEN 1 ELSE 0.5 END as similarity
           FROM produits p
           WHERE p.deleted_at IS NULL
             AND (
               p.nom ILIKE '%' || $1 || '%'
               OR p.reference ILIKE '%' || $1 || '%'
               OR COALESCE(p.description, '') ILIKE '%' || $1 || '%'
+              OR p.code_barre = $1
             )
-          ORDER BY p.nom ASC
+          ORDER BY similarity DESC, p.nom ASC
           LIMIT $2`,
           [searchTerm, limit]
         );

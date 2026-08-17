@@ -6,6 +6,7 @@ import { ClientAllocationService } from './ClientAllocationService';
 import { logger } from '../utils/logger';
 import { logAudit } from '../middleware/audit';
 import { PAYMENT_METHODS, PaymentMethod } from '../utils/paymentMethods';
+import { NotificationService } from './NotificationService';
 
 // Payment methods now live in utils/paymentMethods so non-service layers can
 // import them without a cycle. Re-exported here for existing importers.
@@ -97,7 +98,7 @@ export class PaiementService {
 
       // Lock facture row to serialize concurrent payments
       const { rows: factureRows } = await client.query(
-        `SELECT id, tiers_id, statut, location_id, total, montant_paye,
+        `SELECT id, numero_facture, tiers_id, statut, location_id, total, montant_paye,
                 GREATEST(total - montant_paye, 0) AS remaining
          FROM factures WHERE id = $1 FOR UPDATE`,
         [factureId]
@@ -261,6 +262,15 @@ export class PaiementService {
         record_id: directPaiementId ?? applications[0]?.paiement_id ?? factureId,
         new_values: { facture_id: factureId, montant: montantNum, methode_paiement, applique_depuis_acomptes: appliedFromAcomptes },
       });
+
+      // Notification après COMMIT, non bloquante (cf. FactureService.create).
+      NotificationService.safely(() =>
+        NotificationService.paymentReceived({
+          facture_numero: factureRows[0].numero_facture,
+          montant: montantNum,
+          methode: methode_paiement,
+        })
+      );
 
       return {
         facture_id: factureId,

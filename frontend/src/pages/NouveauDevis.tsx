@@ -256,6 +256,19 @@ export default function NouveauDevis() {
     setShowProduitDropdown(false);
   };
 
+  // Douchette code-barres : un code scanné est unique, donc une correspondance
+  // exacte est sans ambiguïté — la ligne est ajoutée sans clic supplémentaire.
+  useEffect(() => {
+    const scanned = produitSearch.trim();
+    if (!scanned) return;
+    const match = produits.find((p) => p.code_barre && p.code_barre === scanned);
+    if (match) {
+      setProduits([]);
+      addProduit(match);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [produits, produitSearch]);
+
   const updateQuantite = (index: number, quantite: number) => {
     setValue(`lignes.${index}.quantite`, quantite, { shouldValidate: true, shouldDirty: true });
   };
@@ -434,7 +447,7 @@ export default function NouveauDevis() {
               <input
                 id="devis-produit-search"
                 className="w-full pl-10 pr-3 py-2.5 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="Rechercher un produit par nom ou référence…"
+                placeholder="Rechercher un produit par nom, référence ou code-barres…"
                 value={produitSearch}
                 onChange={(e) => {
                   setProduitSearch(e.target.value);

@@ -126,6 +126,13 @@ export default function DepensesV2() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
 
+  // Filtres de liste (appliqués côté serveur)
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [filterCategorie, setFilterCategorie] = useState('');
+  const [dateDebut, setDateDebut] = useState('');
+  const [dateFin, setDateFin] = useState('');
+
   // Dialog
   const [openDialog, setOpenDialog] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -147,14 +154,23 @@ export default function DepensesV2() {
     loadCategories();
   }, []);
 
-  // Load session and depenses when magasin / page / limit change
+  // Load session and depenses when magasin / page / limit / filtres changent
   useEffect(() => {
     if (selectedMagasin) {
       loadSessionActive(selectedMagasin);
       loadDepenses();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMagasin, page, limit]);
+  }, [selectedMagasin, page, limit, debouncedSearch, filterCategorie, dateDebut, dateFin]);
+
+  // Recherche serveur (n° de dépense, description), débouncée.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const loadMagasins = async () => {
     try {
@@ -196,9 +212,16 @@ export default function DepensesV2() {
     setLoading(true);
     setError(null);
     try {
-      const { data } = await api.get(
-        `/depenses?magasin_id=${selectedMagasin}&page=${page}&limit=${limit}`
-      );
+      const params = new URLSearchParams({
+        magasin_id: String(selectedMagasin),
+        page: String(page),
+        limit: String(limit),
+      });
+      if (debouncedSearch) params.append('search', debouncedSearch);
+      if (filterCategorie) params.append('categorie_id', filterCategorie);
+      if (dateDebut) params.append('date_debut', dateDebut);
+      if (dateFin) params.append('date_fin', dateFin);
+      const { data } = await api.get(`/depenses?${params}`);
       const rows: Depense[] = Array.isArray(data) ? data : [];
       setDepenses(rows);
       // Number() défensif : NUMERIC Postgres peut arriver en string selon l'endpoint
@@ -464,7 +487,7 @@ export default function DepensesV2() {
                       <div>
                         <p className="text-success-800 font-medium">Cette dépense sera liée à la caisse</p>
                         <p className="text-success-700 text-sm">
-                          Elle décrémentera le solde de la caisse ouverte du magasin.
+                          Elle sera déduite du solde de la caisse ouverte du magasin.
                         </p>
                       </div>
                     </div>
@@ -523,7 +546,7 @@ export default function DepensesV2() {
                       <SelectContent>
                         {PAYMENT_METHODS.map((m) => (
                           <SelectItem key={m} value={m}>
-                            {m === 'espece' ? 'Espèces (décrémente la caisse)' : formatPaymentMethod(m)}
+                            {m === 'espece' ? 'Espèces (déduites de la caisse)' : formatPaymentMethod(m)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -573,6 +596,77 @@ export default function DepensesV2() {
         </Card>
       </div>
 
+      {/* Filtres de liste */}
+      {selectedMagasin && (
+        <Card className="p-4 mb-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+            <div className="flex-1 min-w-[220px] space-y-1.5">
+              <Label htmlFor="depense-search">Rechercher</Label>
+              <Input
+                id="depense-search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="N° de dépense ou description…"
+              />
+            </div>
+            <div className="w-full sm:w-56 space-y-1.5">
+              <Label htmlFor="depense-filtre-categorie">Catégorie</Label>
+              <Select
+                value={filterCategorie === '' ? '__all' : filterCategorie}
+                onValueChange={(v) => {
+                  setFilterCategorie(v === '__all' ? '' : v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger id="depense-filtre-categorie">
+                  <SelectValue placeholder="Toutes les catégories" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all">Toutes les catégories</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)}>
+                      {c.nom}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-full sm:w-44 space-y-1.5">
+              <Label htmlFor="depense-date-debut">Du</Label>
+              <Input
+                id="depense-date-debut"
+                type="date"
+                value={dateDebut}
+                onChange={(e) => { setDateDebut(e.target.value); setPage(1); }}
+              />
+            </div>
+            <div className="w-full sm:w-44 space-y-1.5">
+              <Label htmlFor="depense-date-fin">Au</Label>
+              <Input
+                id="depense-date-fin"
+                type="date"
+                value={dateFin}
+                onChange={(e) => { setDateFin(e.target.value); setPage(1); }}
+              />
+            </div>
+            {(search || filterCategorie || dateDebut || dateFin) && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setSearch('');
+                  setFilterCategorie('');
+                  setDateDebut('');
+                  setDateFin('');
+                  setPage(1);
+                }}
+              >
+                Effacer les filtres
+              </Button>
+            )}
+          </div>
+        </Card>
+      )}
+
       {/* Depenses list */}
       <Card>
         <QueryState
@@ -582,8 +676,20 @@ export default function DepensesV2() {
           onRetry={loadDepenses}
           skeleton={<TableSkeleton rows={8} columns={9} />}
           emptyIcon={Receipt}
-          emptyTitle={selectedMagasin ? 'Aucune dépense trouvée' : 'Sélectionnez un magasin'}
-          emptyDescription={selectedMagasin ? undefined : 'Choisissez un magasin pour afficher ses dépenses.'}
+          emptyTitle={
+            !selectedMagasin
+              ? 'Sélectionnez un magasin'
+              : search || filterCategorie || dateDebut || dateFin
+              ? 'Aucune dépense ne correspond aux filtres'
+              : 'Aucune dépense trouvée'
+          }
+          emptyDescription={
+            !selectedMagasin
+              ? 'Choisissez un magasin pour afficher ses dépenses.'
+              : search || filterCategorie || dateDebut || dateFin
+              ? 'Élargissez la période ou effacez les filtres.'
+              : undefined
+          }
         >
           <ResponsiveTable
             table={
