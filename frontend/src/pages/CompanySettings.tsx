@@ -207,7 +207,7 @@ export default function CompanySettingsPage() {
                   <Label htmlFor="taux_conversion">Taux de conversion (1 FCFA → devise)</Label>
                   <Input
                     id="taux_conversion"
-                    type="number"
+                    type="number" inputMode="decimal"
                     step="0.0001"
                     min="0.0001"
                     value={settings.taux_conversion}
@@ -326,7 +326,7 @@ export default function CompanySettingsPage() {
           <div className="flex justify-end gap-3">
             <Button type="submit" disabled={saving} className="gap-2">
               {saving ? <Spinner /> : <Save className="h-4 w-4" />}
-              {saving ? 'Enregistrement...' : 'Enregistrer'}
+              {saving ? 'Enregistrement…' : 'Enregistrer'}
             </Button>
           </div>
         </form>

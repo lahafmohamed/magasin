@@ -122,7 +122,7 @@ export function NotificationBell() {
                         <Icon className="h-4 w-4" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{notification.numero}</p>
+                        <p className="text-sm font-medium truncate" title={notification.numero}>{notification.numero}</p>
                         <p className="text-xs text-muted-foreground line-clamp-2">
                           {notification.message}
                         </p>

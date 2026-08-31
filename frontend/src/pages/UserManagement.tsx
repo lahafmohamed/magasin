@@ -235,7 +235,7 @@ export default function UserManagement() {
           <div className="relative w-full md:w-64">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Rechercher..."
+              placeholder="Rechercher…"
               className="pl-8"
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
@@ -438,7 +438,7 @@ export default function UserManagement() {
                 Annuler
               </Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? <><Spinner className="mr-2" /> Enregistrement...</> : 'Enregistrer'}
+                {submitting ? <><Spinner className="mr-2" /> Enregistrement…</> : 'Enregistrer'}
               </Button>
             </DialogFooter>
           </form>

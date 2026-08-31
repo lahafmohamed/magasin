@@ -33,11 +33,25 @@ export default {
         warning: semanticRamp("warning"),
         danger: semanticRamp("danger"),
         info: semanticRamp("info"),
+        // Palette catégorielle — pour distinguer N éléments entre eux (méthodes
+        // de paiement, types de mouvement), sans valeur de statut. Adossée aux
+        // mêmes variables que les graphiques, déjà réglées par thème dans
+        // index.css. Usage badge : `bg-chart-3/15 text-chart-3`.
+        chart: {
+          1: "hsl(var(--chart-1) / <alpha-value>)",
+          2: "hsl(var(--chart-2) / <alpha-value>)",
+          3: "hsl(var(--chart-3) / <alpha-value>)",
+          4: "hsl(var(--chart-4) / <alpha-value>)",
+          5: "hsl(var(--chart-5) / <alpha-value>)",
+          6: "hsl(var(--chart-6) / <alpha-value>)",
+          7: "hsl(var(--chart-7) / <alpha-value>)",
+        },
+        // Marque. La rampe 50..900 suit le même contrat inversé que ci-dessus :
+        // elle était codée en hex ici, donc `bg-primary-500` rendait le même
+        // bleu foncé dans les deux thèmes.
         primary: {
-          DEFAULT: "hsl(var(--primary))",
+          ...semanticRamp("primary"),
           foreground: "hsl(var(--primary-foreground))",
-          50: "#EFF6FF", 100: "#DBEAFE", 200: "#BFDBFE",
-          500: "#1D4ED8", 600: "#1E40AF", 700: "#1E3A8A", 900: "#172554",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",

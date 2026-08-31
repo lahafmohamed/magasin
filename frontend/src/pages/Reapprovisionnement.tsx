@@ -187,7 +187,7 @@ export default function Reapprovisionnement() {
                   <TableCell className="text-right num">{formatFCFA(Number(r.prix_achat))}</TableCell>
                   <TableCell className="text-right">
                     <Input
-                      type="number"
+                      type="number" inputMode="numeric"
                       min={1}
                       value={r.quantite}
                       onChange={(e) => setRow(r.produit_id, { quantite: Math.max(1, parseInt(e.target.value) || 1) })}

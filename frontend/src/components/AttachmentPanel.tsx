@@ -110,7 +110,7 @@ export function AttachmentPanel({ entityType, entityId }: { entityType: string; 
               <li key={a.id} className="flex items-center gap-3 py-2">
                 <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm truncate">{a.filename}</p>
+                  <p className="text-sm truncate" title={a.filename}>{a.filename}</p>
                   <p className="text-xs text-muted-foreground">{fmtSize(a.taille)} · {new Date(a.created_at).toLocaleDateString('fr-FR')}{a.cree_par_nom ? ` · ${a.cree_par_nom}` : ''}</p>
                 </div>
                 <Button size="icon" variant="ghost" aria-label={`Télécharger ${a.filename}`} title="Télécharger" onClick={() => attachmentService.download(a.id, a.filename)}>

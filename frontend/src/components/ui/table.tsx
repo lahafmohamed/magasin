@@ -61,7 +61,9 @@ const TableRow = React.forwardRef<
   <tr
     ref={ref}
     className={cn(
-      "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
+      // Pas de `transition-colors` ici : le survol de ligne est une interaction
+      // haute fréquence, il doit être instantané.
+      "border-b hover:bg-muted/50 data-[state=selected]:bg-muted",
       className
     )}
     {...props}
@@ -90,7 +92,12 @@ const TableCell = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <td
     ref={ref}
-    className={cn("p-2 sm:p-4 align-middle [&:has([role=checkbox])]:pr-0 text-xs sm:text-sm", className)}
+    // `tabular-nums` par défaut : dans un tableau, les chiffres doivent
+    // s'aligner en colonne. Évite d'avoir à penser à `.num` sur chaque montant.
+    className={cn(
+      "p-2 sm:p-4 align-middle [&:has([role=checkbox])]:pr-0 text-xs sm:text-sm tabular-nums",
+      className
+    )}
     {...props}
   />
 ))

@@ -70,7 +70,7 @@ describe('NouvelleFacture', () => {
   it('renders the invoice creation page', () => {
     renderNouvelleFacture();
 
-    expect(screen.getByText('Nouvelle Facture')).toBeInTheDocument();
+    expect(screen.getByText('Nouvelle facture')).toBeInTheDocument();
     // Client selection now delegates to the TiersPicker under the "Client (Tiers)" section.
     expect(screen.getByText(/Client \(Tiers\)/i)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/Rechercher un produit/i)).toBeInTheDocument();

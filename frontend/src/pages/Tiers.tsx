@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Pagination } from '@/components/ui/pagination';
@@ -20,6 +19,7 @@ import { getErrorMessage } from '@/utils/errors';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
 import { ListSkeleton } from '@/components/ui/skeleton';
 import { QueryState } from '@/components/ui/query-state';
+import { TiersRoleBadge } from '@/components/TiersRoleBadge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -226,7 +226,7 @@ export default function TiersPage() {
             <div className="relative max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
-                placeholder="Nom, téléphone, NIF, code..."
+                placeholder="Nom, téléphone, NIF, code…"
                 value={search}
                 onChange={e => { setSearch(e.target.value); setPage(1); }}
                 className="pl-10 sm:pl-10"
@@ -256,8 +256,8 @@ export default function TiersPage() {
                       title={<span>{t.raison_sociale}</span>}
                       badge={
                         <div className="flex gap-1">
-                          {t.est_client && <Badge variant="outline" className="text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 text-xs py-0">Client</Badge>}
-                          {t.est_fournisseur && <Badge variant="outline" className="text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30 bg-orange-50 dark:bg-orange-500/10 text-xs py-0">Fourn.</Badge>}
+                          {t.est_client && <TiersRoleBadge role="client" className="py-0" />}
+                          {t.est_fournisseur && <TiersRoleBadge role="fournisseur" className="py-0" />}
                         </div>
                       }
                     >
@@ -330,8 +330,8 @@ export default function TiersPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        {t.est_client && <Badge variant="outline" className="text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 text-xs py-0">Client</Badge>}
-                        {t.est_fournisseur && <Badge variant="outline" className="text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30 bg-orange-50 dark:bg-orange-500/10 text-xs py-0">Fourn.</Badge>}
+                        {t.est_client && <TiersRoleBadge role="client" className="py-0" />}
+                        {t.est_fournisseur && <TiersRoleBadge role="fournisseur" className="py-0" />}
                       </div>
                     </TableCell>
                     <TableCell className="text-right text-sm">
@@ -465,7 +465,7 @@ export default function TiersPage() {
                 <Label htmlFor="tiers-credit-max">Plafond de crédit (max: 15 000 000 FCFA)</Label>
                 <Input
                   id="tiers-credit-max"
-                  type="number"
+                  type="number" inputMode="decimal"
                   min="0"
                   max="15000000"
                   value={formData.credit_max}
@@ -501,7 +501,7 @@ export default function TiersPage() {
                     aria-invalid={!!formErrors.roles}
                     aria-describedby={formErrors.roles ? 'tiers-roles-error' : undefined}
                   />
-                  <span className="text-sm flex items-center gap-1"><Users className="h-3.5 w-3.5 text-blue-600" /> Client</span>
+                  <span className="text-sm flex items-center gap-1"><Users className="h-3.5 w-3.5 text-info-600" /> Client</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -515,7 +515,7 @@ export default function TiersPage() {
                     aria-invalid={!!formErrors.roles}
                     aria-describedby={formErrors.roles ? 'tiers-roles-error' : undefined}
                   />
-                  <span className="text-sm flex items-center gap-1"><Truck className="h-3.5 w-3.5 text-orange-600" /> Fournisseur</span>
+                  <span className="text-sm flex items-center gap-1"><Truck className="h-3.5 w-3.5 text-warning-600" /> Fournisseur</span>
                 </label>
               </div>
               {formErrors.roles && (
@@ -530,7 +530,7 @@ export default function TiersPage() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Annuler</Button>
-              <Button type="submit" disabled={saving}>{saving ? 'Enregistrement...' : editing ? 'Modifier' : 'Créer'}</Button>
+              <Button type="submit" disabled={saving}>{saving ? 'Enregistrement…' : editing ? 'Modifier' : 'Créer'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>

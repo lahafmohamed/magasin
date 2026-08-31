@@ -152,7 +152,7 @@ export function DemandeDecisionDialog({ demande, onClose, onSubmit, loading }: D
               <div className="flex items-center gap-2">
                 <Label className="text-xs">Approuvée:</Label>
                 <Input
-                  type="number"
+                  type="number" inputMode="numeric"
                   min={0}
                   max={ligne.quantite_demandee}
                   value={ligneDecisions[ligne.id]}
@@ -182,7 +182,7 @@ export function DemandeDecisionDialog({ demande, onClose, onSubmit, loading }: D
             </Label>
             <Textarea
               id="raison_refus"
-              placeholder="Expliquez pourquoi la demande est refusée..."
+              placeholder="Expliquez pourquoi la demande est refusée…"
               value={raisonRefus}
               onChange={(e) => setRaisonRefus(e.target.value)}
               required

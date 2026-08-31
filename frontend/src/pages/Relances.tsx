@@ -201,7 +201,7 @@ export default function Relances() {
           <div className="flex-1 min-w-[220px] space-y-1.5">
             <Label htmlFor="relance-search">Rechercher un client</Label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 id="relance-search"
                 value={search}

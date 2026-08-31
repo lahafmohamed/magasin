@@ -273,7 +273,7 @@ export default function Employes() {
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
-                placeholder="Nom, matricule, poste..."
+                placeholder="Nom, matricule, poste…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-10"
@@ -432,7 +432,7 @@ export default function Employes() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-com">Taux commission (%)</Label>
-                <Input id="emp-com" type="number" value={formData.commission_taux} onChange={(e) => setFormData({ ...formData, commission_taux: e.target.value })} step={0.01} min={0} max={100} />
+                <Input id="emp-com" type="number" inputMode="decimal" value={formData.commission_taux} onChange={(e) => setFormData({ ...formData, commission_taux: e.target.value })} step={0.01} min={0} max={100} />
               </div>
             </div>
 

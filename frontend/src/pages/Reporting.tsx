@@ -226,7 +226,7 @@ export default function Reporting() {
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'general' | 'margins')}>
       <TabsList className="mb-6">
         <TabsTrigger value="general">Vue Générale</TabsTrigger>
-        <TabsTrigger value="margins">Analyse des Marges & Rentabilité</TabsTrigger>
+        <TabsTrigger value="margins">Analyse des marges & rentabilité</TabsTrigger>
       </TabsList>
 
       {/* KPI Cards (5 columns when Margins is loaded) */}
@@ -365,7 +365,7 @@ export default function Reporting() {
             <CardContent>
               <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_170px_190px_190px_auto]">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     value={receivableSearch}
                     onChange={(event) => setReceivableSearch(event.target.value)}
@@ -375,7 +375,7 @@ export default function Reporting() {
                   />
                 </div>
                 <Input
-                  type="number"
+                  type="number" inputMode="decimal"
                   min="0"
                   value={receivableMinAmount}
                   onChange={(event) => setReceivableMinAmount(event.target.value)}
@@ -520,7 +520,7 @@ export default function Reporting() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
-                <CardTitle>Évolution mensuelle des Marges</CardTitle>
+                <CardTitle>Évolution mensuelle des marges</CardTitle>
               </CardHeader>
               <CardContent>
                 {marginsReport.monthly_trend?.length > 0 ? (
@@ -550,7 +550,7 @@ export default function Reporting() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Taux de Marge par Catégorie</CardTitle>
+                <CardTitle>Taux de marge par catégorie</CardTitle>
               </CardHeader>
               <CardContent>
                 {marginsReport.top_categories?.length > 0 ? (
@@ -568,7 +568,7 @@ export default function Reporting() {
                       <XAxis type="number" unit="%" tick={{ fontSize: 11, fill: CHART_AXIS }} />
                       <YAxis dataKey="categorie" type="category" tick={{ fontSize: 11, fill: CHART_AXIS }} />
                       <Tooltip formatter={(value: any) => `${value}%`} contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: CHART_GRID, fillOpacity: 0.3 }} />
-                      <Bar dataKey="taux" fill={chartColor(3)} name="Taux de Marge (%)" />
+                      <Bar dataKey="taux" fill={chartColor(3)} name="Taux de marge (%)" />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (

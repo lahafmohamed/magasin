@@ -15,6 +15,7 @@ import { TiersPicker } from '@/components/TiersPicker';
 import { Tiers } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -138,7 +139,7 @@ export default function NouvelAvoir() {
           Retour
         </Button>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Nouvel Avoir</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Nouvel avoir</h1>
           <p className="text-muted-foreground mt-1">Créer un avoir lié à une facture validée</p>
         </div>
       </div>
@@ -187,14 +188,15 @@ export default function NouvelAvoir() {
                 control={control}
                 name="tiers"
                 render={({ field }) => (
-                  <TiersPicker role="client" value={field.value} onChange={field.onChange} />
+                  <TiersPicker
+                    role="client"
+                    value={field.value}
+                    onChange={field.onChange}
+                    {...fieldErrorProps('avoir-tiers', errors.tiers)}
+                  />
                 )}
               />
-              {errors.tiers && (
-                <p role="alert" className="text-xs text-danger mt-1.5">
-                  {errors.tiers.message}
-                </p>
-              )}
+              <FieldError id="avoir-tiers" className="mt-1.5">{errors.tiers?.message}</FieldError>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="avoir-facture-origine">Facture d'origine<span className="text-destructive"> *</span></Label>
@@ -211,15 +213,12 @@ export default function NouvelAvoir() {
                       field.onChange(doc ? String(doc.id) : '');
                     }}
                     search={searchFactures}
-                    placeholder="Rechercher une facture (numéro, client)..."
+                    placeholder="Rechercher une facture (numéro, client)…"
+                    {...fieldErrorProps('avoir-facture-origine', errors.factureId)}
                   />
                 )}
               />
-              {errors.factureId && (
-                <p role="alert" className="text-xs text-danger">
-                  {errors.factureId.message}
-                </p>
-              )}
+              <FieldError id="avoir-facture-origine">{errors.factureId?.message}</FieldError>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="avoir-type">Motif de l'avoir<span className="text-destructive"> *</span></Label>
@@ -267,45 +266,51 @@ export default function NouvelAvoir() {
                   <TableRow key={field.id}>
                     <TableCell>
                       <Input
+                        id={`avoir-ligne-${index}-description`}
                         aria-label="Description"
                         placeholder="Motif / produit"
-                        aria-invalid={errors.lignes?.[index]?.description ? true : undefined}
+                        {...fieldErrorProps(
+                          `avoir-ligne-${index}-description`,
+                          errors.lignes?.[index]?.description,
+                        )}
                         {...register(`lignes.${index}.description` as const)}
                       />
-                      {errors.lignes?.[index]?.description && (
-                        <p role="alert" className="text-xs text-danger mt-1">
-                          {errors.lignes[index]?.description?.message}
-                        </p>
-                      )}
+                      <FieldError id={`avoir-ligne-${index}-description`}>
+                        {errors.lignes?.[index]?.description?.message}
+                      </FieldError>
                     </TableCell>
                     <TableCell>
                       <Input
+                        id={`avoir-ligne-${index}-quantite`}
                         aria-label="Quantité"
-                        type="number"
+                        type="number" inputMode="numeric"
                         min={1}
-                        aria-invalid={errors.lignes?.[index]?.quantite ? true : undefined}
+                        {...fieldErrorProps(
+                          `avoir-ligne-${index}-quantite`,
+                          errors.lignes?.[index]?.quantite,
+                        )}
                         {...register(`lignes.${index}.quantite` as const, { valueAsNumber: true })}
                       />
-                      {errors.lignes?.[index]?.quantite && (
-                        <p role="alert" className="text-xs text-danger mt-1">
-                          {errors.lignes[index]?.quantite?.message}
-                        </p>
-                      )}
+                      <FieldError id={`avoir-ligne-${index}-quantite`}>
+                        {errors.lignes?.[index]?.quantite?.message}
+                      </FieldError>
                     </TableCell>
                     <TableCell>
                       <Input
+                        id={`avoir-ligne-${index}-prix`}
                         aria-label="Prix"
-                        type="number"
+                        type="number" inputMode="decimal"
                         min={0}
                         step="0.01"
-                        aria-invalid={errors.lignes?.[index]?.prix_unitaire ? true : undefined}
+                        {...fieldErrorProps(
+                          `avoir-ligne-${index}-prix`,
+                          errors.lignes?.[index]?.prix_unitaire,
+                        )}
                         {...register(`lignes.${index}.prix_unitaire` as const, { valueAsNumber: true })}
                       />
-                      {errors.lignes?.[index]?.prix_unitaire && (
-                        <p role="alert" className="text-xs text-danger mt-1">
-                          {errors.lignes[index]?.prix_unitaire?.message}
-                        </p>
-                      )}
+                      <FieldError id={`avoir-ligne-${index}-prix`}>
+                        {errors.lignes?.[index]?.prix_unitaire?.message}
+                      </FieldError>
                     </TableCell>
                     <TableCell>
                       <Button
@@ -324,11 +329,7 @@ export default function NouvelAvoir() {
                 ))}
               </TableBody>
             </Table>
-            {errors.lignes?.root && (
-              <p role="alert" className="text-xs text-danger">
-                {errors.lignes.root.message}
-              </p>
-            )}
+            <FieldError id="avoir-lignes">{errors.lignes?.root?.message}</FieldError>
             <Button
               type="button"
               variant="outline"
@@ -357,7 +358,7 @@ export default function NouvelAvoir() {
             </div>
             <Button type="submit" disabled={submitting}>
               <Check className="h-4 w-4 mr-2" />
-              {submitting ? 'Création...' : 'Créer avoir'}
+              {submitting ? 'Création…' : 'Créer avoir'}
             </Button>
           </CardContent>
         </Card>

@@ -30,11 +30,12 @@ const KIND_LABELS: Record<string, string> = {
   acompte_fournisseur: 'Acompte fournisseur',
 };
 
+// Palette catégorielle (voir tailwind.config.js) — pas de valeur de statut ici,
+// et les tokens `chart-*` s'adaptent seuls au thème sombre.
 const KIND_BADGE: Record<string, string> = {
-  // Palette catégorielle (pas de vert : réservé aux statuts/succès)
-  paiement: 'bg-teal-50 dark:bg-teal-500/10 text-teal-700 dark:text-teal-300',
-  acompte_client: 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300',
-  acompte_fournisseur: 'bg-warning-50 text-warning-700',
+  paiement: 'bg-chart-7/15 text-chart-7',
+  acompte_client: 'bg-chart-1/15 text-chart-1',
+  acompte_fournisseur: 'bg-chart-6/15 text-chart-6',
 };
 
 interface AuditItem {

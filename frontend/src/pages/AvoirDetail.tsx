@@ -154,18 +154,18 @@ export default function AvoirDetail() {
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">N° Avoir:</span>
-              <span className="font-mono font-semibold">{avoir.numero_avoir}</span>
+              <span className="font-mono break-words font-semibold">{avoir.numero_avoir}</span>
             </div>
             {avoir.facture_origine_numero && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Facture d'origine:</span>
-                <span className="font-mono font-semibold">{avoir.facture_origine_numero}</span>
+                <span className="font-mono break-words font-semibold">{avoir.facture_origine_numero}</span>
               </div>
             )}
             {avoir.numero_retour && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Retour:</span>
-                <span className="font-mono font-semibold">{avoir.numero_retour}</span>
+                <span className="font-mono break-words font-semibold">{avoir.numero_retour}</span>
               </div>
             )}
           </CardContent>
@@ -196,7 +196,7 @@ export default function AvoirDetail() {
                 const totalLigne = parseFloat(ligne.total_ligne as any) || 0;
                 return (
                   <TableRow key={ligne.id}>
-                    <TableCell className="font-mono">{ligne.produit_reference || '-'}</TableCell>
+                    <TableCell className="font-mono break-words">{ligne.produit_reference || '-'}</TableCell>
                     <TableCell className="font-semibold">{ligne.produit_nom || ligne.description || 'Article'}</TableCell>
                     <TableCell className="text-right">{quantite}</TableCell>
                     <TableCell className="text-right">{formatXOF(prixUnitaire)}</TableCell>

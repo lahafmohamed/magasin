@@ -4,7 +4,6 @@ import { tiersService, acompteService, acompteFournisseurService, crmService, ap
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { badgeVariants } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Textarea } from '@/components/ui/textarea';
@@ -26,7 +25,7 @@ import {
 import { toast } from 'sonner';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { getErrorMessage } from '@/utils/errors';
-import { cn } from '@/lib/utils';
+import { TiersRoleBadge } from '@/components/TiersRoleBadge';
 import { formatCurrency, formatDateShort } from '@/utils/format';
 import { formatPaymentMethod, PAYMENT_METHODS } from '@/utils/paymentMethod';
 
@@ -39,11 +38,11 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
   paiement_client:  { label: 'Paiement',         color: 'text-success-600' },
   avoir_client:     { label: 'Avoir',            color: 'text-info-600' },
   acompte_client:   { label: 'Acompte reçu',     color: 'text-success-600' },
-  compensation_client: { label: 'Compensation',  color: 'text-purple-600' },
+  compensation_client: { label: 'Compensation',  color: 'text-chart-4' },
   facture_fourn:    { label: 'Facture fourn.',   color: 'text-warning-600' },
   paiement_fourn:   { label: 'Paiement fourn.',  color: 'text-success-600' },
   acompte_fourn:    { label: 'Acompte versé',    color: 'text-warning-600' },
-  compensation_fourn: { label: 'Compensation',   color: 'text-purple-600' },
+  compensation_fourn: { label: 'Compensation',   color: 'text-chart-4' },
 };
 
 export default function TiersDetail() {
@@ -372,14 +371,14 @@ export default function TiersDetail() {
           <span className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-mono">{tiers.code}</span>
             {tiers.est_client && (
-              <span className={cn(badgeVariants({ variant: 'outline' }), 'text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 text-xs py-0')}>
-                <Users className="h-3 w-3 mr-1" />Client
-              </span>
+              <TiersRoleBadge role="client" className="py-0">
+                <Users className="h-3 w-3 mr-1" aria-hidden="true" />Client
+              </TiersRoleBadge>
             )}
             {tiers.est_fournisseur && (
-              <span className={cn(badgeVariants({ variant: 'outline' }), 'text-orange-700 dark:text-orange-300 border-orange-200 dark:border-orange-500/30 bg-orange-50 dark:bg-orange-500/10 text-xs py-0')}>
-                <Truck className="h-3 w-3 mr-1" />Fournisseur
-              </span>
+              <TiersRoleBadge role="fournisseur" className="py-0">
+                <Truck className="h-3 w-3 mr-1" aria-hidden="true" />Fournisseur
+              </TiersRoleBadge>
             )}
           </span>
         }
@@ -396,11 +395,11 @@ export default function TiersDetail() {
               </Button>
             )}
             {canCompensate && (
-              <Button size="sm" onClick={() => { setCompForm(p => ({ ...p, montant: maxComp.toString() })); setShowCompensation(true); }} className="gap-1 text-xs bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600">
+              <Button size="sm" onClick={() => { setCompForm(p => ({ ...p, montant: maxComp.toString() })); setShowCompensation(true); }} className="gap-1 text-xs bg-chart-4 text-white hover:bg-chart-4/90">
                 <GitMerge className="h-3.5 w-3.5" /> Compenser
               </Button>
             )}
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleRecompute} title="Recalculer allocation FIFO">
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleRecompute} aria-label="Recalculer l'allocation FIFO" title="Recalculer l'allocation FIFO">
               <RefreshCw className="h-3.5 w-3.5" />
             </Button>
           </>
@@ -412,7 +411,7 @@ export default function TiersDetail() {
         <CardContent className="py-3 px-4">
           <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
             {tiers.telephone && <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" />{tiers.telephone}</span>}
-            {tiers.email && <span className="flex items-center gap-1"><Mail className="h-3.5 w-3.5" />{tiers.email}</span>}
+            {tiers.email && <span className="flex items-center gap-1"><Mail className="h-3.5 w-3.5" /><span className="break-words">{tiers.email}</span></span>}
             {tiers.adresse && <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{tiers.adresse}</span>}
             {tiers.nif && <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5" />NIF: {tiers.nif}</span>}
             {tiers.rccm && <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5" />RCCM: {tiers.rccm}</span>}
@@ -536,9 +535,9 @@ export default function TiersDetail() {
                   >
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{m.date ? formatDateShort(m.date) : '—'}</TableCell>
                     <TableCell>
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${m.role === 'Client' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300' : 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300'}`}>
+                      <TiersRoleBadge role={m.role === 'Client' ? 'client' : 'fournisseur'}>
                         {m.role}
-                      </span>
+                      </TiersRoleBadge>
                     </TableCell>
                     <TableCell className={`text-xs font-medium ${meta.color}`}>{meta.label}</TableCell>
                     <TableCell className={`text-xs font-mono ${link ? 'text-primary underline' : ''}`}>{m.reference || m.libelle}</TableCell>
@@ -568,7 +567,7 @@ export default function TiersDetail() {
         <Card>
           <CardHeader className="py-3 px-4">
             <CardTitle className="text-sm font-semibold flex items-center gap-1">
-              <Wallet className="h-4 w-4 text-blue-600" /> Acomptes actifs
+              <Wallet className="h-4 w-4 text-info-700" /> Acomptes actifs
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -588,7 +587,7 @@ export default function TiersDetail() {
               <TableBody>
                 {acomptesClient.map((a: any) => (
                   <TableRow key={`c-${a.id}`} className="text-sm">
-                    <TableCell><span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300">Client</span></TableCell>
+                    <TableCell><TiersRoleBadge role="client" /></TableCell>
                     <TableCell className="text-xs font-mono">{a.id}</TableCell>
                     <TableCell className="text-xs">{formatDateShort(a.date_acompte)}</TableCell>
                     <TableCell className="text-xs">{formatPaymentMethod(a.methode_paiement)}</TableCell>
@@ -602,7 +601,7 @@ export default function TiersDetail() {
                 ))}
                 {acomptesFourn.map((a: any) => (
                   <TableRow key={`f-${a.id}`} className="text-sm">
-                    <TableCell><span className="text-xs px-1.5 py-0.5 rounded bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300">Fourn.</span></TableCell>
+                    <TableCell><TiersRoleBadge role="fournisseur" /></TableCell>
                     <TableCell className="text-xs font-mono">{a.id}</TableCell>
                     <TableCell className="text-xs">{formatDateShort(a.date_acompte)}</TableCell>
                     <TableCell className="text-xs">{formatPaymentMethod(a.methode_paiement)}</TableCell>
@@ -624,7 +623,7 @@ export default function TiersDetail() {
       {compensations.length > 0 && (
         <Card>
           <CardHeader className="py-3 px-4">
-            <CardTitle className="text-sm font-semibold flex items-center gap-1"><GitMerge className="h-4 w-4 text-purple-600" /> Compensations ({compensations.length})</CardTitle>
+            <CardTitle className="text-sm font-semibold flex items-center gap-1"><GitMerge className="h-4 w-4 text-chart-4" /> Compensations ({compensations.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
@@ -639,7 +638,7 @@ export default function TiersDetail() {
                 {compensations.map((c: any) => (
                   <TableRow key={c.id} className="text-sm">
                     <TableCell className="text-xs">{formatDateShort(c.date_compensation)}</TableCell>
-                    <TableCell className="text-right text-xs font-semibold text-purple-700 dark:text-purple-300">{formatCurrency(c.montant)}</TableCell>
+                    <TableCell className="text-right text-xs font-semibold text-chart-4">{formatCurrency(c.montant)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{c.notes || '—'}</TableCell>
                   </TableRow>
                 ))}
@@ -735,11 +734,11 @@ export default function TiersDetail() {
                       <p className={`text-sm font-medium ${t.statut === 'terminee' ? 'line-through text-muted-foreground' : ''}`}>{t.titre}</p>
                       <div className="flex items-center gap-1 shrink-0">
                         {t.statut !== 'terminee' && (
-                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleCompleteTache(t.id)} title="Marquer terminée">
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleCompleteTache(t.id)} aria-label={`Marquer « ${t.titre} » comme terminée`} title="Marquer terminée">
                             <CheckCircle2 className="h-3.5 w-3.5 text-success-600" />
                           </Button>
                         )}
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleDeleteTache(t.id)} aria-label="Supprimer cette tâche">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDeleteTache(t.id)} aria-label="Supprimer cette tâche">
                           <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
                         </Button>
                       </div>
@@ -813,7 +812,7 @@ export default function TiersDetail() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowInteractionForm(false)}>Annuler</Button>
-              <Button type="submit" disabled={crmSubmitting}>{crmSubmitting ? 'Enregistrement...' : 'Enregistrer'}</Button>
+              <Button type="submit" disabled={crmSubmitting}>{crmSubmitting ? 'Enregistrement…' : 'Enregistrer'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -853,7 +852,7 @@ export default function TiersDetail() {
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowTacheForm(false)}>Annuler</Button>
-              <Button type="submit" disabled={crmSubmitting}>{crmSubmitting ? 'Création...' : 'Créer'}</Button>
+              <Button type="submit" disabled={crmSubmitting}>{crmSubmitting ? 'Création…' : 'Créer'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -904,7 +903,7 @@ export default function TiersDetail() {
             <div><Label htmlFor="ac-client-notes">Notes</Label><Input id="ac-client-notes" value={acompteForm.notes} onChange={e => setAcompteForm(p => ({ ...p, notes: e.target.value }))} /></div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowAcompteClient(false)}>Annuler</Button>
-              <Button type="submit" disabled={submitting}>{submitting ? 'Enregistrement...' : 'Enregistrer'}</Button>
+              <Button type="submit" disabled={submitting}>{submitting ? 'Enregistrement…' : 'Enregistrer'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -955,7 +954,7 @@ export default function TiersDetail() {
             <div><Label htmlFor="ac-fourn-notes">Notes</Label><Input id="ac-fourn-notes" value={acompteForm.notes} onChange={e => setAcompteForm(p => ({ ...p, notes: e.target.value }))} /></div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowAcompteFourn(false)}>Annuler</Button>
-              <Button type="submit" disabled={submitting}>{submitting ? 'Enregistrement...' : 'Enregistrer'}</Button>
+              <Button type="submit" disabled={submitting}>{submitting ? 'Enregistrement…' : 'Enregistrer'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -964,11 +963,11 @@ export default function TiersDetail() {
       {/* Compensation dialog */}
       <Dialog open={showCompensation} onOpenChange={setShowCompensation}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><GitMerge className="h-4 w-4 text-purple-600" /> Compensation (netting)</DialogTitle></DialogHeader>
-          <div className="text-xs text-muted-foreground mb-3 p-3 bg-purple-50 dark:bg-purple-500/10 rounded-md">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><GitMerge className="h-4 w-4 text-chart-4" /> Compensation (netting)</DialogTitle></DialogHeader>
+          <div className="text-xs text-muted-foreground mb-3 p-3 bg-chart-4/10 rounded-md">
             Créance client : <strong>{formatCurrency(totaux.client.solde_client)}</strong><br />
             Dette fournisseur : <strong>{formatCurrency(totaux.fournisseur.solde_fournisseur)}</strong><br />
-            Maximum compensable : <strong className="text-purple-700 dark:text-purple-300">{formatCurrency(maxComp)}</strong>
+            Maximum compensable : <strong className="text-chart-4">{formatCurrency(maxComp)}</strong>
           </div>
           <form onSubmit={handleCompensation} className="space-y-3">
             <div><Label htmlFor="comp-date">Date *</Label><DatePicker id="comp-date" value={compForm.date} onChange={(date) => setCompForm(p => ({ ...p, date }))} required aria-label="Date de compensation" /></div>
@@ -980,7 +979,7 @@ export default function TiersDetail() {
             <div><Label htmlFor="comp-notes">Notes</Label><Input id="comp-notes" value={compForm.notes} onChange={e => setCompForm(p => ({ ...p, notes: e.target.value }))} /></div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowCompensation(false)}>Annuler</Button>
-              <Button type="submit" disabled={submitting} className="bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600">{submitting ? 'Enregistrement...' : 'Compenser'}</Button>
+              <Button type="submit" disabled={submitting} className="bg-chart-4 text-white hover:bg-chart-4/90">{submitting ? 'Enregistrement…' : 'Compenser'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -1002,7 +1001,7 @@ export default function TiersDetail() {
                   <div className="mt-1 text-warning-600">Fournisseur restitue le cash → encaissement caisse.</div>
                 )}
                 {refundTarget.kind === 'client' && (
-                  <div className="mt-1 text-blue-600">Cash sort de la caisse vers le client.</div>
+                  <div className="mt-1 text-info-700">Cash sort de la caisse vers le client.</div>
                 )}
               </div>
               <div>
@@ -1025,7 +1024,7 @@ export default function TiersDetail() {
               </div>
               <div>
                 <Label htmlFor="refund-session">Session caisse (optionnel)</Label>
-                <Input id="refund-session" type="number" value={refundForm.session_caisse_id}
+                <Input id="refund-session" type="number" inputMode="numeric" value={refundForm.session_caisse_id}
                   onChange={e => setRefundForm(p => ({ ...p, session_caisse_id: e.target.value }))}
                   placeholder="Auto si magasin acompte" />
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -1035,7 +1034,7 @@ export default function TiersDetail() {
               <div><Label htmlFor="refund-notes">Notes</Label><Input id="refund-notes" value={refundForm.notes} onChange={e => setRefundForm(p => ({ ...p, notes: e.target.value }))} /></div>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setRefundTarget(null)}>Annuler</Button>
-                <Button type="submit" disabled={submitting}>{submitting ? 'Remboursement...' : 'Rembourser'}</Button>
+                <Button type="submit" disabled={submitting}>{submitting ? 'Remboursement…' : 'Rembourser'}</Button>
               </DialogFooter>
             </form>
           )}

@@ -4,9 +4,15 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- Inter auto-hébergée (déclarée en @font-face dans index.css). Préchargée
+         car elle est découverte au 2e niveau de la chaîne (HTML → CSS → woff2). -->
+    <link
+      rel="preload"
+      href="/fonts/inter-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#1e40af" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -14,6 +20,22 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Hitek-CI" />
     <title>Hitek-CI - Gestion Magasin Informatique</title>
+    <!-- Pose la classe `dark` avant le premier rendu. ThemeContext ne l'applique
+         que dans un effet : sans ce script, un utilisateur en thème sombre voit
+         un flash blanc à chaque chargement. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('theme');
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (stored === 'dark' || ((!stored || stored === 'system') && prefersDark)) {
+            document.documentElement.classList.add('dark');
+          }
+        } catch (e) {
+          /* localStorage indisponible (navigation privée) : thème clair par défaut. */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

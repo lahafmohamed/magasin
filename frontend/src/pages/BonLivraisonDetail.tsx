@@ -188,7 +188,11 @@ export default function BonLivraisonDetail() {
             numero: bon.facture_numero,
             to: bon.facture_id ? `/factures/${bon.facture_id}` : null,
           },
-          { label: 'Avoir', numero: null },
+          {
+            label: 'Avoir',
+            numero: bon.numero_avoir ?? null,
+            to: bon.avoir_id ? `/avoirs/${bon.avoir_id}` : null,
+          },
         ]}
       />
 
@@ -282,7 +286,7 @@ export default function BonLivraisonDetail() {
             </Button>
             <Button onClick={handleMarkDelivered} disabled={actionLoading}>
               <Truck className="h-4 w-4 mr-2" />
-              {actionLoading ? 'En cours...' : 'Marquer livré'}
+              {actionLoading ? 'En cours…' : 'Marquer livré'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -308,7 +312,7 @@ export default function BonLivraisonDetail() {
             </Button>
             <Button onClick={handleConvert} disabled={actionLoading}>
               <FileCheck className="h-4 w-4 mr-2" />
-              {actionLoading ? 'En cours...' : 'Créer facture'}
+              {actionLoading ? 'En cours…' : 'Créer facture'}
             </Button>
           </DialogFooter>
         </DialogContent>

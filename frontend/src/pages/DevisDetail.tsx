@@ -191,7 +191,11 @@ export default function DevisDetail() {
             numero: devis.facture_numero,
             to: devis.facture_id ? `/factures/${devis.facture_id}` : null,
           },
-          { label: 'Avoir', numero: null },
+          {
+            label: 'Avoir',
+            numero: devis.numero_avoir ?? null,
+            to: devis.avoir_id ? `/avoirs/${devis.avoir_id}` : null,
+          },
         ]}
       />
 
@@ -232,7 +236,7 @@ export default function DevisDetail() {
                         {ligne.produit_nom || ligne.produit_id}
                         {(ligne as any).is_depot_only_history && (
                           <span
-                            className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-200 text-gray-700"
+                            className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground"
                             title="Cet article n'a plus de stock magasin — il était disponible en dépôt au moment de la création"
                           >
                             stock dépôt (historique)
@@ -291,7 +295,7 @@ export default function DevisDetail() {
             </Button>
             <Button onClick={handleConfirm} disabled={actionLoading}>
               <FileCheck className="h-4 w-4 mr-2" />
-              {actionLoading ? 'En cours...' : 'Confirmer'}
+              {actionLoading ? 'En cours…' : 'Confirmer'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -317,7 +321,7 @@ export default function DevisDetail() {
             </Button>
             <Button variant="destructive" onClick={handleDelete} disabled={actionLoading}>
               <Trash2 className="h-4 w-4 mr-2" />
-              {actionLoading ? 'Suppression...' : 'Supprimer'}
+              {actionLoading ? 'Suppression…' : 'Supprimer'}
             </Button>
           </DialogFooter>
         </DialogContent>

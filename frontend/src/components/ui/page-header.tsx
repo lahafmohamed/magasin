@@ -41,10 +41,12 @@ export function PageHeader({
       )}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            {Icon && <Icon className="h-8 w-8" aria-hidden="true" />} {title}
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2 text-balance">
+            {Icon && <Icon className="h-8 w-8 shrink-0" aria-hidden="true" />} {title}
           </h1>
-          {description && <p className="text-muted-foreground mt-1">{description}</p>}
+          {description && (
+            <p className="text-muted-foreground mt-1 max-w-prose text-pretty">{description}</p>
+          )}
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </div>

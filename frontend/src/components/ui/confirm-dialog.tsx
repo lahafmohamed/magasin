@@ -15,8 +15,12 @@ export interface ConfirmOptions {
   title: string;
   /** Message explicatif (peut décrire les conséquences). */
   description?: React.ReactNode;
-  /** Libellé du bouton de confirmation. Défaut : « Confirmer ». */
-  confirmLabel?: string;
+  /**
+   * Libellé du bouton de confirmation. **Obligatoire** : il doit répéter la
+   * conséquence (« Supprimer la facture »), jamais « Confirmer » ou « OK » —
+   * c'est le dernier texte lu avant une action souvent irréversible.
+   */
+  confirmLabel: string;
   /** Libellé du bouton d'annulation. Défaut : « Annuler ». */
   cancelLabel?: string;
   /** Style destructif (rouge) pour les suppressions / actions irréversibles. */
@@ -86,7 +90,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
                 onClick={() => close(true)}
                 autoFocus
               >
-                {pending.confirmLabel ?? 'Confirmer'}
+                {pending.confirmLabel}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -100,7 +104,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
  * Retourne `confirm(opts) => Promise<boolean>`.
  *
  *   const confirm = useConfirm();
- *   if (!(await confirm({ title: 'Supprimer ?', destructive: true }))) return;
+ *   if (!(await confirm({ title: 'Supprimer la facture ?', confirmLabel: 'Supprimer la facture', destructive: true }))) return;
  */
 export function useConfirm(): ConfirmFn {
   const ctx = React.useContext(ConfirmContext);

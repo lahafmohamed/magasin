@@ -134,9 +134,10 @@ function AlertBanner({ alerts }: { alerts: { low_stock: any[]; overdue_invoices:
   if (totalAlerts === 0) return null;
 
   const chipCls =
-    // La puce doit ressortir sur le fond `bg-warning-50` de la bannière : blanc en
-    // clair, un cran au-dessus de la rampe (inversée) en sombre.
-    "inline-flex items-center gap-1 rounded-md bg-white dark:bg-warning-100 px-2.5 py-1.5 text-warning-700 hover:bg-warning-100 dark:hover:bg-warning-200 transition-colors";
+    // La puce ressort sur le fond `bg-warning-50` de la bannière en montant d'un
+    // cran dans la rampe. Celle-ci s'inverse déjà en sombre : ajouter une variante
+    // `dark:` inverserait une deuxième fois.
+    "inline-flex items-center gap-1 rounded-md bg-card px-2.5 py-1.5 text-warning-700 hover:bg-warning-100 transition-colors";
 
   return (
     <div className="rounded-lg border border-warning-200 bg-warning-50 p-3 space-y-2 animate-in fade-in-0">
@@ -368,7 +369,7 @@ export default function Dashboard() {
         {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Tableau de Bord</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Tableau de bord</h1>
             <p className="text-sm sm:text-base text-muted-foreground mt-1">
               Vue d'ensemble de votre activité commerciale
             </p>
@@ -403,7 +404,7 @@ export default function Dashboard() {
             <Link to="/factures/nouvelle">
               <Button className="gap-2">
                 <PlusCircle className="h-4 w-4" />
-                <span className="hidden sm:inline">Nouvelle Facture</span>
+                <span className="hidden sm:inline">Nouvelle facture</span>
                 <span className="sm:hidden">Facture</span>
               </Button>
             </Link>
@@ -685,15 +686,15 @@ export default function Dashboard() {
                       label: 'Validées',
                       count: commandeStats.validee || 0,
                       Icon: CheckCircle2,
-                      color: 'text-blue-600 dark:text-blue-300',
-                      bg: 'bg-blue-50 dark:bg-blue-500/10',
+                      color: 'text-chart-1',
+                      bg: 'bg-chart-1/10',
                     },
                     {
                       label: 'Expédiées',
                       count: commandeStats.expediee || 0,
                       Icon: Truck,
-                      color: 'text-indigo-600 dark:text-indigo-300',
-                      bg: 'bg-indigo-50 dark:bg-indigo-500/10',
+                      color: 'text-chart-2',
+                      bg: 'bg-chart-2/10',
                     },
                     {
                       label: 'Livrées',

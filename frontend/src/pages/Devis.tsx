@@ -58,7 +58,7 @@ export default function Devis() {
   });
 
   const handleConfirm = async (id: number) => {
-    if (!(await confirm({ title: 'Confirmer ce devis ?', description: 'Cela générera automatiquement un bon de livraison.', confirmLabel: 'Confirmer' }))) return;
+    if (!(await confirm({ title: 'Confirmer ce devis ?', description: 'Cela générera automatiquement un bon de livraison.', confirmLabel: 'Confirmer le devis' }))) return;
     try {
       await devisService.updateStatut(id, 'accepte');
       toast.success('Devis confirmé et bon de livraison généré');

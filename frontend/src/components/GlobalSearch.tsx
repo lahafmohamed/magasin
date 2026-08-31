@@ -182,12 +182,12 @@ export function GlobalSearch() {
 
   const getTypeIcon = (type: string) => {
     switch (type) {
-      case 'produit': return <Package className="h-4 w-4 text-blue-500" />;
-      case 'facture': return <FileText className="h-4 w-4 text-purple-500" />;
-      case 'tiers': return <Users className="h-4 w-4 text-orange-500" />;
-      case 'devis': return <FilePlus className="h-4 w-4 text-sky-500" />;
-      case 'bon de livraison': return <FileCheck className="h-4 w-4 text-teal-500" />;
-      case 'commande': return <ShoppingCart className="h-4 w-4 text-amber-500" />;
+      case 'produit': return <Package className="h-4 w-4 text-chart-1" />;
+      case 'facture': return <FileText className="h-4 w-4 text-chart-4" />;
+      case 'tiers': return <Users className="h-4 w-4 text-chart-6" />;
+      case 'devis': return <FilePlus className="h-4 w-4 text-chart-3" />;
+      case 'bon de livraison': return <FileCheck className="h-4 w-4 text-chart-7" />;
+      case 'commande': return <ShoppingCart className="h-4 w-4 text-chart-2" />;
       default: return <Search className="h-4 w-4" />;
     }
   };

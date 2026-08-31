@@ -20,6 +20,9 @@ interface DocumentPickerProps {
   placeholder?: string;
   inputId?: string;
   disabled?: boolean;
+  /** Signalement d'erreur — à relier au message via `fieldErrorProps`. */
+  'aria-invalid'?: boolean;
+  'aria-describedby'?: string;
 }
 
 export function DocumentPicker({
@@ -30,6 +33,8 @@ export function DocumentPicker({
   placeholder,
   inputId,
   disabled = false,
+  'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedby,
 }: DocumentPickerProps) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<DocumentOption[]>([]);
@@ -127,8 +132,8 @@ export function DocumentPicker({
   return (
     <div ref={ref} className="relative">
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <FileText className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <FileText className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <input
           id={inputId}
           type="text"
@@ -137,6 +142,8 @@ export function DocumentPicker({
           aria-controls={listboxId}
           aria-autocomplete="list"
           aria-activedescendant={highlighted >= 0 ? `${listboxId}-opt-${highlighted}` : undefined}
+          aria-invalid={ariaInvalid}
+          aria-describedby={ariaDescribedby}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -144,9 +151,9 @@ export function DocumentPicker({
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder={placeholder || 'Rechercher un document...'}
+          placeholder={placeholder || 'Rechercher un document…'}
           disabled={disabled}
-          className="w-full pl-9 pr-9 py-2 text-sm border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-50"
+          className="w-full pl-9 pr-9 py-2 text-sm border rounded-md bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         />
       </div>
 
@@ -156,7 +163,7 @@ export function DocumentPicker({
           role="listbox"
           className="absolute top-full left-0 right-0 z-50 mt-1 bg-popover border rounded-md shadow-lg max-h-64 overflow-y-auto"
         >
-          {loading && <div className="px-3 py-2 text-sm text-muted-foreground">Recherche...</div>}
+          {loading && <div className="px-3 py-2 text-sm text-muted-foreground">Recherche…</div>}
           {!loading && results.length === 0 && (
             <div className="px-3 py-2 text-sm text-muted-foreground">Aucun résultat pour « {query} »</div>
           )}
@@ -177,9 +184,9 @@ export function DocumentPicker({
                 <FileText className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium font-mono truncate">{doc.numero}</div>
+                <div className="text-sm font-medium font-mono truncate" title={doc.numero}>{doc.numero}</div>
                 {doc.tiers_nom && (
-                  <div className="text-xs text-muted-foreground truncate">{doc.tiers_nom}</div>
+                  <div className="text-xs text-muted-foreground truncate" title={doc.tiers_nom}>{doc.tiers_nom}</div>
                 )}
               </div>
               <div className="text-right shrink-0">

@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetTitle, SheetDescription, SheetClose } from '@/components/ui/sheet';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SortableHeader, type SortState } from '@/components/ui/sortable-header';
 import { Pagination } from '@/components/ui/pagination';
@@ -262,7 +263,7 @@ export default function Commandes() {
         ? { title: 'Annuler cette commande ?', description: 'La commande fournisseur sera annulée.', confirmLabel: 'Annuler la commande', cancelLabel: 'Retour', destructive: true }
         : statut === 'validee'
           ? { title: 'Valider cette commande ?', description: 'La commande sera validée et prête à être expédiée par le fournisseur.', confirmLabel: 'Valider' }
-          : { title: 'Marquer la commande comme expédiée ?', confirmLabel: 'Confirmer' };
+          : { title: 'Marquer la commande comme expédiée ?', confirmLabel: 'Marquer comme expédiée' };
     if (!(await confirm(confirmOpts))) return;
     try {
       await commandeService.updateStatut(id, statut);
@@ -357,7 +358,7 @@ export default function Commandes() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
               <ShoppingCart className="h-8 w-8 text-primary" />
-              Nouvelle Commande Fournisseur
+              Nouvelle commande fournisseur
             </h1>
             <p className="text-muted-foreground mt-1">Créez un bon de commande pour réapprovisionner vos stocks</p>
           </div>
@@ -459,9 +460,9 @@ export default function Commandes() {
               <CardContent className="flex-1 space-y-4">
                 {/* Search Bar */}
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Search className="pointer-events-none absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="Rechercher rapidement par nom ou référence pour ajouter..."
+                    placeholder="Rechercher rapidement par nom ou référence pour ajouter…"
                     value={produitSearch}
                     onChange={(e) => setProduitSearch(e.target.value)}
                     className="pl-10 sm:pl-10 h-10 border-muted-foreground/30 focus-visible:ring-primary"
@@ -547,7 +548,7 @@ export default function Commandes() {
                               </TableCell>
                               <TableCell>
                                 <Input
-                                  type="number"
+                                  type="number" inputMode="numeric"
                                   className="w-16 h-8 text-center"
                                   min="1"
                                   value={ligne.quantite}
@@ -557,7 +558,7 @@ export default function Commandes() {
                               <TableCell>
                                 <div className="relative">
                                   <Input
-                                    type="number"
+                                    type="number" inputMode="decimal"
                                     className="w-28 h-8 pl-1 text-xs"
                                     step="0.01"
                                     value={ligne.prix_unitaire}
@@ -609,7 +610,7 @@ export default function Commandes() {
                 ) : (
                   <>
                     <CheckCircle className="h-4 w-4 mr-2" />
-                    Créer la Commande
+                    Créer la commande
                   </>
                 )}
               </Button>
@@ -638,7 +639,7 @@ export default function Commandes() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="qc_prix">Prix d'achat (FCFA)</Label>
-                  <Input id="qc_prix" type="number" step="0.01" value={quickCreatePrix} onChange={e => setQuickCreatePrix(e.target.value)} placeholder="0" />
+                  <Input id="qc_prix" type="number" inputMode="decimal" step="0.01" value={quickCreatePrix} onChange={e => setQuickCreatePrix(e.target.value)} placeholder="0" />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="qc_cat">Catégorie</Label>
@@ -648,39 +649,37 @@ export default function Commandes() {
               <div className="flex justify-end gap-3 pt-2">
                 <Button type="button" variant="outline" onClick={() => setShowQuickCreate(false)}>Annuler</Button>
                 <Button type="submit" disabled={quickCreating || !quickCreateNom || !quickCreateReference}>
-                  {quickCreating ? <><Spinner className="mr-1" /> Création...</> : 'Créer & Ajouter'}
+                  {quickCreating ? <><Spinner className="mr-1" /> Création…</> : 'Créer & Ajouter'}
                 </Button>
               </div>
             </form>
           </DialogContent>
         </Dialog>
 
-        {/* Catalog Drawer Backdrop */}
-        {showCatalog && (
-          <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm transition-opacity" onClick={() => setShowCatalog(false)} />
-        )}
-
-        {/* Catalog Drawer */}
-        <div className={`fixed inset-y-0 right-0 z-50 w-full max-w-md bg-background border-l shadow-2xl transform transition-transform duration-300 ease-in-out flex flex-col ${showCatalog ? 'translate-x-0' : 'translate-x-full'}`}>
+        {/* Tiroir catalogue */}
+        <Sheet open={showCatalog} onOpenChange={setShowCatalog}>
+          <SheetContent side="right" showClose={false}>
           <div className="p-4 border-b flex justify-between items-center bg-muted/40">
             <div>
-              <h3 className="font-semibold text-lg flex items-center gap-2">
+              <SheetTitle className="flex items-center gap-2">
                 <BookOpen className="h-5 w-5 text-primary" />
-                Catalogue Produits
-              </h3>
-              <p className="text-xs text-muted-foreground">Sélectionnez les articles à ajouter</p>
+                Catalogue produits
+              </SheetTitle>
+              <SheetDescription className="text-xs">Sélectionnez les articles à ajouter</SheetDescription>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setShowCatalog(false)} aria-label="Fermer le catalogue">
-              <X className="h-5 w-5" />
-            </Button>
+            <SheetClose asChild>
+              <Button variant="ghost" size="sm" aria-label="Fermer le catalogue">
+                <X className="h-5 w-5" />
+              </Button>
+            </SheetClose>
           </div>
-          
+
           {/* Filter Controls */}
           <div className="p-4 border-b space-y-3">
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input 
-                placeholder="Rechercher..." 
+                placeholder="Rechercher…" 
                   value={catalogSearch} 
                   onChange={e => setCatalogSearch(e.target.value)}
                   className="pl-8 sm:pl-8 text-sm h-9"
@@ -735,7 +734,8 @@ export default function Commandes() {
               })
             )}
           </div>
-        </div>
+          </SheetContent>
+        </Sheet>
       </div>
     );
   }
@@ -748,14 +748,14 @@ export default function Commandes() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <ShoppingCart className="h-8 w-8 text-primary" />
-            Commandes Fournisseur
+            Commandes fournisseur
           </h1>
           <p className="text-muted-foreground mt-1">Gérez le réapprovisionnement et le suivi des stocks</p>
         </div>
         {canCreate && (
           <Button onClick={() => setShowForm(true)} className="gap-2 shadow-lg shadow-primary/20">
             <Plus className="h-4 w-4" />
-            Nouvelle Commande
+            Nouvelle commande
           </Button>
         )}
       </div>
@@ -806,9 +806,9 @@ export default function Commandes() {
       <Card className="border border-border/60 shadow-md">
         <CardContent className="p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
           <div className="relative flex-1 w-full">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Rechercher par numero de commande ou fournisseur..."
+              placeholder="Rechercher par numero de commande ou fournisseur…"
               className="pl-10 sm:pl-10 w-full"
               value={search}
               onChange={(e) => setSearch(e.target.value)}

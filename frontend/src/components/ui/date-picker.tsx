@@ -18,6 +18,9 @@ interface DatePickerProps {
   disabled?: boolean
   required?: boolean
   'aria-label'?: string
+  /** Signalement d'erreur — à relier au message via `fieldErrorProps`. */
+  'aria-invalid'?: boolean
+  'aria-describedby'?: string
 }
 
 const DatePicker = React.forwardRef<HTMLButtonElement, DatePickerProps>(
@@ -32,6 +35,8 @@ const DatePicker = React.forwardRef<HTMLButtonElement, DatePickerProps>(
       disabled,
       required,
       'aria-label': ariaLabel,
+      'aria-invalid': ariaInvalid,
+      'aria-describedby': ariaDescribedby,
     },
     ref,
   ) => {
@@ -51,6 +56,8 @@ const DatePicker = React.forwardRef<HTMLButtonElement, DatePickerProps>(
             disabled={disabled}
             aria-label={ariaLabel}
             aria-required={required || undefined}
+            aria-invalid={ariaInvalid}
+            aria-describedby={ariaDescribedby}
             className={cn(
               'w-full justify-start px-3 text-left font-normal',
               !selectedDate && 'text-muted-foreground',

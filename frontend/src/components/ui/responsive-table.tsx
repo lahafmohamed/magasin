@@ -68,14 +68,23 @@ export function DataCard({
       }
       className={cn(
         'rounded-lg border bg-card p-3 text-sm shadow-xs',
+        // Survol de ligne = interaction haute fréquence : pas de transition.
         interactive &&
-          'cursor-pointer transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'cursor-pointer hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className
       )}
     >
       {(title || badge) && (
         <div className="mb-2 flex items-center justify-between gap-2">
-          {title && <div className="font-medium text-foreground truncate">{title}</div>}
+          {title && (
+            // `title` natif : le libellé tronqué reste lisible en entier au survol.
+            <div
+              className="font-medium text-foreground truncate"
+              title={typeof title === 'string' ? title : undefined}
+            >
+              {title}
+            </div>
+          )}
           {badge}
         </div>
       )}
@@ -95,7 +104,12 @@ export function DataCardRow({
   return (
     <div className="flex items-baseline justify-between gap-3">
       <dt className="text-xs text-muted-foreground shrink-0">{label}</dt>
-      <dd className="text-right text-foreground min-w-0 truncate">{value}</dd>
+      <dd
+        className="text-right text-foreground min-w-0 truncate tabular-nums"
+        title={typeof value === 'string' ? value : undefined}
+      >
+        {value}
+      </dd>
     </div>
   );
 }

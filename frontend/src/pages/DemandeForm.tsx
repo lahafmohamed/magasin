@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
 import { PageLoading, Spinner } from '@/components/ui/loading';
 import { getErrorMessage } from '@/utils/errors';
 import {
@@ -361,8 +362,12 @@ export default function DemandeForm() {
                       onValueChange={field.onChange}
                       disabled={isEdit}
                     >
-                      <SelectTrigger id="magasin" className="h-9 w-full text-sm">
-                        <SelectValue placeholder="Sélectionner..." />
+                      <SelectTrigger
+                        id="magasin"
+                        className="h-9 w-full text-sm"
+                        {...fieldErrorProps('magasin', errors.magasin_id)}
+                      >
+                        <SelectValue placeholder="Sélectionner…" />
                       </SelectTrigger>
                       <SelectContent>
                         {magasins.map((m) => (
@@ -374,11 +379,7 @@ export default function DemandeForm() {
                     </Select>
                   )}
                 />
-                {errors.magasin_id && (
-                  <p role="alert" className="text-xs text-danger">
-                    {errors.magasin_id.message}
-                  </p>
-                )}
+                <FieldError id="magasin">{errors.magasin_id?.message}</FieldError>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="depot">Dépôt source *</Label>
@@ -391,8 +392,12 @@ export default function DemandeForm() {
                       onValueChange={field.onChange}
                       disabled={isEdit}
                     >
-                      <SelectTrigger id="depot" className="h-9 w-full text-sm">
-                        <SelectValue placeholder="Sélectionner..." />
+                      <SelectTrigger
+                        id="depot"
+                        className="h-9 w-full text-sm"
+                        {...fieldErrorProps('depot', errors.depot_id)}
+                      >
+                        <SelectValue placeholder="Sélectionner…" />
                       </SelectTrigger>
                       <SelectContent>
                         {depots.map((d) => (
@@ -404,11 +409,7 @@ export default function DemandeForm() {
                     </Select>
                   )}
                 />
-                {errors.depot_id && (
-                  <p role="alert" className="text-xs text-danger">
-                    {errors.depot_id.message}
-                  </p>
-                )}
+                <FieldError id="depot">{errors.depot_id?.message}</FieldError>
               </div>
             </CardContent>
           </Card>
@@ -426,9 +427,9 @@ export default function DemandeForm() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="Rechercher un produit par nom ou référence..."
+                    placeholder="Rechercher un produit par nom ou référence…"
                     className="pl-10 sm:pl-10"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
@@ -478,20 +479,22 @@ export default function DemandeForm() {
                                     <Button
                                       variant="outline"
                                       size="icon"
-                                      className="h-7 w-7"
+                                      className="h-9 w-9"
+                                      aria-label={`Retirer une unité de ${product.produit_nom}`}
                                       onClick={() => updateCartQuantity(product.produit_id, -1)}
                                     >
-                                      <Minus className="h-3 w-3" />
+                                      <Minus className="h-3 w-3" aria-hidden="true" />
                                     </Button>
-                                    <span className="w-8 text-center text-sm font-medium">{inCart.quantite_demandee}</span>
+                                    <span className="w-8 text-center text-sm font-medium tabular-nums">{inCart.quantite_demandee}</span>
                                     <Button
                                       variant="outline"
                                       size="icon"
-                                      className="h-7 w-7"
+                                      className="h-9 w-9"
+                                      aria-label={`Ajouter une unité de ${product.produit_nom}`}
                                       onClick={() => updateCartQuantity(product.produit_id, 1)}
                                       disabled={inCart.quantite_demandee >= product.quantite_disponible}
                                     >
-                                      <Plus className="h-3 w-3" />
+                                      <Plus className="h-3 w-3" aria-hidden="true" />
                                     </Button>
                                   </div>
                                 ) : (
@@ -533,7 +536,7 @@ export default function DemandeForm() {
             </CardHeader>
             <CardContent>
               <Textarea
-                placeholder="Notes éventuelles pour le dépôt..."
+                placeholder="Notes éventuelles pour le dépôt…"
                 rows={3}
                 {...register('motif')}
               />
@@ -569,23 +572,25 @@ export default function DemandeForm() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-6 w-6 text-destructive shrink-0"
+                          className="h-9 w-9 text-destructive shrink-0"
+                          aria-label={`Retirer ${item.produit_nom} de la demande`}
                           onClick={() => removeFromCart(item.produit_id)}
                         >
-                          <Trash2 className="h-3 w-3" />
+                          <Trash2 className="h-3 w-3" aria-hidden="true" />
                         </Button>
                       </div>
                       <div className="flex items-center gap-2 mt-2">
                         <Button
                           variant="outline"
                           size="icon"
-                          className="h-6 w-6"
+                          className="h-9 w-9"
+                          aria-label={`Retirer une unité de ${item.produit_nom}`}
                           onClick={() => updateCartQuantity(item.produit_id, -1)}
                         >
-                          <Minus className="h-3 w-3" />
+                          <Minus className="h-3 w-3" aria-hidden="true" />
                         </Button>
                         <Input
-                          type="number"
+                          type="number" inputMode="numeric"
                           min={1}
                           max={item.stock_disponible}
                           value={item.quantite_demandee}
@@ -603,16 +608,18 @@ export default function DemandeForm() {
                               );
                             }
                           }}
-                          className="w-16 h-6 text-center text-sm px-1"
+                          aria-label={`Quantité demandée pour ${item.produit_nom}`}
+                          className="w-16 h-9 text-center text-sm px-1 tabular-nums"
                         />
                         <Button
                           variant="outline"
                           size="icon"
-                          className="h-6 w-6"
+                          className="h-9 w-9"
+                          aria-label={`Ajouter une unité de ${item.produit_nom}`}
                           onClick={() => updateCartQuantity(item.produit_id, 1)}
                           disabled={item.quantite_demandee >= item.stock_disponible}
                         >
-                          <Plus className="h-3 w-3" />
+                          <Plus className="h-3 w-3" aria-hidden="true" />
                         </Button>
                       </div>
                       <Input

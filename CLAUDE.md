@@ -21,7 +21,7 @@ French-language **ERP** for a retail + wholesale electronics business ("magasin 
 
 **Frontend** (`frontend/`)
 - **React 18.3** + **Vite 5** + **TypeScript ^5.3** (`strict: true`)
-- **TailwindCSS ^3.4** + **shadcn/ui** style (`class-variance-authority` + `cn()`). **Radix is installed** — 7 `@radix-ui/*` packages back `dialog`, `dropdown-menu`, `label`, `popover`, `scroll-area`, `select`, `separator`; `tabs` and `checkbox` are hand-rolled on purpose. Design tokens: semantic color ramps live as CSS vars in `index.css` (`:root` + inverted `.dark`) and are wired in `tailwind.config.js` via `semanticRamp()`
+- **TailwindCSS ^3.4** + **shadcn/ui** style (`class-variance-authority` + `cn()`). **Radix is installed** — 7 `@radix-ui/*` packages back `dialog`, `sheet` (side panels, also on `react-dialog`), `dropdown-menu`, `label`, `popover`, `scroll-area`, `select`, `separator`; `tabs` and `checkbox` are hand-rolled on purpose. Design tokens: semantic color ramps live as CSS vars in `index.css` (`:root` + inverted `.dark`) and are wired in `tailwind.config.js` via `semanticRamp()` — **including `primary`** since 2026-08-27 (its 50–900 shades were hardcoded hex and therefore not theme-aware)
 - **react-router-dom ^6.21** (lazy routes) · **react-hook-form ^7.72** + **zod** · **axios ^1.6** · **recharts ^3.8** · **sonner** toasts · **@tanstack/react-virtual**
 - Tests: **vitest** + Testing Library + jsdom. `playwright` is a devDep but **unused** (no config/specs).
 - PWA assets (`public/sw.js`, `manifest.json`) are **live**: `index.html` links the manifest and `main.tsx` registers the service worker outside localhost — it ships in production.
@@ -142,9 +142,10 @@ Legend: ✅ Complete · 🟡 Partial · 🟥 Stub/Dead · ➖ Missing. Full evid
   - **Fetch states:** a failed fetch must never look like empty data. Hold the error in state and render through `<QueryState loading error onRetry skeleton isEmpty>`.
   - **Status colors:** `success/warning/danger/info` are theme-aware CSS vars whose ramp **inverts** in `.dark`. Write `text-success-700` alone — adding a `dark:` sibling now produces the bug it used to fix.
   - **Spinners:** use `PageLoading`/`Spinner`/`LoadingState` from `ui/loading`; don't inline `<Loader2 className="animate-spin">`.
-  - **Destructive actions:** bare buttons need `useConfirm()`. A form Dialog with a submit is confirmation enough.
-  - **Overlays:** build on `ui/dialog` (Radix) — hand-rolled `fixed inset-0` overlays have no focus trap, Escape, or scroll lock.
+  - **Destructive actions:** bare buttons need `useConfirm()`. A form Dialog with a submit is confirmation enough. `confirmLabel` is a **required** prop and must repeat the consequence ("Supprimer la facture"), never "Confirmer"/"OK".
+  - **Overlays:** build on `ui/dialog` for modals and `ui/sheet` for side panels/tiroirs (both Radix) — hand-rolled `fixed inset-0` overlays have no focus trap, Escape, or scroll lock.
   - **Doc lists:** new list pages use `DocumentListPage` + `useDocumentList` (URL-backed search/filters/sort/pagination, `extraFilters` for page-specific filters). Never paginate client-side over a full fetch.
+  - **Interface direction:** [frontend/CLAUDE.md](frontend/CLAUDE.md) holds the full UI/UX rulebook (animation, typography, color tokens, a11y, layout, FR microcopy — adapted from interfaces.dev). Auto-loaded when working under `frontend/`; follow it for any UI work.
 - **Audit:** mutations log via `AuditService`/`audit` middleware (writes are fire-and-forget / non-fatal).
 
 ## Known Issues & Limitations

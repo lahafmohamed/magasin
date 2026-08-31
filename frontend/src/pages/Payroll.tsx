@@ -246,7 +246,7 @@ export default function Payroll() {
                   <TableCell className="text-right num font-medium">{formatCurrency(Number(p.salaire_net))}</TableCell>
                   <TableCell><StatutBadge statut={p.statut} /></TableCell>
                   <TableCell className="text-right">
-                    <Button size="icon" variant="ghost" title="Télécharger le bulletin PDF" onClick={() => downloadPayslipPdf(p.id, p.nom_complet)}>
+                    <Button size="icon" variant="ghost" aria-label={`Télécharger le bulletin PDF de ${p.nom_complet}`} title="Télécharger le bulletin PDF" onClick={() => downloadPayslipPdf(p.id, p.nom_complet)}>
                       <FileDown className="h-4 w-4" />
                     </Button>
                   </TableCell>
@@ -329,6 +329,7 @@ export default function Payroll() {
           const deleteBtn = (r: PayrollRun) => r.statut === 'brouillon' && (
             <Button
               size="icon" variant="ghost"
+              aria-label={`Supprimer le cycle de paie ${r.numero}`}
               onClick={async (e) => {
                 e.stopPropagation();
                 if (!(await confirm({ title: 'Supprimer ce cycle de paie ?', description: `Le cycle ${r.numero} (brouillon) et ses bulletins seront supprimés. Cette action est irréversible.`, confirmLabel: 'Supprimer', destructive: true }))) return;

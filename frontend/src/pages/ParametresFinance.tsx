@@ -153,15 +153,15 @@ export default function ParametresFinance() {
                       <TableCell className="font-mono text-xs">{c.code}</TableCell>
                       <TableCell className="text-sm">{c.libelle}</TableCell>
                       <TableCell>
-                        <Input type="number" step="0.01" className="h-8" value={toPct(c.taux_salarial)}
+                        <Input type="number" inputMode="decimal" step="0.01" className="h-8" value={toPct(c.taux_salarial)}
                           onChange={(e) => setCot(c.id, { taux_salarial: String(fromPct(e.target.value)) })} />
                       </TableCell>
                       <TableCell>
-                        <Input type="number" step="0.01" className="h-8" value={toPct(c.taux_patronal)}
+                        <Input type="number" inputMode="decimal" step="0.01" className="h-8" value={toPct(c.taux_patronal)}
                           onChange={(e) => setCot(c.id, { taux_patronal: String(fromPct(e.target.value)) })} />
                       </TableCell>
                       <TableCell>
-                        <Input type="number" className="h-8" value={c.plafond ?? ''}
+                        <Input type="number" inputMode="decimal" className="h-8" value={c.plafond ?? ''}
                           onChange={(e) => setCot(c.id, { plafond: e.target.value })} placeholder="aucun" />
                       </TableCell>
                       <TableCell>
@@ -219,15 +219,15 @@ export default function ParametresFinance() {
                   {baremes.map((b, i) => (
                     <TableRow key={i}>
                       <TableCell>
-                        <Input type="number" className="h-8" value={b.tranche_min as any}
+                        <Input type="number" inputMode="decimal" className="h-8" value={b.tranche_min as any}
                           onChange={(e) => setBar(i, { tranche_min: e.target.value })} aria-label={`Début de la tranche ${i + 1}`} />
                       </TableCell>
                       <TableCell>
-                        <Input type="number" className="h-8" value={(b.tranche_max ?? '') as any}
+                        <Input type="number" inputMode="decimal" className="h-8" value={(b.tranche_max ?? '') as any}
                           onChange={(e) => setBar(i, { tranche_max: e.target.value === '' ? null : e.target.value })} placeholder="∞" aria-label={`Fin de la tranche ${i + 1}`} />
                       </TableCell>
                       <TableCell>
-                        <Input type="number" step="0.01" className="h-8" value={toPct(b.taux)}
+                        <Input type="number" inputMode="decimal" step="0.01" className="h-8" value={toPct(b.taux)}
                           onChange={(e) => setBar(i, { taux: fromPct(e.target.value) })} aria-label={`Taux de la tranche ${i + 1}`} />
                       </TableCell>
                       <TableCell>
@@ -257,12 +257,12 @@ export default function ParametresFinance() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="match-tol-qte">Tolérance quantité (%)</Label>
-                  <Input id="match-tol-qte" type="number" step="0.01" value={toPct(match.qte_tolerance_pct)}
+                  <Input id="match-tol-qte" type="number" inputMode="decimal" step="0.01" value={toPct(match.qte_tolerance_pct)}
                     onChange={(e) => setMatch({ ...match, qte_tolerance_pct: fromPct(e.target.value) })} />
                 </div>
                 <div>
                   <Label htmlFor="match-tol-prix">Tolérance prix (%)</Label>
-                  <Input id="match-tol-prix" type="number" step="0.01" value={toPct(match.prix_tolerance_pct)}
+                  <Input id="match-tol-prix" type="number" inputMode="decimal" step="0.01" value={toPct(match.prix_tolerance_pct)}
                     onChange={(e) => setMatch({ ...match, prix_tolerance_pct: fromPct(e.target.value) })} />
                 </div>
               </div>

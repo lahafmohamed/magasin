@@ -461,7 +461,7 @@ export default function Retours() {
                               <TableCell className="text-right num">{l.quantite}</TableCell>
                               <TableCell className="text-right">
                                 <Input
-                                  type="number"
+                                  type="number" inputMode="numeric"
                                   min={1}
                                   max={Number(l.quantite)}
                                   value={state.quantite}

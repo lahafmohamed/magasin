@@ -11,6 +11,7 @@ import { TiersPicker } from '@/components/TiersPicker';
 import { Tiers, Produit } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -189,7 +190,7 @@ export default function NouveauBonLivraison() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <Truck className="h-8 w-8" />
-            Nouveau Bon de Livraison
+            Nouveau bon de livraison
           </h1>
           <p className="text-muted-foreground mt-1">Créez un nouveau bon de livraison client</p>
         </div>
@@ -246,15 +247,12 @@ export default function NouveauBonLivraison() {
                       field.onChange(doc ? String(doc.id) : '');
                     }}
                     search={searchDevisAcceptes}
-                    placeholder="Rechercher un devis accepté (numéro, client)..."
+                    placeholder="Rechercher un devis accepté (numéro, client)…"
+                    {...fieldErrorProps('bl-devis-id', errors.devisId)}
                   />
                 )}
               />
-              {errors.devisId && (
-                <p role="alert" className="text-xs text-danger">
-                  {errors.devisId.message}
-                </p>
-              )}
+              <FieldError id="bl-devis-id">{errors.devisId?.message}</FieldError>
             </div>
           </CardContent>
         </Card>
@@ -269,14 +267,15 @@ export default function NouveauBonLivraison() {
               control={control}
               name="tiers"
               render={({ field }) => (
-                <TiersPicker role="client" value={field.value} onChange={field.onChange} />
+                <TiersPicker
+                  role="client"
+                  value={field.value}
+                  onChange={field.onChange}
+                  {...fieldErrorProps('bl-tiers', errors.tiers)}
+                />
               )}
             />
-            {errors.tiers && (
-              <p role="alert" className="text-xs text-danger mt-1.5">
-                {errors.tiers.message}
-              </p>
-            )}
+            <FieldError id="bl-tiers" className="mt-1.5">{errors.tiers?.message}</FieldError>
           </CardContent>
         </Card>
 
@@ -293,11 +292,11 @@ export default function NouveauBonLivraison() {
               Rechercher un produit
             </Label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 id="bl-produit-search"
                 className="pl-10 sm:pl-10"
-                placeholder="Rechercher un produit..."
+                placeholder="Rechercher un produit…"
                 value={produitSearch}
                 onChange={(e) => {
                   setProduitSearch(e.target.value);
@@ -384,43 +383,49 @@ export default function NouveauBonLivraison() {
                           </TableCell>
                           <TableCell>
                             <Input
-                              type="number"
+                              id={`bl-ligne-${index}-quantite-commandee`}
+                              type="number" inputMode="numeric"
                               min={1}
-                              aria-invalid={errors.lignes?.[index]?.quantite_commandee ? true : undefined}
+                              {...fieldErrorProps(
+                                `bl-ligne-${index}-quantite-commandee`,
+                                errors.lignes?.[index]?.quantite_commandee,
+                              )}
                               {...register(`lignes.${index}.quantite_commandee` as const, { valueAsNumber: true })}
                             />
-                            {errors.lignes?.[index]?.quantite_commandee && (
-                              <p role="alert" className="text-xs text-danger mt-1">
-                                {errors.lignes[index]?.quantite_commandee?.message}
-                              </p>
-                            )}
+                            <FieldError id={`bl-ligne-${index}-quantite-commandee`}>
+                              {errors.lignes?.[index]?.quantite_commandee?.message}
+                            </FieldError>
                           </TableCell>
                           <TableCell>
                             <Input
-                              type="number"
+                              id={`bl-ligne-${index}-quantite-livree`}
+                              type="number" inputMode="numeric"
                               min={1}
-                              aria-invalid={errors.lignes?.[index]?.quantite_livree ? true : undefined}
+                              {...fieldErrorProps(
+                                `bl-ligne-${index}-quantite-livree`,
+                                errors.lignes?.[index]?.quantite_livree,
+                              )}
                               {...register(`lignes.${index}.quantite_livree` as const, { valueAsNumber: true })}
                             />
-                            {errors.lignes?.[index]?.quantite_livree && (
-                              <p role="alert" className="text-xs text-danger mt-1">
-                                {errors.lignes[index]?.quantite_livree?.message}
-                              </p>
-                            )}
+                            <FieldError id={`bl-ligne-${index}-quantite-livree`}>
+                              {errors.lignes?.[index]?.quantite_livree?.message}
+                            </FieldError>
                           </TableCell>
                           <TableCell>
                             <Input
-                              type="number"
+                              id={`bl-ligne-${index}-prix`}
+                              type="number" inputMode="decimal"
                               min={0}
                               step="0.01"
-                              aria-invalid={errors.lignes?.[index]?.prix_unitaire ? true : undefined}
+                              {...fieldErrorProps(
+                                `bl-ligne-${index}-prix`,
+                                errors.lignes?.[index]?.prix_unitaire,
+                              )}
                               {...register(`lignes.${index}.prix_unitaire` as const, { valueAsNumber: true })}
                             />
-                            {errors.lignes?.[index]?.prix_unitaire && (
-                              <p role="alert" className="text-xs text-danger mt-1">
-                                {errors.lignes[index]?.prix_unitaire?.message}
-                              </p>
-                            )}
+                            <FieldError id={`bl-ligne-${index}-prix`}>
+                              {errors.lignes?.[index]?.prix_unitaire?.message}
+                            </FieldError>
                           </TableCell>
                           <TableCell className="font-semibold">
                             {formatCurrency(Number(ligne.quantite_livree || 0) * Number(ligne.prix_unitaire || 0))}
@@ -437,11 +442,7 @@ export default function NouveauBonLivraison() {
                 </TableBody>
               </Table>
             </div>
-            {errors.lignes?.root && (
-              <p role="alert" className="text-xs text-danger">
-                {errors.lignes.root.message}
-              </p>
-            )}
+            <FieldError id="bl-lignes">{errors.lignes?.root?.message}</FieldError>
           </CardContent>
         </Card>
 
@@ -451,7 +452,7 @@ export default function NouveauBonLivraison() {
           </CardHeader>
           <CardContent>
             <Textarea
-              placeholder="Notes internes ou instructions de livraison..."
+              placeholder="Notes internes ou instructions de livraison…"
               rows={4}
               {...register('notes')}
             />

@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Eye, EyeOff, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
 import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/loading';
 import { isStrongPassword, passwordRules, PASSWORD_POLICY_MESSAGE } from '../utils/password';
@@ -96,7 +97,7 @@ export default function ChangePassword() {
                   autoComplete="new-password"
                   className="pr-10"
                   aria-invalid={!!errors.newPassword}
-                  aria-describedby="new-rules"
+                  aria-describedby={errors.newPassword ? 'new-rules new-error' : 'new-rules'}
                 />
                 <button
                   type="button"
@@ -120,9 +121,7 @@ export default function ChangePassword() {
                   </li>
                 ))}
               </ul>
-              {errors.newPassword && (
-                <p role="alert" className="text-xs text-danger-600">{errors.newPassword}</p>
-              )}
+              <FieldError id="new">{errors.newPassword}</FieldError>
             </div>
 
             <div className="space-y-1.5">
@@ -136,7 +135,7 @@ export default function ChangePassword() {
                   required
                   autoComplete="new-password"
                   className="pr-10"
-                  aria-invalid={!!errors.confirm}
+                  {...fieldErrorProps('confirm', errors.confirm)}
                 />
                 <button
                   type="button"
@@ -147,9 +146,7 @@ export default function ChangePassword() {
                   {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-              {errors.confirm && (
-                <p role="alert" className="text-xs text-danger-600">{errors.confirm}</p>
-              )}
+              <FieldError id="confirm">{errors.confirm}</FieldError>
             </div>
 
             <Button type="submit" className="w-full" disabled={loading}>

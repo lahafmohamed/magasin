@@ -99,7 +99,10 @@ export function Topbar({
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold uppercase text-primary">
                   {(user.nom_complet || user.username).slice(0, 2)}
                 </span>
-                <span className="hidden max-w-[10rem] truncate text-xs lg:inline">
+                <span
+                  className="hidden max-w-[10rem] truncate text-xs lg:inline"
+                  title={user.nom_complet || user.username}
+                >
                   {user.nom_complet || user.username}
                 </span>
                 <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground sm:inline" />

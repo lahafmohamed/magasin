@@ -92,6 +92,8 @@ export interface FactureComplete extends Facture {
     numero_devis?: string;
     bl_id?: number;
     numero_bl?: string;
+    avoir_id?: number;
+    numero_avoir?: string;
   } | null;
 }
 
@@ -144,20 +146,24 @@ import type { PaymentMethod } from '../utils/paymentMethod';
  * it labels a payment sourced from an advance application and is not something
  * a user can pick. Build selectable option lists from `PAYMENT_METHODS` in
  * utils/paymentMethod, not from this map's keys.
+ *
+ * Pas de couleur ici : ce fut un temps une pastille par méthode, jamais lue par
+ * aucun rendu, qui faisait doublon avec la palette catégorielle de DepensesV2.
+ * Une méthode de paiement se distingue par son libellé et son icône.
  */
 export const METHODES_PAIEMENT: Record<
   PaymentMethod | 'acompte',
-  { label: string; color: string; Icon: LucideIcon }
+  { label: string; Icon: LucideIcon }
 > = {
-  espece: { label: 'Espèces', color: 'bg-success-500', Icon: Banknote },
-  carte: { label: 'Carte', color: 'bg-primary-500', Icon: CreditCard },
-  cheque: { label: 'Chèque', color: 'bg-warning-500', Icon: ScrollText },
-  virement: { label: 'Virement', color: 'bg-primary-700', Icon: Landmark },
-  acompte: { label: 'Acompte', color: 'bg-warning-600', Icon: CircleDollarSign },
-  mobile_money: { label: 'Mobile Money', color: 'bg-pink-500', Icon: Smartphone },
-  wave: { label: 'Wave', color: 'bg-cyan-500', Icon: Smartphone },
-  orange_money: { label: 'Orange Money', color: 'bg-orange-500', Icon: Smartphone },
-  mtn_money: { label: 'MTN Money', color: 'bg-yellow-500', Icon: Smartphone },
+  espece: { label: 'Espèces', Icon: Banknote },
+  carte: { label: 'Carte', Icon: CreditCard },
+  cheque: { label: 'Chèque', Icon: ScrollText },
+  virement: { label: 'Virement', Icon: Landmark },
+  acompte: { label: 'Acompte', Icon: CircleDollarSign },
+  mobile_money: { label: 'Mobile Money', Icon: Smartphone },
+  wave: { label: 'Wave', Icon: Smartphone },
+  orange_money: { label: 'Orange Money', Icon: Smartphone },
+  mtn_money: { label: 'MTN Money', Icon: Smartphone },
 };
 
 export const FALLBACK_PAIEMENT_ICON: LucideIcon = Wallet;

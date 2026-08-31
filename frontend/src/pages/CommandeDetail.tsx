@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Sheet, SheetContent, SheetTitle, SheetDescription, SheetClose } from '@/components/ui/sheet';
 import { TiersPicker } from '../components/TiersPicker';
 import { AttachmentPanel } from '../components/AttachmentPanel';
 import { PageLoading, Spinner } from '@/components/ui/loading';
@@ -226,7 +227,7 @@ export default function CommandeDetail() {
         ? { title: 'Annuler cette commande ?', description: 'La commande fournisseur sera annulée.', confirmLabel: 'Annuler la commande', cancelLabel: 'Retour', destructive: true }
         : statut === 'validee'
           ? { title: 'Valider cette commande ?', description: 'La commande sera validée et prête à être expédiée par le fournisseur.', confirmLabel: 'Valider' }
-          : { title: 'Marquer la commande comme expédiée ?', confirmLabel: 'Confirmer' };
+          : { title: 'Marquer la commande comme expédiée ?', confirmLabel: 'Marquer comme expédiée' };
     if (!(await confirm(confirmOpts))) return;
     try {
       await commandeService.updateStatut(parseInt(id), statut);
@@ -368,7 +369,7 @@ export default function CommandeDetail() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
               <Edit className="h-8 w-8 text-primary" />
-              Modifier la Commande {commande.numero_commande}
+              Modifier la commande {commande.numero_commande}
             </h1>
             <p className="text-muted-foreground mt-1">Modifiez les articles et les détails de l'approvisionnement</p>
           </div>
@@ -421,7 +422,7 @@ export default function CommandeDetail() {
                     id="notes"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Notes..."
+                    placeholder="Notes…"
                     rows={4}
                   />
                 </div>
@@ -454,9 +455,9 @@ export default function CommandeDetail() {
               <CardContent className="flex-1 space-y-4">
                 {/* Search Bar */}
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Search className="pointer-events-none absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="Rechercher rapidement par nom ou référence..."
+                    placeholder="Rechercher rapidement par nom ou référence…"
                     value={produitSearch}
                     onChange={(e) => setProduitSearch(e.target.value)}
                     className="pl-10 sm:pl-10 h-10 border-muted-foreground/30 focus-visible:ring-primary"
@@ -525,7 +526,7 @@ export default function CommandeDetail() {
                               </TableCell>
                               <TableCell>
                                 <Input
-                                  type="number"
+                                  type="number" inputMode="numeric"
                                   className="w-16 h-8 text-center"
                                   min="1"
                                   value={ligne.quantite}
@@ -534,7 +535,7 @@ export default function CommandeDetail() {
                               </TableCell>
                               <TableCell>
                                 <Input
-                                  type="number"
+                                  type="number" inputMode="decimal"
                                   className="w-28 h-8 pl-1 text-xs"
                                   step="0.01"
                                   value={ligne.prix_unitaire}
@@ -593,32 +594,30 @@ export default function CommandeDetail() {
           </div>
         </form>
 
-        {/* Catalog Drawer Backdrop */}
-        {showCatalog && (
-          <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm transition-opacity" onClick={() => setShowCatalog(false)} />
-        )}
-
-        {/* Catalog Drawer */}
-        <div className={`fixed inset-y-0 right-0 z-50 w-full max-w-md bg-background border-l shadow-2xl transform transition-transform duration-300 ease-in-out flex flex-col ${showCatalog ? 'translate-x-0' : 'translate-x-full'}`}>
+        {/* Tiroir catalogue */}
+        <Sheet open={showCatalog} onOpenChange={setShowCatalog}>
+          <SheetContent side="right" showClose={false}>
           <div className="p-4 border-b flex justify-between items-center bg-muted/40">
             <div>
-              <h3 className="font-semibold text-lg flex items-center gap-2">
+              <SheetTitle className="flex items-center gap-2">
                 <BookOpen className="h-5 w-5 text-primary" />
-                Catalogue Produits
-              </h3>
-              <p className="text-xs text-muted-foreground">Sélectionnez les articles à ajouter</p>
+                Catalogue produits
+              </SheetTitle>
+              <SheetDescription className="text-xs">Sélectionnez les articles à ajouter</SheetDescription>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setShowCatalog(false)}>
-              <X className="h-5 w-5" />
-            </Button>
+            <SheetClose asChild>
+              <Button variant="ghost" size="sm" aria-label="Fermer le catalogue">
+                <X className="h-5 w-5" />
+              </Button>
+            </SheetClose>
           </div>
-          
+
           {/* Filter Controls */}
           <div className="p-4 border-b space-y-3">
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input 
-                placeholder="Rechercher..." 
+                placeholder="Rechercher…" 
                 value={catalogSearch} 
                 onChange={e => setCatalogSearch(e.target.value)}
                 className="pl-8 sm:pl-8 text-sm h-9"
@@ -680,7 +679,8 @@ export default function CommandeDetail() {
               })
             )}
           </div>
-        </div>
+          </SheetContent>
+        </Sheet>
       </div>
     );
   }
@@ -913,11 +913,11 @@ export default function CommandeDetail() {
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <span className="text-muted-foreground font-semibold">Numéro de Commande:</span>
+                <span className="text-muted-foreground font-semibold">Numéro de commande:</span>
                 <span className="font-mono font-bold">{commande.numero_commande}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground font-semibold">Date de Commande:</span>
+                <span className="text-muted-foreground font-semibold">Date de commande:</span>
                 <span className="font-bold">
                   {new Date(commande.date_commande).toLocaleDateString('fr-FR', {
                     year: 'numeric',
@@ -928,7 +928,7 @@ export default function CommandeDetail() {
               </div>
               {commande.date_livraison_prevue && (
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground font-semibold">Date de Livraison Prévue:</span>
+                  <span className="text-muted-foreground font-semibold">Date de livraison prévue:</span>
                   <span className="font-bold">{new Date(commande.date_livraison_prevue).toLocaleDateString('fr-FR')}</span>
                 </div>
               )}
@@ -949,7 +949,7 @@ export default function CommandeDetail() {
         {/* Lines Items Table */}
         <Card className="border border-border/60 shadow-sm print-border overflow-hidden">
           <CardHeader className="pb-3">
-            <CardTitle className="text-base font-bold uppercase tracking-wide">Désignation des Articles</CardTitle>
+            <CardTitle className="text-base font-bold uppercase tracking-wide">Désignation des articles</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <Table>

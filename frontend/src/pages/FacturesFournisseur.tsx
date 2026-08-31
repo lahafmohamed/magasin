@@ -361,7 +361,7 @@ export default function FacturesFournisseur() {
         actions={
           <>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -475,7 +475,7 @@ export default function FacturesFournisseur() {
                       </SelectContent>
                     </Select>
                     <Input
-                      type="number"
+                      type="number" inputMode="numeric"
                       className="col-span-3 num"
                       placeholder="Qté"
                       value={ligne.quantite}
@@ -483,7 +483,7 @@ export default function FacturesFournisseur() {
                       onChange={(e) => updateLine(index, 'quantite', parseInt(e.target.value))}
                     />
                     <Input
-                      type="number"
+                      type="number" inputMode="decimal"
                       className="col-span-3 num"
                       placeholder="Prix unit."
                       value={ligne.prix_unitaire}

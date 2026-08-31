@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { DatePicker } from '@/components/ui/date-picker';
 import { EmptyState } from '@/components/ui/empty-state';
+import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
 import { Spinner } from '@/components/ui/loading';
 import { ArrowLeft, Search, Minus, Plus, X, AlertCircle, ShoppingCart } from 'lucide-react';
 import { toast } from 'sonner';
@@ -342,7 +343,7 @@ export default function NouvelleFacture() {
           Retour
         </Button>
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight">Nouvelle Facture</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Nouvelle facture</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Brouillon · <span className="font-mono">FAC-{new Date().getFullYear()}-XXXX</span>
           </p>
@@ -391,12 +392,15 @@ export default function NouvelleFacture() {
               name="client"
               render={({ field, fieldState }) => (
                 <>
-                  <TiersPicker role="client" value={field.value} onChange={field.onChange} />
-                  {fieldState.error && (
-                    <p role="alert" className="text-xs font-medium text-danger mt-1.5">
-                      {fieldState.error.message}
-                    </p>
-                  )}
+                  <TiersPicker
+                    role="client"
+                    value={field.value}
+                    onChange={field.onChange}
+                    {...fieldErrorProps('facture-client', fieldState.error)}
+                  />
+                  <FieldError id="facture-client" className="mt-1.5">
+                    {fieldState.error?.message}
+                  </FieldError>
                 </>
               )}
             />
@@ -447,14 +451,11 @@ export default function NouvelleFacture() {
                       value={field.value}
                       onChange={field.onChange}
                       required
+                      {...fieldErrorProps('facture-echeance', errors.echeance)}
                     />
                   )}
                 />
-                {errors.echeance && (
-                  <p role="alert" className="text-xs font-medium text-danger mt-1">
-                    {errors.echeance.message}
-                  </p>
-                )}
+                <FieldError id="facture-echeance">{errors.echeance?.message}</FieldError>
               </div>
             </div>
           </section>
@@ -477,7 +478,7 @@ export default function NouvelleFacture() {
               Rechercher un produit
             </Label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input
                 id="facture-produit-search"
                 className="w-full pl-10 pr-3 py-2.5 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
@@ -628,7 +629,12 @@ export default function NouvelleFacture() {
                                   name={`lignes.${i}.quantite`}
                                   render={({ field: qField }) => (
                                     <input
+                                      id={`facture-ligne-${i}-quantite`}
                                       aria-label={`Quantité pour ${l.produit_nom}`}
+                                      {...fieldErrorProps(
+                                        `facture-ligne-${i}-quantite`,
+                                        lineErrors?.quantite,
+                                      )}
                                       className="w-10 text-center text-sm border-x py-1 font-mono bg-background focus-visible:ring-2 focus-visible:ring-ring"
                                       value={qField.value === 0 ? '' : qField.value}
                                       onChange={(e) => {
@@ -658,11 +664,9 @@ export default function NouvelleFacture() {
                                   <Plus className="h-3.5 w-3.5" />
                                 </button>
                               </div>
-                              {lineErrors?.quantite && (
-                                <p role="alert" className="text-xs font-medium text-danger mt-1">
-                                  {lineErrors.quantite.message}
-                                </p>
-                              )}
+                              <FieldError id={`facture-ligne-${i}-quantite`}>
+                                {lineErrors?.quantite?.message}
+                              </FieldError>
                             </td>
                             <td className="px-3 py-3 text-right">
                               <Controller
@@ -670,15 +674,20 @@ export default function NouvelleFacture() {
                                 name={`lignes.${i}.prix_unitaire`}
                                 render={({ field: pField }) => (
                                   <input
-                                    type="number"
+                                    id={`facture-ligne-${i}-prix`}
+                                    type="number" inputMode="decimal"
                                     step="0.01"
+                                    {...fieldErrorProps(
+                                      `facture-ligne-${i}-prix`,
+                                      lineErrors?.prix_unitaire,
+                                    )}
                                     value={pField.value === 0 ? '' : pField.value}
                                     onChange={(e) => {
                                       const n = parseFloat(e.target.value);
                                       pField.onChange(Number.isNaN(n) ? 0 : Math.max(0, n));
                                     }}
                                     onBlur={pField.onBlur}
-                                    className={`w-28 px-2 py-1 text-right text-sm border rounded font-mono focus:outline-none focus:ring-1 focus:ring-ring ${
+                                    className={`w-28 px-2 py-1 text-right text-sm border rounded font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                                       priceOverridden ? 'bg-primary/10 border-primary/30' : 'bg-background'
                                     }`}
                                   />
@@ -688,11 +697,9 @@ export default function NouvelleFacture() {
                                 <span className="uppercase tracking-wider">P. revient</span>
                                 <span className="font-mono">{formatXOF(l.prix_revient)}</span>
                               </div>
-                              {lineErrors?.prix_unitaire && (
-                                <p role="alert" className="text-xs font-medium text-danger mt-1">
-                                  {lineErrors.prix_unitaire.message}
-                                </p>
-                              )}
+                              <FieldError id={`facture-ligne-${i}-prix`}>
+                                {lineErrors?.prix_unitaire?.message}
+                              </FieldError>
                             </td>
                             <td className="px-3 py-3 text-right">
                               <div
@@ -719,7 +726,7 @@ export default function NouvelleFacture() {
                                   name={`lignes.${i}.remise_pct`}
                                   render={({ field: rField }) => (
                                     <input
-                                      type="number"
+                                      type="number" inputMode="decimal"
                                       min={0}
                                       max={100}
                                       value={rField.value}
@@ -729,7 +736,7 @@ export default function NouvelleFacture() {
                                         )
                                       }
                                       onBlur={rField.onBlur}
-                                      className="w-12 px-1.5 py-1 text-right text-sm border rounded font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                                      className="w-12 px-1.5 py-1 text-right text-sm border rounded font-mono bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                                     />
                                   )}
                                 />
@@ -767,11 +774,9 @@ export default function NouvelleFacture() {
                 />
               </div>
             )}
-            {errors.lignes?.message && (
-              <p role="alert" className="text-xs font-medium text-danger mt-2">
-                {errors.lignes.message}
-              </p>
-            )}
+            <FieldError id="facture-lignes" className="mt-2">
+              {errors.lignes?.message}
+            </FieldError>
           </section>
         </div>
 

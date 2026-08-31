@@ -331,7 +331,7 @@ export default function ComptabilitePage() {
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <Input
-                    placeholder="Chercher un compte (numéro ou intitulé)..."
+                    placeholder="Chercher un compte (numéro ou intitulé)…"
                     value={compteSearch}
                     onChange={e => setCompteSearch(e.target.value)}
                     className="max-w-xs"
@@ -555,7 +555,7 @@ export default function ComptabilitePage() {
                   <div key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_9rem_9rem_2rem] gap-2 items-center">
                     <Select value={l.compte_numero} onValueChange={v => updateLigne(i, { compte_numero: v })}>
                       <SelectTrigger aria-label={`Compte ligne ${i + 1}`}>
-                        <SelectValue placeholder="Compte..." />
+                        <SelectValue placeholder="Compte…" />
                       </SelectTrigger>
                       <SelectContent>
                         {comptes.map((c: any) => (
@@ -572,6 +572,7 @@ export default function ComptabilitePage() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 justify-self-end sm:justify-self-auto text-muted-foreground hover:text-destructive"
+                      aria-label={`Supprimer la ligne ${i + 1}`}
                       disabled={pieceLignes.length <= 2}
                       onClick={() => setPieceLignes(ls => ls.filter((_, j) => j !== i))}
                       title="Supprimer la ligne"

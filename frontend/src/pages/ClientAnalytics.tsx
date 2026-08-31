@@ -88,7 +88,7 @@ export default function ClientAnalytics() {
           <Link to="/tiers">
             <Button variant="outline" className="gap-2">
               <Users className="h-4 w-4" />
-              Gérer les Contacts
+              Gérer les contacts
             </Button>
           </Link>
           <Button onClick={exportToCSV} className="gap-2" disabled={topClients.length === 0}>
@@ -170,7 +170,7 @@ export default function ClientAnalytics() {
         {/* Pie Chart */}
         <Card>
           <CardHeader>
-            <CardTitle>Répartition du Chiffre d'Affaires</CardTitle>
+            <CardTitle>Répartition du chiffre d'affaires</CardTitle>
             <CardDescription>Top 7 clients</CardDescription>
           </CardHeader>
           <CardContent>

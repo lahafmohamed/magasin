@@ -100,7 +100,7 @@ describe('Dashboard', () => {
   it('renders the dashboard heading after loading', async () => {
     render(<Dashboard />);
     await waitFor(() => {
-      expect(screen.getByText('Tableau de Bord')).toBeInTheDocument();
+      expect(screen.getByText('Tableau de bord')).toBeInTheDocument();
     });
   });
 
@@ -124,7 +124,7 @@ describe('Dashboard', () => {
     });
     render(<Dashboard />);
     await waitFor(() => {
-      expect(screen.getByText('Tableau de Bord')).toBeInTheDocument();
+      expect(screen.getByText('Tableau de bord')).toBeInTheDocument();
     });
   });
 });

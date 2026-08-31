@@ -298,9 +298,9 @@ export default function StockTransfers() {
         <CardContent className="pt-4 pb-4">
           <div className="flex gap-3 flex-wrap items-center">
             <div className="relative flex-1 min-w-[220px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Rechercher N°, source, destination..."
+                placeholder="Rechercher N°, source, destination…"
                 className="pl-10 sm:pl-10 h-10"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -473,7 +473,7 @@ export default function StockTransfers() {
                     ) : (
                       <CheckCircle className="h-4 w-4" />
                     )}
-                    Compléter le Transfert
+                    Compléter le transfert
                   </Button>
                 )}
               </DialogFooter>
@@ -499,10 +499,10 @@ export default function StockTransfers() {
                     onValueChange={(v) => setFormData((prev) => ({ ...prev, location_source_id: v === '__none' ? '' : v }))}
                   >
                     <SelectTrigger id="transfer-source" aria-label="Source">
-                      <SelectValue placeholder="Sélectionner..." />
+                      <SelectValue placeholder="Sélectionner…" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none">Sélectionner...</SelectItem>
+                      <SelectItem value="__none">Sélectionner…</SelectItem>
                       {locations.map((loc) => (
                         <SelectItem key={loc.id} value={String(loc.id)}>{loc.nom}</SelectItem>
                       ))}
@@ -516,10 +516,10 @@ export default function StockTransfers() {
                     onValueChange={(v) => setFormData((prev) => ({ ...prev, location_destination_id: v === '__none' ? '' : v }))}
                   >
                     <SelectTrigger id="transfer-destination" aria-label="Destination">
-                      <SelectValue placeholder="Sélectionner..." />
+                      <SelectValue placeholder="Sélectionner…" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none">Sélectionner...</SelectItem>
+                      <SelectItem value="__none">Sélectionner…</SelectItem>
                       {locations
                         .filter((l) => l.id.toString() !== formData.location_source_id)
                         .map((loc) => (
@@ -536,7 +536,7 @@ export default function StockTransfers() {
                   id="transfer-notes"
                   value={formData.notes}
                   onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
-                  placeholder="Optionnel..."
+                  placeholder="Optionnel…"
                 />
               </div>
 
@@ -563,10 +563,10 @@ export default function StockTransfers() {
                         onValueChange={(v) => updateLine(index, 'produit_id', parseInt(v))}
                       >
                         <SelectTrigger className="flex-1" aria-label="Produit">
-                          <SelectValue placeholder="Choisir produit..." />
+                          <SelectValue placeholder="Choisir produit…" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="0">Choisir produit...</SelectItem>
+                          <SelectItem value="0">Choisir produit…</SelectItem>
                           {products.map((p) => (
                             <SelectItem key={p.id} value={String(p.id)}>
                               {p.reference} — {p.nom} (stock: {p.stock})
@@ -575,7 +575,7 @@ export default function StockTransfers() {
                         </SelectContent>
                       </Select>
                       <Input
-                        type="number"
+                        type="number" inputMode="numeric"
                         className="w-24"
                         placeholder="Qté"
                         value={ligne.quantite_demandee}

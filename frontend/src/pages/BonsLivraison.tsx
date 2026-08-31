@@ -131,7 +131,7 @@ export default function BonsLivraison() {
     <DocumentListPage
       list={list}
       layoutClassName="container mx-auto py-6 space-y-4"
-      title="Bons de Livraison"
+      title="Bons de livraison"
       titleIcon={Truck}
       createButton={
         <Button onClick={() => navigate('/bons-livraison/nouveau')} className="gap-2">

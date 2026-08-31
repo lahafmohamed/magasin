@@ -304,16 +304,20 @@ export default function FactureDetail() {
         steps={[
           {
             label: 'Devis',
-            numero: (facture.origine as any)?.numero_devis ?? null,
-            to: (facture.origine as any)?.devis_id ? `/devis/${(facture.origine as any).devis_id}` : null,
+            numero: facture.origine?.numero_devis ?? null,
+            to: facture.origine?.devis_id ? `/devis/${facture.origine.devis_id}` : null,
           },
           {
             label: 'Bon de livraison',
-            numero: (facture.origine as any)?.numero_bl ?? null,
-            to: (facture.origine as any)?.bl_id ? `/bons-livraison/${(facture.origine as any).bl_id}` : null,
+            numero: facture.origine?.numero_bl ?? null,
+            to: facture.origine?.bl_id ? `/bons-livraison/${facture.origine.bl_id}` : null,
           },
           { label: 'Facture', numero: facture.numero_facture || `Facture #${facture.id}`, current: true },
-          { label: 'Avoir', numero: null },
+          {
+            label: 'Avoir',
+            numero: facture.origine?.numero_avoir ?? null,
+            to: facture.origine?.avoir_id ? `/avoirs/${facture.origine.avoir_id}` : null,
+          },
         ]}
       />
 
@@ -386,7 +390,7 @@ export default function FactureDetail() {
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">N° Facture:</span>
-              <span className="font-mono font-semibold">{facture.numero_facture}</span>
+              <span className="font-mono font-semibold break-words">{facture.numero_facture}</span>
             </div>
             {facture.origine && 'devis_id' in facture.origine && facture.origine.devis_id && (
               <div className="text-sm">
@@ -438,7 +442,7 @@ export default function FactureDetail() {
                       {ligne.produit_nom}
                       {(ligne as any).is_depot_only_history && (
                         <span
-                          className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
+                          className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground"
                           title="Cet article n'a plus de stock magasin — il était disponible en dépôt au moment de la création"
                         >
                           stock dépôt (historique)
@@ -542,7 +546,7 @@ export default function FactureDetail() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5 text-blue-600 dark:text-blue-300" />
+              <CreditCard className="h-5 w-5 text-info-700" />
               Acomptes disponibles ({acomptesDispo.length})
             </CardTitle>
             <CardDescription>
@@ -570,7 +574,7 @@ export default function FactureDetail() {
                         {a.date_acompte ? new Date(a.date_acompte).toLocaleDateString('fr-FR') : '-'}
                       </TableCell>
                       <TableCell className="text-sm">{formatPaymentMethod(a.methode_paiement)}</TableCell>
-                      <TableCell className="text-right font-semibold text-blue-600 dark:text-blue-300">
+                      <TableCell className="text-right font-semibold text-info-700">
                         {formatXOF(restant)}
                       </TableCell>
                       <TableCell className="text-right">
@@ -611,7 +615,7 @@ export default function FactureDetail() {
             </div>
             <div>
               <span className="text-sm font-medium block mb-1">Votre dette fournisseur envers ce tiers</span>
-              <p className="text-lg font-bold text-blue-600 dark:text-blue-300">{formatXOF(soldeFourn)}</p>
+              <p className="text-lg font-bold text-info-700">{formatXOF(soldeFourn)}</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="compensation-montant">
@@ -619,7 +623,7 @@ export default function FactureDetail() {
               </Label>
               <Input
                 id="compensation-montant"
-                type="number"
+                type="number" inputMode="decimal"
                 value={compensationMontant}
                 onChange={(e) => setCompensationMontant(e.target.value)}
                 min={0.01}
@@ -633,7 +637,7 @@ export default function FactureDetail() {
               Annuler
             </Button>
             <Button variant="warning" onClick={handleCompensation} disabled={compensationLoading}>
-              {compensationLoading ? 'En cours...' : 'Confirmer la compensation'}
+              {compensationLoading ? 'En cours…' : 'Confirmer la compensation'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -649,7 +653,7 @@ export default function FactureDetail() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5 text-blue-600 dark:text-blue-300" />
+              <CreditCard className="h-5 w-5 text-info-700" />
               Appliquer l'acompte
             </DialogTitle>
             <DialogDescription>
@@ -662,7 +666,7 @@ export default function FactureDetail() {
             </Label>
             <Input
               id="apply-acompte-montant"
-              type="number"
+              type="number" inputMode="decimal"
               value={applyMontant}
               onChange={(e) => setApplyMontant(e.target.value)}
               min={0.01}
@@ -675,7 +679,7 @@ export default function FactureDetail() {
               Annuler
             </Button>
             <Button onClick={handleApplyAcompte} disabled={applyLoading}>
-              {applyLoading ? 'En cours...' : 'Valider'}
+              {applyLoading ? 'En cours…' : 'Valider'}
             </Button>
           </DialogFooter>
         </DialogContent>

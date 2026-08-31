@@ -501,7 +501,7 @@ export default function CaisseV2() {
   // ecart now sourced from closurePreview (server-side)
 
   return (
-    <div className="container mx-auto py-6 max-w-7xl">
+    <div className="container mx-auto p-3 sm:p-6 max-w-7xl">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
         <div>
@@ -518,7 +518,7 @@ export default function CaisseV2() {
             value={selectedMagasin ? String(selectedMagasin) : ''}
             onValueChange={(v) => setSelectedMagasin(v ? parseInt(v) : null)}
           >
-            <SelectTrigger className="h-9 w-[200px]" aria-label="Sélectionner un magasin">
+            <SelectTrigger className="h-9 w-auto min-w-[200px] max-w-full" aria-label="Sélectionner un magasin">
               <SelectValue placeholder="Sélectionner un magasin" />
             </SelectTrigger>
             <SelectContent>
@@ -550,8 +550,8 @@ export default function CaisseV2() {
       {selectedMagasin && !session && !loading && (
         <Card className="p-8">
           <div className="flex flex-col items-center text-center">
-            <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-muted flex items-center justify-center mb-4">
-              <Lock className="h-8 w-8 text-gray-500 dark:text-gray-400" />
+            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
+              <Lock className="h-8 w-8 text-muted-foreground" />
             </div>
             <h3 className="text-xl font-semibold mb-2">Caisse fermée</h3>
             <p className="text-muted-foreground mb-6 max-w-md">
@@ -650,12 +650,12 @@ export default function CaisseV2() {
 
             <Card className="p-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-500/20 flex items-center justify-center">
-                  <Scale className="h-5 w-5 text-blue-600 dark:text-blue-300" />
+                <div className="w-10 h-10 rounded-full bg-info-100 flex items-center justify-center">
+                  <Scale className="h-5 w-5 text-info-700" />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Solde théorique</p>
-                  <p className="text-xl font-bold text-blue-600 dark:text-blue-300">
+                  <p className="text-xl font-bold text-info-700">
                     {formatXOF(session.solde_theorique)}
                   </p>
                 </div>
@@ -664,8 +664,8 @@ export default function CaisseV2() {
 
             <Card className="p-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-purple-100 dark:bg-purple-500/20 flex items-center justify-center">
-                  <ArrowLeftRight className="h-5 w-5 text-purple-600 dark:text-purple-300" />
+                <div className="w-10 h-10 rounded-full bg-chart-4/15 flex items-center justify-center">
+                  <ArrowLeftRight className="h-5 w-5 text-chart-4" />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Mouvements</p>
@@ -970,7 +970,7 @@ export default function CaisseV2() {
                 id="caisse-commentaire-cloture"
                 value={commentaireCloture}
                 onChange={(e) => dispatchClose({ type: 'setCommentaire', value: e.target.value })}
-                placeholder={closurePreview != null && closurePreview.ecart !== null && closurePreview.ecart !== 0 ? "Expliquer l'écart..." : "Commentaire optionnel..."}
+                placeholder={closurePreview != null && closurePreview.ecart !== null && closurePreview.ecart !== 0 ? "Expliquer l'écart…" : "Commentaire optionnel…"}
                 maxLength={2000}
                 className="mt-1"
               />
@@ -1101,7 +1101,7 @@ export default function CaisseV2() {
                 id="divers-motif"
                 value={diversLibelle}
                 onChange={(e) => setDiversLibelle(e.target.value)}
-                placeholder="Ex: Apport gérant, retrait dépôt banque..."
+                placeholder="Ex: Apport gérant, retrait dépôt banque…"
                 maxLength={500}
               />
             </div>

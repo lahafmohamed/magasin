@@ -20,6 +20,21 @@ function resolveTheme(theme: Theme): 'light' | 'dark' {
   return theme;
 }
 
+/**
+ * Bascule la classe `dark` en neutralisant les transitions le temps du repaint
+ * (règle CSS `[data-theme-switching]` dans index.css). Sinon chaque élément
+ * portant `transition-colors` fond vers sa nouvelle couleur à son rythme et la
+ * page se déchire pendant ~200 ms.
+ */
+function applyTheme(resolved: 'light' | 'dark') {
+  const root = document.documentElement;
+  root.setAttribute('data-theme-switching', '');
+  root.classList.toggle('dark', resolved === 'dark');
+  // Forcer un reflow fige les styles sans transition avant de les réactiver.
+  void root.offsetHeight;
+  requestAnimationFrame(() => root.removeAttribute('data-theme-switching'));
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
     const stored = localStorage.getItem('theme');
@@ -32,7 +47,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const resolved = resolveTheme(theme);
     setResolvedTheme(resolved);
-    document.documentElement.classList.toggle('dark', resolved === 'dark');
+    applyTheme(resolved);
     localStorage.setItem('theme', theme);
   }, [theme]);
 
@@ -42,7 +57,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       if (theme === 'system') {
         const resolved = getSystemTheme();
         setResolvedTheme(resolved);
-        document.documentElement.classList.toggle('dark', resolved === 'dark');
+        applyTheme(resolved);
       }
     };
     mq.addEventListener('change', handler);

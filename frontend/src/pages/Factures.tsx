@@ -171,7 +171,7 @@ export default function Factures() {
       createButton={
         <Link to="/factures/nouvelle">
           <Button className="gap-2">
-            <Plus className="h-4 w-4" /> Nouvelle Facture
+            <Plus className="h-4 w-4" /> Nouvelle facture
           </Button>
         </Link>
       }
@@ -211,7 +211,7 @@ export default function Factures() {
         ),
       }}
       renderCard={renderCard}
-      listTitle="Liste des Factures"
+      listTitle="Liste des factures"
     />
   );
 }

@@ -15,6 +15,7 @@ import { authService } from '../services/authService';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
 import { Spinner } from '@/components/ui/loading';
 import { PageHeader } from '@/components/ui/page-header';
 import { PasswordInput } from '@/components/ui/password-input';
@@ -173,7 +174,9 @@ export default function Profil() {
                   required
                   autoComplete="new-password"
                   aria-invalid={!!errors.newPassword}
-                  aria-describedby="profil-new-rules"
+                  aria-describedby={
+                    errors.newPassword ? 'profil-new-rules profil-new-error' : 'profil-new-rules'
+                  }
                 />
                 <ul id="profil-new-rules" className="space-y-0.5 pt-1">
                   {rules.map((rule) => (
@@ -188,11 +191,7 @@ export default function Profil() {
                     </li>
                   ))}
                 </ul>
-                {errors.newPassword && (
-                  <p role="alert" className="text-xs text-danger-600">
-                    {errors.newPassword}
-                  </p>
-                )}
+                <FieldError id="profil-new">{errors.newPassword}</FieldError>
               </div>
 
               <div className="space-y-1.5">
@@ -203,13 +202,9 @@ export default function Profil() {
                   onChange={(e) => setConfirm(e.target.value)}
                   required
                   autoComplete="new-password"
-                  aria-invalid={!!errors.confirm}
+                  {...fieldErrorProps('profil-confirm', errors.confirm)}
                 />
-                {errors.confirm && (
-                  <p role="alert" className="text-xs text-danger-600">
-                    {errors.confirm}
-                  </p>
-                )}
+                <FieldError id="profil-confirm">{errors.confirm}</FieldError>
               </div>
 
               <Button type="submit" disabled={submitting} className="w-full">

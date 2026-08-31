@@ -289,7 +289,7 @@ export default function Receptions() {
                     <td className="px-3 py-2 text-right num">{ligne.quantite}</td>
                     <td className="px-3 py-2 text-right">
                       <Input
-                        type="number"
+                        type="number" inputMode="numeric"
                         className="h-8 w-24 ml-auto text-right num"
                         value={receivedQuantities[ligne.produit_id] || 0}
                         min={0}
@@ -339,7 +339,7 @@ export default function Receptions() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Réceptions de commandes</h1>
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}

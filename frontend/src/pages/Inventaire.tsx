@@ -758,7 +758,7 @@ export default function Inventaire() {
         <CardContent className="pt-6">
           <div className="flex gap-3 items-center flex-wrap">
             <div className="relative flex-1 min-w-[250px]">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Rechercher par nom, référence ou code-barres…"
                   className="pl-12 sm:pl-12 h-10"
@@ -837,7 +837,7 @@ export default function Inventaire() {
           {/* Bulk Stock Adjustment */}
           <div className="flex items-center gap-1">
             <Input
-              type="number"
+              type="number" inputMode="numeric"
               placeholder="Quantité"
               className="w-20 h-8 text-xs"
               value={bulkAdjustQuantity}
@@ -874,10 +874,10 @@ export default function Inventaire() {
             onValueChange={(v) => setBulkCategory(v === '__all' ? '' : v)}
           >
             <SelectTrigger className="h-8 w-32" aria-label="Changer la catégorie">
-              <SelectValue placeholder="Catégorie..." />
+              <SelectValue placeholder="Catégorie…" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__all">Catégorie...</SelectItem>
+              <SelectItem value="__all">Catégorie…</SelectItem>
               {categories.map(cat => (
                 <SelectItem key={cat} value={cat}>{cat}</SelectItem>
               ))}
@@ -983,7 +983,7 @@ export default function Inventaire() {
                   <Label htmlFor="stock">Stock</Label>
                   <Input
                     id="stock"
-                    type="number"
+                    type="number" inputMode="numeric"
                     min="0"
                     value={formData.stock}
                     onChange={(e) => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
@@ -998,10 +998,10 @@ export default function Inventaire() {
                       onValueChange={(v) => setFormData({ ...formData, location_id: v === '__all' ? '' : v })}
                     >
                       <SelectTrigger id="location_id" className="h-9 w-full" aria-label="Dépôt cible">
-                        <SelectValue placeholder="Sélectionner..." />
+                        <SelectValue placeholder="Sélectionner…" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="__all">Sélectionner...</SelectItem>
+                        <SelectItem value="__all">Sélectionner…</SelectItem>
                         {stockLocations.map((location) => (
                           <SelectItem key={location.id} value={String(location.id)}>
                             {location.nom} ({location.code})
@@ -1014,7 +1014,7 @@ export default function Inventaire() {
                     <Label htmlFor="initial_stock">Stock initial du dépôt</Label>
                     <Input
                       id="initial_stock"
-                      type="number"
+                      type="number" inputMode="numeric"
                       min="0"
                       value={formData.initial_stock}
                       onChange={(e) => setFormData({ ...formData, initial_stock: parseInt(e.target.value) || 0 })}
@@ -1043,7 +1043,7 @@ export default function Inventaire() {
                 <Label htmlFor="stock_min">Stock minimum</Label>
                 <Input
                   id="stock_min"
-                  type="number"
+                  type="number" inputMode="numeric"
                   min="0"
                   value={formData.stock_min}
                   onChange={(e) => setFormData({ ...formData, stock_min: parseInt(e.target.value) || 5 })}
@@ -1229,7 +1229,7 @@ export default function Inventaire() {
                       case 'ajustement':
                         return <RefreshCw className="h-4 w-4 text-warning-500" />;
                       default:
-                        return <Clock className="h-4 w-4 text-gray-500" />;
+                        return <Clock className="h-4 w-4 text-muted-foreground" />;
                     }
                   };
 

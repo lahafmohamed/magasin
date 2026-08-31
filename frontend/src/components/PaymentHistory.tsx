@@ -53,7 +53,6 @@ export const PaymentHistory: React.FC<PaymentHistoryProps> = ({ paiements, onDel
   const getMethodeConfig = (methode: string) => {
     return METHODES_PAIEMENT[methode as keyof typeof METHODES_PAIEMENT] || {
       label: methode,
-      color: 'bg-muted-foreground',
       Icon: FALLBACK_PAIEMENT_ICON,
     };
   };
@@ -115,7 +114,10 @@ export const PaymentHistory: React.FC<PaymentHistoryProps> = ({ paiements, onDel
                 <td className="px-3 py-2 text-muted-foreground">
                   {paiement.reference || '—'}
                 </td>
-                <td className="px-3 py-2 max-w-xs truncate text-muted-foreground">
+                <td
+                  className="px-3 py-2 max-w-xs truncate text-muted-foreground"
+                  title={paiement.notes || undefined}
+                >
                   {paiement.notes || '—'}
                 </td>
                 {/* La cellule est toujours rendue : la rendre conditionnellement

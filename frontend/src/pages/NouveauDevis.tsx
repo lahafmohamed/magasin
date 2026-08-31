@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
 import { ArrowLeft, Check, FileText, Search, ShoppingCart, X } from 'lucide-react';
 import { formatFCFA as formatXOF } from '@/utils/format';
 import { toast } from 'sonner';
@@ -320,7 +321,7 @@ export default function NouveauDevis() {
             <ArrowLeft className="h-4 w-4 mr-2" />
             Retour
           </Button>
-          <h1 className="text-3xl font-bold tracking-tight">Chargement du devis...</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Chargement du devis…</h1>
         </div>
       </div>
     );
@@ -338,7 +339,7 @@ export default function NouveauDevis() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <FileText className="h-8 w-8" />
-            {isEdit ? 'Modifier le Devis' : 'Nouveau Devis'}
+            {isEdit ? 'Modifier le devis' : 'Nouveau devis'}
           </h1>
           <p className="text-muted-foreground mt-1">{isEdit ? 'Modifiez le devis client' : 'Créez un nouveau devis client'}</p>
         </div>
@@ -384,14 +385,15 @@ export default function NouveauDevis() {
               control={control}
               name="client"
               render={({ field }) => (
-                <TiersPicker role="client" value={field.value} onChange={field.onChange} />
+                <TiersPicker
+                  role="client"
+                  value={field.value}
+                  onChange={field.onChange}
+                  {...fieldErrorProps('devis-client', errors.client)}
+                />
               )}
             />
-            {errors.client && (
-              <p role="alert" className="mt-1.5 text-xs font-medium text-danger">
-                {errors.client.message}
-              </p>
-            )}
+            <FieldError id="devis-client" className="mt-1.5">{errors.client?.message}</FieldError>
           </CardContent>
         </Card>
 
@@ -443,7 +445,7 @@ export default function NouveauDevis() {
               Rechercher un produit
             </Label>
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input
                 id="devis-produit-search"
                 className="w-full pl-10 pr-3 py-2.5 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
@@ -565,30 +567,30 @@ export default function NouveauDevis() {
                             </td>
                             <td className="px-3 py-3 text-right">
                               <input
-                                type="number"
+                                id={`devis-ligne-${index}-prix`}
+                                type="number" inputMode="decimal"
                                 min="0"
                                 step="0.01"
+                                {...fieldErrorProps(`devis-ligne-${index}-prix`, prixError)}
                                 value={ligne.prix_unitaire === 0 ? '' : ligne.prix_unitaire}
                                 onChange={(e) => {
                                   const n = parseFloat(e.target.value);
                                   updatePrix(index, Number.isNaN(n) ? 0 : n);
                                 }}
-                                className="w-28 px-2 py-1 text-right text-sm border rounded font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                                className="w-28 px-2 py-1 text-right text-sm border rounded font-mono bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               />
                               <div className="text-[10px] text-muted-foreground mt-1 flex justify-end items-baseline gap-1">
                                 <span className="uppercase tracking-wider">P. revient</span>
                                 <span className="font-mono">{formatXOF(ligne.prix_revient)}</span>
                               </div>
-                              {prixError && (
-                                <p role="alert" className="mt-1 text-xs font-medium text-danger">
-                                  {prixError}
-                                </p>
-                              )}
+                              <FieldError id={`devis-ligne-${index}-prix`}>{prixError}</FieldError>
                             </td>
                             <td className="px-3 py-3 text-center">
                               <input
-                                type="number"
+                                id={`devis-ligne-${index}-quantite`}
+                                type="number" inputMode="numeric"
                                 min="1"
+                                {...fieldErrorProps(`devis-ligne-${index}-quantite`, qteError)}
                                 value={ligne.quantite === 0 ? '' : ligne.quantite}
                                 onChange={(e) => {
                                   const n = parseInt(e.target.value, 10);
@@ -599,13 +601,9 @@ export default function NouveauDevis() {
                                     updateQuantite(index, 1);
                                   }
                                 }}
-                                className="w-16 px-2 py-1 text-center text-sm border rounded font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                                className="w-16 px-2 py-1 text-center text-sm border rounded font-mono bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               />
-                              {qteError && (
-                                <p role="alert" className="mt-1 text-xs font-medium text-danger">
-                                  {qteError}
-                                </p>
-                              )}
+                              <FieldError id={`devis-ligne-${index}-quantite`}>{qteError}</FieldError>
                             </td>
                             <td className={`px-3 py-3 text-center font-mono ${overstock ? 'text-destructive' : ''}`}>
                               {ligne.stock_dispo}
@@ -659,11 +657,7 @@ export default function NouveauDevis() {
                 />
               </div>
             )}
-            {lignesError && (
-              <p role="alert" className="text-xs font-medium text-danger">
-                {lignesError}
-              </p>
-            )}
+            <FieldError id="devis-lignes">{lignesError}</FieldError>
           </CardContent>
         </Card>
 
@@ -684,7 +678,7 @@ export default function NouveauDevis() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="devis-notes">Notes</Label>
-              <Textarea id="devis-notes" placeholder="Ajoutez une note..." {...register('notes')} />
+              <Textarea id="devis-notes" placeholder="Ajoutez une note…" {...register('notes')} />
             </div>
           </CardContent>
         </Card>
@@ -697,7 +691,7 @@ export default function NouveauDevis() {
             </div>
             <Button type="submit" disabled={isSubmitting || editLoading || !selectedClient || fields.length === 0}>
               <Check className="h-4 w-4 mr-2" />
-              {isSubmitting ? (isEdit ? 'Enregistrement...' : 'Création...') : (isEdit ? 'Enregistrer les modifications' : 'Créer le devis')}
+              {isSubmitting ? (isEdit ? 'Enregistrement…' : 'Création…') : (isEdit ? 'Enregistrer les modifications' : 'Créer le devis')}
             </Button>
           </CardContent>
         </Card>

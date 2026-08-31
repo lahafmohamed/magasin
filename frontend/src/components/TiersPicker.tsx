@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useId } from 'react';
 import { Search, X, Users, Truck, UserCheck } from 'lucide-react';
 import { tiersService } from '../services/api';
 import { Tiers } from '../types';
+import { TiersRoleBadge } from './TiersRoleBadge';
 
 interface TiersPickerProps {
   role?: 'client' | 'fournisseur';
@@ -11,9 +12,21 @@ interface TiersPickerProps {
   disabled?: boolean;
   /** Posé sur l'input de recherche, pour qu'un <Label htmlFor> puisse le cibler. */
   id?: string;
+  /** Signalement d'erreur — à relier au message via `fieldErrorProps`. */
+  'aria-invalid'?: boolean;
+  'aria-describedby'?: string;
 }
 
-export function TiersPicker({ role, value, onChange, placeholder, disabled = false, id }: TiersPickerProps) {
+export function TiersPicker({
+  role,
+  value,
+  onChange,
+  placeholder,
+  disabled = false,
+  id,
+  'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedby,
+}: TiersPickerProps) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Tiers[]>([]);
   const [open, setOpen] = useState(false);
@@ -77,16 +90,19 @@ export function TiersPicker({ role, value, onChange, placeholder, disabled = fal
           {value.raison_sociale.charAt(0).toUpperCase()}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold truncate">
+          <div
+            className="text-sm font-semibold truncate"
+            title={`${value.raison_sociale}${value.prenom ? ` ${value.prenom}` : ''}`}
+          >
             {value.raison_sociale}{value.prenom ? ` ${value.prenom}` : ''}
           </div>
           <div className="text-xs text-muted-foreground flex items-center gap-2">
             <span className="font-mono">{value.code}</span>
             {value.telephone && <span>· {value.telephone}</span>}
             {value.est_client && value.est_fournisseur && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 text-[10px] font-medium">
-                <UserCheck className="h-2.5 w-2.5" /> Mixte
-              </span>
+              <TiersRoleBadge role="mixte" className="gap-0.5 rounded-full text-3xs">
+                <UserCheck className="h-2.5 w-2.5" aria-hidden="true" /> Mixte
+              </TiersRoleBadge>
             )}
           </div>
         </div>
@@ -102,8 +118,8 @@ export function TiersPicker({ role, value, onChange, placeholder, disabled = fal
   return (
     <div ref={ref} className="relative">
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <RoleIcon className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <RoleIcon className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <input
           id={id}
           type="text"
@@ -112,13 +128,15 @@ export function TiersPicker({ role, value, onChange, placeholder, disabled = fal
           aria-controls={listboxId}
           aria-autocomplete="list"
           aria-activedescendant={highlighted >= 0 ? `${listboxId}-opt-${highlighted}` : undefined}
+          aria-invalid={ariaInvalid}
+          aria-describedby={ariaDescribedby}
           value={query}
           onChange={e => { setQuery(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder={placeholder || (role === 'client' ? 'Rechercher un client...' : role === 'fournisseur' ? 'Rechercher un fournisseur...' : 'Rechercher un tiers...')}
+          placeholder={placeholder || (role === 'client' ? 'Rechercher un client…' : role === 'fournisseur' ? 'Rechercher un fournisseur…' : 'Rechercher un tiers…')}
           disabled={disabled}
-          className="w-full pl-9 pr-9 py-2 text-sm border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-50"
+          className="w-full pl-9 pr-9 py-2 text-sm border rounded-md bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         />
       </div>
 
@@ -129,7 +147,7 @@ export function TiersPicker({ role, value, onChange, placeholder, disabled = fal
           className="absolute top-full left-0 right-0 z-50 mt-1 bg-popover border rounded-md shadow-lg max-h-64 overflow-y-auto"
         >
           {loading && (
-            <div className="px-3 py-2 text-sm text-muted-foreground">Recherche...</div>
+            <div className="px-3 py-2 text-sm text-muted-foreground">Recherche…</div>
           )}
           {!loading && results.length === 0 && (
             <div className="px-3 py-2 text-sm text-muted-foreground">Aucun résultat pour « {query} »</div>
@@ -149,7 +167,10 @@ export function TiersPicker({ role, value, onChange, placeholder, disabled = fal
                 {t.raison_sociale.charAt(0).toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">
+                <div
+                  className="text-sm font-medium truncate"
+                  title={`${t.raison_sociale}${t.prenom ? ` ${t.prenom}` : ''}`}
+                >
                   {t.raison_sociale}{t.prenom ? ` ${t.prenom}` : ''}
                 </div>
                 <div className="text-xs text-muted-foreground flex items-center gap-2">
@@ -158,12 +179,8 @@ export function TiersPicker({ role, value, onChange, placeholder, disabled = fal
                 </div>
               </div>
               <div className="flex gap-1 shrink-0">
-                {t.est_client && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300">Client</span>
-                )}
-                {t.est_fournisseur && (
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-300">Fourn.</span>
-                )}
+                {t.est_client && <TiersRoleBadge role="client" className="text-3xs" />}
+                {t.est_fournisseur && <TiersRoleBadge role="fournisseur" className="text-3xs" />}
               </div>
             </button>
           ))}

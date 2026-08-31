@@ -182,7 +182,7 @@ export default function DemandesList() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
             <Package className="h-6 w-6 sm:h-8 sm:w-8" />
-            Demandes de Réapprovisionnement
+            Demandes de réapprovisionnement
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             {isMagasin && 'Créez et suivez vos demandes vers le dépôt'}
@@ -194,7 +194,7 @@ export default function DemandesList() {
         <RequirePermission permission={Permissions.DEMANDE_CREATE} hideIfUnauthorized>
           <Button onClick={() => navigate('/demandes/nouvelle')} className="gap-2 w-full sm:w-auto">
             <Plus className="h-4 w-4" />
-            Nouvelle Demande
+            Nouvelle demande
           </Button>
         </RequirePermission>
       </div>
@@ -236,9 +236,9 @@ export default function DemandesList() {
         <CardContent className="pt-4 pb-4">
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Rechercher par numéro, magasin, dépôt..."
+                placeholder="Rechercher par numéro, magasin, dépôt…"
                 className="pl-10 sm:pl-10"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}

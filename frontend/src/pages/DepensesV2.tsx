@@ -83,16 +83,18 @@ interface SessionCaisse {
   statut: 'ouverte' | 'cloturee';
 }
 
+// Palette catégorielle : distingue les méthodes entre elles, sans valeur de
+// statut (donc pas les rampes success/warning/danger). Les tokens `chart-*`
+// sont déjà réglés par thème dans index.css — aucune variante `dark:` à écrire.
 const METHOD_BADGE_CLASSES: Record<string, string> = {
-  // Palette catégorielle (pas de vert : réservé aux statuts/succès)
-  espece: 'bg-teal-100 dark:bg-teal-500/20 text-teal-800 dark:text-teal-200',
-  carte: 'bg-blue-100 dark:bg-blue-500/20 text-blue-800 dark:text-blue-200',
-  cheque: 'bg-orange-100 dark:bg-orange-500/20 text-orange-800 dark:text-orange-200',
-  virement: 'bg-purple-100 dark:bg-purple-500/20 text-purple-800 dark:text-purple-200',
-  mobile_money: 'bg-pink-100 dark:bg-pink-500/20 text-pink-800 dark:text-pink-200',
-  orange_money: 'bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-200',
-  mtn_money: 'bg-yellow-100 dark:bg-yellow-500/20 text-yellow-800 dark:text-yellow-200',
-  wave: 'bg-cyan-100 dark:bg-cyan-500/20 text-cyan-800 dark:text-cyan-200',
+  espece: 'bg-chart-7/15 text-chart-7',
+  carte: 'bg-chart-1/15 text-chart-1',
+  cheque: 'bg-chart-6/15 text-chart-6',
+  virement: 'bg-chart-4/15 text-chart-4',
+  mobile_money: 'bg-chart-5/15 text-chart-5',
+  orange_money: 'bg-chart-6/15 text-chart-6',
+  mtn_money: 'bg-chart-2/15 text-chart-2',
+  wave: 'bg-chart-3/15 text-chart-3',
 };
 
 // Libellés : formatPaymentMethod est la source partagée ; seul « Espèces »
@@ -357,7 +359,7 @@ export default function DepensesV2() {
 
 
   const getMethodBadge = (methode: string) => (
-    <Badge className={METHOD_BADGE_CLASSES[methode] || 'bg-gray-100 dark:bg-muted'}>
+    <Badge className={METHOD_BADGE_CLASSES[methode] || 'bg-muted text-muted-foreground'}>
       {METHOD_LABELS[methode] || methode}
     </Badge>
   );
@@ -382,7 +384,7 @@ export default function DepensesV2() {
                 setPage(1);
               }}
             >
-              <SelectTrigger className="w-[220px]" aria-label="Magasin">
+              <SelectTrigger className="w-auto min-w-[220px] max-w-full" aria-label="Magasin">
                 <SelectValue placeholder="Sélectionner un magasin" />
               </SelectTrigger>
               <SelectContent>
@@ -453,7 +455,7 @@ export default function DepensesV2() {
             <Dialog open={openDialog} onOpenChange={setOpenDialog}>
               <Button onClick={() => setOpenDialog(true)} disabled={!selectedMagasin}>
                 <Plus className="h-4 w-4 mr-2" />
-                Nouvelle Dépense
+                Nouvelle dépense
               </Button>
               <DialogContent className="sm:max-w-lg">
                 <DialogHeader>

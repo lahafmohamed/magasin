@@ -61,10 +61,11 @@ export function QueryState({
           'flex flex-col items-center justify-center gap-3 py-12 text-center',
           className
         )}
-        role="alert"
       >
         <AlertCircle className="h-10 w-10 text-destructive opacity-80" aria-hidden="true" />
-        <div className="space-y-1">
+        {/* `role="alert"` porté par le seul message : sur le conteneur, le
+            lecteur d'écran relisait aussi l'icône et le bouton « Réessayer ». */}
+        <div className="space-y-1" role="alert">
           <p className="text-sm font-medium text-foreground">Échec du chargement</p>
           <p className="text-sm text-muted-foreground">{getErrorMessage(error)}</p>
         </div>

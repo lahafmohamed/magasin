@@ -88,7 +88,7 @@ export default function StockValuation() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <BarChart3 className="h-8 w-8" />
-            Valorisation du Stock
+            Valorisation du stock
           </h1>
           <p className="text-muted-foreground mt-1">Analyse de la valeur de votre inventaire</p>
         </div>
@@ -132,7 +132,7 @@ export default function StockValuation() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Valeur de Vente</CardTitle>
+                <CardTitle className="text-sm font-medium">Valeur de vente</CardTitle>
                 <TrendingUp className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
