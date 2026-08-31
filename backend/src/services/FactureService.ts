@@ -216,11 +216,37 @@ export class FactureService {
       [id]
     );
 
+    // Le lien d'origine est porté dans les deux sens selon le chemin de
+    // création (factures.devis_id/bl_id côté conversions récentes,
+    // devis.facture_id / bons_livraison.facture_id côté fonctions SQL et
+    // données historiques) : on résout les deux, sinon le fil de vie affiche
+    // « — » pour des documents qui existent.
     const { rows: originRows } = await pool.query(
-      `SELECT d.id as devis_id, d.numero_devis, bl.id as bl_id, bl.numero_bl
+      `SELECT d.id AS devis_id, d.numero_devis,
+              bl.id AS bl_id, bl.numero_bl,
+              av.id AS avoir_id, av.numero_avoir
        FROM factures f
-       LEFT JOIN devis d ON f.devis_id = d.id
-       LEFT JOIN bons_livraison bl ON f.bl_id = bl.id
+       LEFT JOIN LATERAL (
+         SELECT b.id, b.numero_bl, b.devis_id
+         FROM bons_livraison b
+         WHERE b.id = f.bl_id OR b.facture_id = f.id
+         ORDER BY (b.id = f.bl_id) DESC NULLS LAST, b.id DESC
+         LIMIT 1
+       ) bl ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT dv.id, dv.numero_devis
+         FROM devis dv
+         WHERE dv.id = COALESCE(f.devis_id, bl.devis_id) OR dv.facture_id = f.id
+         ORDER BY (dv.id = f.devis_id) DESC NULLS LAST, dv.id DESC
+         LIMIT 1
+       ) d ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT fa.id, fa.numero_avoir
+         FROM factures_avoir fa
+         WHERE fa.facture_origine_id = f.id AND fa.statut <> 'annule'
+         ORDER BY fa.id DESC
+         LIMIT 1
+       ) av ON TRUE
        WHERE f.id = $1`,
       [id]
     );

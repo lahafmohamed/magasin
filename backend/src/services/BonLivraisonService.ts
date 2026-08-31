@@ -179,16 +179,34 @@ export class BonLivraisonService {
    * Get delivery note by ID with lines
    */
   async getById(id: number): Promise<any> {
+    // Facture résolue dans les deux sens (bl.facture_id OU factures.bl_id) —
+    // même logique que FactureService.getById ; `f.id as facture_id` aliasé
+    // après bl.* pour que l'id résolu remplace une colonne éventuellement NULL.
     const { rows: blRows } = await pool.query(
       `SELECT bl.*, t.raison_sociale as client_nom, t.prenom as client_prenom, t.email, t.telephone, t.adresse, t.nif,
               sl.nom as location_nom, sl.code as location_code,
               d.numero_devis as devis_numero,
-              f.numero_facture as facture_numero
+              f.id as facture_id, f.numero_facture as facture_numero,
+              av.id as avoir_id, av.numero_avoir
        FROM bons_livraison bl
        LEFT JOIN tiers t ON bl.tiers_id = t.id
        LEFT JOIN stock_locations sl ON bl.location_id = sl.id
        LEFT JOIN devis d ON bl.devis_id = d.id
-       LEFT JOIN factures f ON bl.facture_id = f.id
+       LEFT JOIN LATERAL (
+         SELECT fx.id, fx.numero_facture
+         FROM factures fx
+         WHERE (fx.id = bl.facture_id OR fx.bl_id = bl.id)
+           AND fx.deleted_at IS NULL
+         ORDER BY (fx.id = bl.facture_id) DESC NULLS LAST, fx.id DESC
+         LIMIT 1
+       ) f ON true
+       LEFT JOIN LATERAL (
+         SELECT fa.id, fa.numero_avoir
+         FROM factures_avoir fa
+         WHERE fa.facture_origine_id = f.id AND fa.statut <> 'annule'
+         ORDER BY fa.id DESC
+         LIMIT 1
+       ) av ON true
        WHERE bl.id = $1 AND bl.deleted_at IS NULL`,
       [id]
     );

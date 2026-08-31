@@ -318,22 +318,42 @@ export class DevisService {
    * Get quote by ID with lines
    */
   async getById(id: number): Promise<any> {
+    // La facture liée est résolue dans les deux sens : devis.facture_id est
+    // souvent vide sur les données réelles (le lien passe par le BL —
+    // bons_livraison.devis_id + bons_livraison.facture_id — ou par
+    // factures.devis_id). `f.id as facture_id` est aliasé APRÈS d.* pour que
+    // l'id résolu remplace la colonne (souvent NULL) du devis.
     const { rows: devisRows } = await pool.query(
       `SELECT d.*, t.raison_sociale as client_nom, t.prenom as client_prenom, t.email, t.telephone, t.adresse, t.nif,
               sl.nom as location_nom, sl.code as location_code,
-              f.numero_facture as facture_numero,
-              bl.id as bl_id, bl.numero_bl as bl_numero
+              bl.id as bl_id, bl.numero_bl as bl_numero,
+              f.id as facture_id, f.numero_facture as facture_numero,
+              av.id as avoir_id, av.numero_avoir
        FROM devis d
        LEFT JOIN tiers t ON d.tiers_id = t.id
        LEFT JOIN stock_locations sl ON d.location_id = sl.id
-       LEFT JOIN factures f ON d.facture_id = f.id
        LEFT JOIN LATERAL (
-         SELECT id, numero_bl
+         SELECT id, numero_bl, facture_id
          FROM bons_livraison
          WHERE devis_id = d.id AND statut <> 'annule'
          ORDER BY id DESC
          LIMIT 1
        ) bl ON true
+       LEFT JOIN LATERAL (
+         SELECT fx.id, fx.numero_facture
+         FROM factures fx
+         WHERE (fx.id = COALESCE(d.facture_id, bl.facture_id) OR fx.devis_id = d.id)
+           AND fx.deleted_at IS NULL
+         ORDER BY (fx.id = d.facture_id) DESC NULLS LAST, fx.id DESC
+         LIMIT 1
+       ) f ON true
+       LEFT JOIN LATERAL (
+         SELECT fa.id, fa.numero_avoir
+         FROM factures_avoir fa
+         WHERE fa.facture_origine_id = f.id AND fa.statut <> 'annule'
+         ORDER BY fa.id DESC
+         LIMIT 1
+       ) av ON true
        WHERE d.id = $1 AND d.deleted_at IS NULL`,
       [id]
     );
