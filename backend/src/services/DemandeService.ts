@@ -3,6 +3,7 @@ import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
 import { businessError } from '../utils/errors';
 import { costedStockIn } from './StockCostingService';
+import { NotificationService } from './NotificationService';
 
 // ============================================
 // TYPES
@@ -296,6 +297,11 @@ export class DemandeService {
 
             await client.query('COMMIT');
 
+            // Invalide la cloche des demandes chez les postes connectés : sans ce
+            // signal, la liste ne bougeait que sur le sondage de 30 s. Après le
+            // COMMIT et non bloquant, comme les autres notifications.
+            NotificationService.safely(() => NotificationService.demandeChanged('create'));
+
             await logAudit({
                 utilisateur_id: created_by_user_id,
                 action: 'create',
@@ -367,6 +373,11 @@ export class DemandeService {
 
             await client.query('COMMIT');
 
+            // Invalide la cloche des demandes chez les postes connectés : sans ce
+            // signal, la liste ne bougeait que sur le sondage de 30 s. Après le
+            // COMMIT et non bloquant, comme les autres notifications.
+            NotificationService.safely(() => NotificationService.demandeChanged('update'));
+
             await logAudit({
                 utilisateur_id: userId,
                 action: 'update',
@@ -403,6 +414,11 @@ export class DemandeService {
             }
 
             await client.query('COMMIT');
+
+            // Invalide la cloche des demandes chez les postes connectés : sans ce
+            // signal, la liste ne bougeait que sur le sondage de 30 s. Après le
+            // COMMIT et non bloquant, comme les autres notifications.
+            NotificationService.safely(() => NotificationService.demandeChanged('send'));
 
             await logAudit({
                 utilisateur_id: userId,
@@ -520,6 +536,11 @@ export class DemandeService {
             }
 
             await client.query('COMMIT');
+
+            // Invalide la cloche des demandes chez les postes connectés : sans ce
+            // signal, la liste ne bougeait que sur le sondage de 30 s. Après le
+            // COMMIT et non bloquant, comme les autres notifications.
+            NotificationService.safely(() => NotificationService.demandeChanged('decide'));
 
             await logAudit({
                 utilisateur_id: input.user_id,
@@ -721,6 +742,11 @@ export class DemandeService {
 
             await client.query('COMMIT');
 
+            // Invalide la cloche des demandes chez les postes connectés : sans ce
+            // signal, la liste ne bougeait que sur le sondage de 30 s. Après le
+            // COMMIT et non bloquant, comme les autres notifications.
+            NotificationService.safely(() => NotificationService.demandeChanged('execute'));
+
             await logAudit({
                 utilisateur_id: userId,
                 action: 'execute',
@@ -763,6 +789,11 @@ export class DemandeService {
             }
 
             await client.query('COMMIT');
+
+            // Invalide la cloche des demandes chez les postes connectés : sans ce
+            // signal, la liste ne bougeait que sur le sondage de 30 s. Après le
+            // COMMIT et non bloquant, comme les autres notifications.
+            NotificationService.safely(() => NotificationService.demandeChanged('close'));
 
             await logAudit({
                 utilisateur_id: userId,
@@ -823,6 +854,11 @@ export class DemandeService {
             );
 
             await client.query('COMMIT');
+
+            // Invalide la cloche des demandes chez les postes connectés : sans ce
+            // signal, la liste ne bougeait que sur le sondage de 30 s. Après le
+            // COMMIT et non bloquant, comme les autres notifications.
+            NotificationService.safely(() => NotificationService.demandeChanged('cancel'));
 
             await logAudit({
                 utilisateur_id: userId,

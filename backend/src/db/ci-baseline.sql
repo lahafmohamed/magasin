@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict jhxdCEUMik4hwxUOek30WTjcFS9fPBiYOstHHRyX8GVyRnrL7TAKyaqMzjGXXnh
+\restrict Af6qdksytSHBk8jxbogkGxX531PbftGX6obqHvbWnNess7Ke0dG8pNFqxND1eTp
 
 -- Dumped from database version 18.3
 -- Dumped by pg_dump version 18.3
@@ -51,34 +51,34 @@ CREATE TYPE public.transfer_statut_new AS ENUM (
 
 CREATE FUNCTION public.adjust_stock_at_location(p_produit_id integer, p_location_id integer, p_quantity integer, p_operation character varying) RETURNS void
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_current_stock INTEGER;
-  v_new_stock INTEGER;
-BEGIN
-  -- Get current stock at location
-  SELECT COALESCE(quantite, 0) INTO v_current_stock
-  FROM stock_par_location
-  WHERE produit_id = p_produit_id AND location_id = p_location_id;
-  
-  -- Calculate new stock
-  IF p_operation = 'add' THEN
-    v_new_stock := v_current_stock + p_quantity;
-  ELSIF p_operation = 'remove' THEN
-    IF v_current_stock < p_quantity THEN
-      RAISE EXCEPTION 'Insufficient stock at location % for product %', p_location_id, p_produit_id;
-    END IF;
-    v_new_stock := v_current_stock - p_quantity;
-  ELSE
-    RAISE EXCEPTION 'Invalid operation: %', p_operation;
-  END IF;
-  
-  -- Update or insert
-  INSERT INTO stock_par_location (produit_id, location_id, quantite)
-  VALUES (p_produit_id, p_location_id, v_new_stock)
-  ON CONFLICT (produit_id, location_id) 
-  DO UPDATE SET quantite = v_new_stock;
-END;
+    AS $$
+DECLARE
+  v_current_stock INTEGER;
+  v_new_stock INTEGER;
+BEGIN
+  -- Get current stock at location
+  SELECT COALESCE(quantite, 0) INTO v_current_stock
+  FROM stock_par_location
+  WHERE produit_id = p_produit_id AND location_id = p_location_id;
+  
+  -- Calculate new stock
+  IF p_operation = 'add' THEN
+    v_new_stock := v_current_stock + p_quantity;
+  ELSIF p_operation = 'remove' THEN
+    IF v_current_stock < p_quantity THEN
+      RAISE EXCEPTION 'Insufficient stock at location % for product %', p_location_id, p_produit_id;
+    END IF;
+    v_new_stock := v_current_stock - p_quantity;
+  ELSE
+    RAISE EXCEPTION 'Invalid operation: %', p_operation;
+  END IF;
+  
+  -- Update or insert
+  INSERT INTO stock_par_location (produit_id, location_id, quantite)
+  VALUES (p_produit_id, p_location_id, v_new_stock)
+  ON CONFLICT (produit_id, location_id) 
+  DO UPDATE SET quantite = v_new_stock;
+END;
 $$;
 
 
@@ -88,39 +88,39 @@ $$;
 
 CREATE FUNCTION public.assert_ecriture_period_open() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_statut TEXT;
-  v_month  INT;
-  v_year   INT;
-BEGIN
-  -- Check the NEW period (INSERT / UPDATE target) and the OLD period
-  -- (UPDATE source / DELETE) — a closed period blocks both moving in and
-  -- mutating/removing an existing posting.
-  FOR v_year, v_month IN
-    SELECT DISTINCT EXTRACT(YEAR FROM d)::int, EXTRACT(MONTH FROM d)::int
-    FROM (VALUES
-      (CASE WHEN TG_OP IN ('INSERT','UPDATE') THEN NEW.date_ecriture END),
-      (CASE WHEN TG_OP IN ('UPDATE','DELETE') THEN OLD.date_ecriture END)
-    ) AS v(d)
-    WHERE d IS NOT NULL
-  LOOP
-    SELECT statut INTO v_statut
-    FROM periodes_comptables
-    WHERE exercice = v_year AND periode = v_month;
-
-    IF v_statut = 'fermee' THEN
-      RAISE EXCEPTION 'Periode comptable %/% est cloturee. Aucune ecriture autorisee.',
-        LPAD(v_month::text, 2, '0'), v_year
-        USING ERRCODE = 'P0001';
-    END IF;
-  END LOOP;
-
-  IF TG_OP = 'DELETE' THEN
-    RETURN OLD;
-  END IF;
-  RETURN NEW;
-END;
+    AS $$
+DECLARE
+  v_statut TEXT;
+  v_month  INT;
+  v_year   INT;
+BEGIN
+  -- Check the NEW period (INSERT / UPDATE target) and the OLD period
+  -- (UPDATE source / DELETE) — a closed period blocks both moving in and
+  -- mutating/removing an existing posting.
+  FOR v_year, v_month IN
+    SELECT DISTINCT EXTRACT(YEAR FROM d)::int, EXTRACT(MONTH FROM d)::int
+    FROM (VALUES
+      (CASE WHEN TG_OP IN ('INSERT','UPDATE') THEN NEW.date_ecriture END),
+      (CASE WHEN TG_OP IN ('UPDATE','DELETE') THEN OLD.date_ecriture END)
+    ) AS v(d)
+    WHERE d IS NOT NULL
+  LOOP
+    SELECT statut INTO v_statut
+    FROM periodes_comptables
+    WHERE exercice = v_year AND periode = v_month;
+
+    IF v_statut = 'fermee' THEN
+      RAISE EXCEPTION 'Periode comptable %/% est cloturee. Aucune ecriture autorisee.',
+        LPAD(v_month::text, 2, '0'), v_year
+        USING ERRCODE = 'P0001';
+    END IF;
+  END LOOP;
+
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
+END;
 $$;
 
 
@@ -130,19 +130,19 @@ $$;
 
 CREATE FUNCTION public.calculer_solde_client(p_tiers_id integer) RETURNS numeric
     LANGUAGE plpgsql
-    AS $$
-DECLARE v_solde NUMERIC(15,2);
-BEGIN
-  SELECT
-    COALESCE(SUM(f.total),0)
-    - COALESCE((SELECT SUM(p.montant) FROM paiements p JOIN factures f2 ON f2.id = p.facture_id WHERE f2.tiers_id = p_tiers_id AND f2.deleted_at IS NULL),0)
-    - COALESCE((SELECT SUM(fa.total) FROM factures_avoir fa WHERE fa.tiers_id = p_tiers_id AND fa.statut IN ('valide','utilise') AND fa.deleted_at IS NULL),0)
-    - COALESCE((SELECT SUM(ac.montant) FROM acomptes_clients ac WHERE ac.tiers_id = p_tiers_id AND ac.statut IN ('disponible','utilise')),0)
-  INTO v_solde
-  FROM factures f
-  WHERE f.tiers_id = p_tiers_id AND f.statut != 'annulee' AND f.deleted_at IS NULL;
-  RETURN COALESCE(v_solde, 0);
-END;
+    AS $$
+DECLARE v_solde NUMERIC(15,2);
+BEGIN
+  SELECT
+    COALESCE(SUM(f.total),0)
+    - COALESCE((SELECT SUM(p.montant) FROM paiements p JOIN factures f2 ON f2.id = p.facture_id WHERE f2.tiers_id = p_tiers_id AND f2.deleted_at IS NULL),0)
+    - COALESCE((SELECT SUM(fa.total) FROM factures_avoir fa WHERE fa.tiers_id = p_tiers_id AND fa.statut IN ('valide','utilise') AND fa.deleted_at IS NULL),0)
+    - COALESCE((SELECT SUM(ac.montant) FROM acomptes_clients ac WHERE ac.tiers_id = p_tiers_id AND ac.statut IN ('disponible','utilise')),0)
+  INTO v_solde
+  FROM factures f
+  WHERE f.tiers_id = p_tiers_id AND f.statut != 'annulee' AND f.deleted_at IS NULL;
+  RETURN COALESCE(v_solde, 0);
+END;
 $$;
 
 
@@ -152,32 +152,32 @@ $$;
 
 CREATE FUNCTION public.calculer_solde_fournisseur(p_tiers_id integer) RETURNS numeric
     LANGUAGE plpgsql
-    AS $$
-DECLARE v_solde NUMERIC(15,2);
-BEGIN
-  SELECT
-    COALESCE(SUM(ff.total), 0)
-    - COALESCE((
-        SELECT SUM(pf.montant)
-        FROM paiements_fournisseur pf
-        JOIN factures_fournisseur ff2 ON ff2.id = pf.facture_id
-        WHERE ff2.tiers_id = p_tiers_id
-          AND pf.deleted_at IS NULL
-      ), 0)
-    - COALESCE((
-        SELECT SUM(af.montant_restant)
-        FROM acomptes_fournisseur af
-        WHERE af.tiers_id = p_tiers_id
-          AND af.statut IN ('disponible', 'partiellement_utilise')
-          AND af.deleted_at IS NULL
-      ), 0)
-  INTO v_solde
-  FROM factures_fournisseur ff
-  WHERE ff.tiers_id = p_tiers_id
-    AND ff.statut != 'annulee';
-
-  RETURN COALESCE(v_solde, 0);
-END;
+    AS $$
+DECLARE v_solde NUMERIC(15,2);
+BEGIN
+  SELECT
+    COALESCE(SUM(ff.total), 0)
+    - COALESCE((
+        SELECT SUM(pf.montant)
+        FROM paiements_fournisseur pf
+        JOIN factures_fournisseur ff2 ON ff2.id = pf.facture_id
+        WHERE ff2.tiers_id = p_tiers_id
+          AND pf.deleted_at IS NULL
+      ), 0)
+    - COALESCE((
+        SELECT SUM(af.montant_restant)
+        FROM acomptes_fournisseur af
+        WHERE af.tiers_id = p_tiers_id
+          AND af.statut IN ('disponible', 'partiellement_utilise')
+          AND af.deleted_at IS NULL
+      ), 0)
+  INTO v_solde
+  FROM factures_fournisseur ff
+  WHERE ff.tiers_id = p_tiers_id
+    AND ff.statut != 'annulee';
+
+  RETURN COALESCE(v_solde, 0);
+END;
 $$;
 
 
@@ -187,10 +187,10 @@ $$;
 
 CREATE FUNCTION public.calculer_solde_net(p_tiers_id integer) RETURNS numeric
     LANGUAGE plpgsql
-    AS $$
-BEGIN
-  RETURN calculer_solde_client(p_tiers_id) - calculer_solde_fournisseur(p_tiers_id);
-END;
+    AS $$
+BEGIN
+  RETURN calculer_solde_client(p_tiers_id) - calculer_solde_fournisseur(p_tiers_id);
+END;
 $$;
 
 
@@ -200,59 +200,59 @@ $$;
 
 CREATE FUNCTION public.convert_bl_to_facture(p_bl_id integer, p_user_id integer) RETURNS integer
     LANGUAGE plpgsql
-    AS $_$
-      DECLARE
-        v_bl RECORD;
-        v_facture_id INTEGER;
-        v_numero_facture VARCHAR(50);
-        v_next_val INTEGER;
-        v_ligne RECORD;
-      BEGIN
-        SELECT * INTO v_bl FROM bons_livraison WHERE id = p_bl_id;
-        IF NOT FOUND THEN
-          RAISE EXCEPTION 'Bon de livraison % not found', p_bl_id;
-        END IF;
-
-        IF v_bl.facture_id IS NOT NULL THEN
-          RETURN v_bl.facture_id;
-        END IF;
-
-        SELECT COALESCE(MAX(CAST(SUBSTRING(numero_facture FROM 4) AS INTEGER)), 0) + 1
-        INTO v_next_val
-        FROM factures
-        WHERE numero_facture ~ '^FAC-[0-9]{4}-[0-9]+$';
-
-        v_numero_facture := 'FAC-' || EXTRACT(YEAR FROM CURRENT_DATE) || '-' || LPAD(v_next_val::TEXT, 5, '0');
-
-        INSERT INTO factures (
-          numero_facture, tiers_id, bl_id, devis_id,
-          date_facture, sous_total, tva, total,
-          montant_paye, remaining_due, statut, notes, location_id,
-          delai_paiement, hors_taxe
-        ) VALUES (
-          v_numero_facture, v_bl.tiers_id, p_bl_id, v_bl.devis_id,
-          CURRENT_TIMESTAMP, v_bl.sous_total, v_bl.tva, v_bl.total,
-          0, v_bl.total, 'en_attente', v_bl.notes, v_bl.location_id,
-          'net_30', false
-        ) RETURNING id INTO v_facture_id;
-
-        FOR v_ligne IN
-          SELECT * FROM document_lignes
-          WHERE document_type = 'bl' AND document_id = p_bl_id
-        LOOP
-          INSERT INTO document_lignes (
-            document_type, document_id, produit_id, description,
-            quantite, prix_unitaire, total_ligne, parent_ligne_id
-          ) VALUES (
-            'facture', v_facture_id, v_ligne.produit_id, v_ligne.description,
-            v_ligne.quantite, v_ligne.prix_unitaire, v_ligne.total_ligne, v_ligne.id
-          );
-        END LOOP;
-
-        UPDATE bons_livraison SET statut = 'facture', facture_id = v_facture_id WHERE id = p_bl_id;
-
-        RETURN v_facture_id;
-      END;
+    AS $_$
+      DECLARE
+        v_bl RECORD;
+        v_facture_id INTEGER;
+        v_numero_facture VARCHAR(50);
+        v_next_val INTEGER;
+        v_ligne RECORD;
+      BEGIN
+        SELECT * INTO v_bl FROM bons_livraison WHERE id = p_bl_id;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'Bon de livraison % not found', p_bl_id;
+        END IF;
+
+        IF v_bl.facture_id IS NOT NULL THEN
+          RETURN v_bl.facture_id;
+        END IF;
+
+        SELECT COALESCE(MAX(CAST(SUBSTRING(numero_facture FROM 4) AS INTEGER)), 0) + 1
+        INTO v_next_val
+        FROM factures
+        WHERE numero_facture ~ '^FAC-[0-9]{4}-[0-9]+$';
+
+        v_numero_facture := 'FAC-' || EXTRACT(YEAR FROM CURRENT_DATE) || '-' || LPAD(v_next_val::TEXT, 5, '0');
+
+        INSERT INTO factures (
+          numero_facture, tiers_id, bl_id, devis_id,
+          date_facture, sous_total, tva, total,
+          montant_paye, remaining_due, statut, notes, location_id,
+          delai_paiement, hors_taxe
+        ) VALUES (
+          v_numero_facture, v_bl.tiers_id, p_bl_id, v_bl.devis_id,
+          CURRENT_TIMESTAMP, v_bl.sous_total, v_bl.tva, v_bl.total,
+          0, v_bl.total, 'en_attente', v_bl.notes, v_bl.location_id,
+          'net_30', false
+        ) RETURNING id INTO v_facture_id;
+
+        FOR v_ligne IN
+          SELECT * FROM document_lignes
+          WHERE document_type = 'bl' AND document_id = p_bl_id
+        LOOP
+          INSERT INTO document_lignes (
+            document_type, document_id, produit_id, description,
+            quantite, prix_unitaire, total_ligne, parent_ligne_id
+          ) VALUES (
+            'facture', v_facture_id, v_ligne.produit_id, v_ligne.description,
+            v_ligne.quantite, v_ligne.prix_unitaire, v_ligne.total_ligne, v_ligne.id
+          );
+        END LOOP;
+
+        UPDATE bons_livraison SET statut = 'facture', facture_id = v_facture_id WHERE id = p_bl_id;
+
+        RETURN v_facture_id;
+      END;
       $_$;
 
 
@@ -262,80 +262,80 @@ CREATE FUNCTION public.convert_bl_to_facture(p_bl_id integer, p_user_id integer)
 
 CREATE FUNCTION public.convert_devis_to_bl(p_devis_id integer, p_user_id integer) RETURNS integer
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-    v_devis RECORD;
-    v_bl_id INTEGER;
-    v_numero_bl VARCHAR(50);
-    v_next_val INTEGER;
-    v_ligne RECORD;
-BEGIN
-    SELECT * INTO v_devis FROM devis WHERE id = p_devis_id;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Devis % not found', p_devis_id;
-    END IF;
-
-    SELECT COALESCE(MAX(CAST(SUBSTRING(numero_bl FROM 4) AS INTEGER)), 0) + 1
-    INTO v_next_val
-    FROM bons_livraison WHERE numero_bl LIKE 'BL-%';
-
-    v_numero_bl := 'BL-' || LPAD(v_next_val::TEXT, 6, '0');
-
-    INSERT INTO bons_livraison (
-        numero_bl,
-        client_id,
-        devis_id,
-        date_bl,
-        sous_total,
-        tva,
-        total,
-        notes,
-        location_id,
-        cree_par
-    ) VALUES (
-        v_numero_bl,
-        v_devis.client_id,
-        p_devis_id,
-        CURRENT_DATE,
-        v_devis.sous_total,
-        v_devis.tva,
-        v_devis.total,
-        v_devis.notes,
-        v_devis.location_id,
-        p_user_id
-    ) RETURNING id INTO v_bl_id;
-
-    FOR v_ligne IN
-        SELECT * FROM document_lignes
-        WHERE document_type = 'devis' AND document_id = p_devis_id
-    LOOP
-        INSERT INTO document_lignes (
-            document_type,
-            document_id,
-            produit_id,
-            description,
-            quantite,
-            quantite_livree,
-            prix_unitaire,
-            total_ligne,
-            parent_ligne_id
-        ) VALUES (
-            'bl',
-            v_bl_id,
-            v_ligne.produit_id,
-            v_ligne.description,
-            v_ligne.quantite,
-            v_ligne.quantite,
-            v_ligne.prix_unitaire,
-            v_ligne.total_ligne,
-            v_ligne.id
-        );
-    END LOOP;
-
-    UPDATE devis SET statut = 'accepte' WHERE id = p_devis_id;
-
-    RETURN v_bl_id;
-END;
+    AS $$
+DECLARE
+    v_devis RECORD;
+    v_bl_id INTEGER;
+    v_numero_bl VARCHAR(50);
+    v_next_val INTEGER;
+    v_ligne RECORD;
+BEGIN
+    SELECT * INTO v_devis FROM devis WHERE id = p_devis_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Devis % not found', p_devis_id;
+    END IF;
+
+    SELECT COALESCE(MAX(CAST(SUBSTRING(numero_bl FROM 4) AS INTEGER)), 0) + 1
+    INTO v_next_val
+    FROM bons_livraison WHERE numero_bl LIKE 'BL-%';
+
+    v_numero_bl := 'BL-' || LPAD(v_next_val::TEXT, 6, '0');
+
+    INSERT INTO bons_livraison (
+        numero_bl,
+        client_id,
+        devis_id,
+        date_bl,
+        sous_total,
+        tva,
+        total,
+        notes,
+        location_id,
+        cree_par
+    ) VALUES (
+        v_numero_bl,
+        v_devis.client_id,
+        p_devis_id,
+        CURRENT_DATE,
+        v_devis.sous_total,
+        v_devis.tva,
+        v_devis.total,
+        v_devis.notes,
+        v_devis.location_id,
+        p_user_id
+    ) RETURNING id INTO v_bl_id;
+
+    FOR v_ligne IN
+        SELECT * FROM document_lignes
+        WHERE document_type = 'devis' AND document_id = p_devis_id
+    LOOP
+        INSERT INTO document_lignes (
+            document_type,
+            document_id,
+            produit_id,
+            description,
+            quantite,
+            quantite_livree,
+            prix_unitaire,
+            total_ligne,
+            parent_ligne_id
+        ) VALUES (
+            'bl',
+            v_bl_id,
+            v_ligne.produit_id,
+            v_ligne.description,
+            v_ligne.quantite,
+            v_ligne.quantite,
+            v_ligne.prix_unitaire,
+            v_ligne.total_ligne,
+            v_ligne.id
+        );
+    END LOOP;
+
+    UPDATE devis SET statut = 'accepte' WHERE id = p_devis_id;
+
+    RETURN v_bl_id;
+END;
 $$;
 
 
@@ -345,85 +345,85 @@ $$;
 
 CREATE FUNCTION public.convert_devis_to_facture(p_devis_id integer, p_user_id integer) RETURNS integer
     LANGUAGE plpgsql
-    AS $_$
-DECLARE
-    v_devis RECORD;
-    v_facture_id INTEGER;
-    v_numero_facture VARCHAR(50);
-    v_next_val INTEGER;
-    v_ligne RECORD;
-BEGIN
-    SELECT * INTO v_devis FROM devis WHERE id = p_devis_id;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Devis % not found', p_devis_id;
-    END IF;
-
-    IF v_devis.facture_id IS NOT NULL THEN
-        RETURN v_devis.facture_id;
-    END IF;
-
-    SELECT COALESCE(MAX(CAST(SUBSTRING(numero_facture FROM 4) AS INTEGER)), 0) + 1
-    INTO v_next_val
-    FROM factures
-    WHERE numero_facture ~ '^FAC-[0-9]{4}-[0-9]+$';
-
-    v_numero_facture := 'FAC-' || EXTRACT(YEAR FROM CURRENT_DATE) || '-' || LPAD(v_next_val::TEXT, 5, '0');
-
-    INSERT INTO factures (
-        numero_facture,
-        client_id,
-        devis_id,
-        date_facture,
-        sous_total,
-        tva,
-        total,
-        notes,
-        location_id,
-        delai_paiement,
-        hors_taxe
-    ) VALUES (
-        v_numero_facture,
-        v_devis.client_id,
-        p_devis_id,
-        CURRENT_TIMESTAMP,
-        v_devis.sous_total,
-        v_devis.tva,
-        v_devis.total,
-        v_devis.notes,
-        v_devis.location_id,
-        'net_30',
-        false
-    ) RETURNING id INTO v_facture_id;
-
-    FOR v_ligne IN
-        SELECT * FROM document_lignes
-        WHERE document_type = 'devis' AND document_id = p_devis_id
-    LOOP
-        INSERT INTO document_lignes (
-            document_type,
-            document_id,
-            produit_id,
-            description,
-            quantite,
-            prix_unitaire,
-            total_ligne,
-            parent_ligne_id
-        ) VALUES (
-            'facture',
-            v_facture_id,
-            v_ligne.produit_id,
-            v_ligne.description,
-            v_ligne.quantite,
-            v_ligne.prix_unitaire,
-            v_ligne.total_ligne,
-            v_ligne.id
-        );
-    END LOOP;
-
-    UPDATE devis SET statut = 'converti', facture_id = v_facture_id WHERE id = p_devis_id;
-
-    RETURN v_facture_id;
-END;
+    AS $_$
+DECLARE
+    v_devis RECORD;
+    v_facture_id INTEGER;
+    v_numero_facture VARCHAR(50);
+    v_next_val INTEGER;
+    v_ligne RECORD;
+BEGIN
+    SELECT * INTO v_devis FROM devis WHERE id = p_devis_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Devis % not found', p_devis_id;
+    END IF;
+
+    IF v_devis.facture_id IS NOT NULL THEN
+        RETURN v_devis.facture_id;
+    END IF;
+
+    SELECT COALESCE(MAX(CAST(SUBSTRING(numero_facture FROM 4) AS INTEGER)), 0) + 1
+    INTO v_next_val
+    FROM factures
+    WHERE numero_facture ~ '^FAC-[0-9]{4}-[0-9]+$';
+
+    v_numero_facture := 'FAC-' || EXTRACT(YEAR FROM CURRENT_DATE) || '-' || LPAD(v_next_val::TEXT, 5, '0');
+
+    INSERT INTO factures (
+        numero_facture,
+        client_id,
+        devis_id,
+        date_facture,
+        sous_total,
+        tva,
+        total,
+        notes,
+        location_id,
+        delai_paiement,
+        hors_taxe
+    ) VALUES (
+        v_numero_facture,
+        v_devis.client_id,
+        p_devis_id,
+        CURRENT_TIMESTAMP,
+        v_devis.sous_total,
+        v_devis.tva,
+        v_devis.total,
+        v_devis.notes,
+        v_devis.location_id,
+        'net_30',
+        false
+    ) RETURNING id INTO v_facture_id;
+
+    FOR v_ligne IN
+        SELECT * FROM document_lignes
+        WHERE document_type = 'devis' AND document_id = p_devis_id
+    LOOP
+        INSERT INTO document_lignes (
+            document_type,
+            document_id,
+            produit_id,
+            description,
+            quantite,
+            prix_unitaire,
+            total_ligne,
+            parent_ligne_id
+        ) VALUES (
+            'facture',
+            v_facture_id,
+            v_ligne.produit_id,
+            v_ligne.description,
+            v_ligne.quantite,
+            v_ligne.prix_unitaire,
+            v_ligne.total_ligne,
+            v_ligne.id
+        );
+    END LOOP;
+
+    UPDATE devis SET statut = 'converti', facture_id = v_facture_id WHERE id = p_devis_id;
+
+    RETURN v_facture_id;
+END;
 $_$;
 
 
@@ -433,86 +433,86 @@ $_$;
 
 CREATE FUNCTION public.create_avoir_from_retour(p_retour_id integer, p_user_id integer) RETURNS integer
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_retour RECORD;
-  v_avoir_id INTEGER;
-  v_numero_avoir VARCHAR(50);
-  v_next_val INTEGER;
-  v_total_ht NUMERIC(15, 2);
-  v_ligne RECORD;
-BEGIN
-  SELECT * INTO v_retour FROM retours WHERE id = p_retour_id;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Retour % not found', p_retour_id;
-  END IF;
-
-  IF v_retour.statut NOT IN ('valide', 'traite') THEN
-    RAISE EXCEPTION 'Retour must be validated/processed before creating credit note. Current statut: %', v_retour.statut;
-  END IF;
-
-  SELECT nextval('avoir_seq') INTO v_next_val;
-  v_numero_avoir := 'AVOIR-' || EXTRACT(YEAR FROM CURRENT_DATE) || '-' || LPAD(v_next_val::TEXT, 5, '0');
-
-  -- Calculate total from lines; TVA = 0 per business constraint
-  v_total_ht := COALESCE(v_retour.total_remboursement, 0);
-
-  INSERT INTO factures_avoir (
-    numero_avoir,
-    client_id,
-    retour_id,
-    date_avoir,
-    sous_total,
-    tva,
-    total,
-    total_ht,
-    total_ttc,
-    statut,
-    avoir_type,
-    notes,
-    cree_par
-  ) VALUES (
-    v_numero_avoir,
-    v_retour.client_id,
-    p_retour_id,
-    CURRENT_DATE,
-    v_total_ht,
-    0,           -- TVA = 0 per business constraint (migration 027)
-    v_total_ht,
-    v_total_ht,
-    v_total_ht,  -- total_ttc = total_ht when TVA = 0
-    'valide',
-    'retour',
-    'Avoir généré automatiquement depuis le retour ' || v_retour.numero_retour,
-    p_user_id
-  ) RETURNING id INTO v_avoir_id;
-
-  FOR v_ligne IN
-    SELECT rl.*, p.nom as produit_nom
-    FROM retour_lignes rl
-    LEFT JOIN produits p ON p.id = rl.produit_id
-    WHERE rl.retour_id = p_retour_id
-  LOOP
-    INSERT INTO facture_avoir_lignes (
-      avoir_id,
-      produit_id,
-      description,
-      quantite,
-      prix_unitaire,
-      total_ligne
-    ) VALUES (
-      v_avoir_id,
-      v_ligne.produit_id,
-      v_ligne.produit_nom,
-      v_ligne.quantite,
-      v_ligne.prix_unitaire,
-      v_ligne.quantite * v_ligne.prix_unitaire
-    );
-  END LOOP;
-
-  RETURN v_avoir_id;
-END;
+    AS $$
+DECLARE
+  v_retour RECORD;
+  v_avoir_id INTEGER;
+  v_numero_avoir VARCHAR(50);
+  v_next_val INTEGER;
+  v_total_ht NUMERIC(15, 2);
+  v_ligne RECORD;
+BEGIN
+  SELECT * INTO v_retour FROM retours WHERE id = p_retour_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Retour % not found', p_retour_id;
+  END IF;
+
+  IF v_retour.statut NOT IN ('valide', 'traite') THEN
+    RAISE EXCEPTION 'Retour must be validated/processed before creating credit note. Current statut: %', v_retour.statut;
+  END IF;
+
+  SELECT nextval('avoir_seq') INTO v_next_val;
+  v_numero_avoir := 'AVOIR-' || EXTRACT(YEAR FROM CURRENT_DATE) || '-' || LPAD(v_next_val::TEXT, 5, '0');
+
+  -- Calculate total from lines; TVA = 0 per business constraint
+  v_total_ht := COALESCE(v_retour.total_remboursement, 0);
+
+  INSERT INTO factures_avoir (
+    numero_avoir,
+    client_id,
+    retour_id,
+    date_avoir,
+    sous_total,
+    tva,
+    total,
+    total_ht,
+    total_ttc,
+    statut,
+    avoir_type,
+    notes,
+    cree_par
+  ) VALUES (
+    v_numero_avoir,
+    v_retour.client_id,
+    p_retour_id,
+    CURRENT_DATE,
+    v_total_ht,
+    0,           -- TVA = 0 per business constraint (migration 027)
+    v_total_ht,
+    v_total_ht,
+    v_total_ht,  -- total_ttc = total_ht when TVA = 0
+    'valide',
+    'retour',
+    'Avoir généré automatiquement depuis le retour ' || v_retour.numero_retour,
+    p_user_id
+  ) RETURNING id INTO v_avoir_id;
+
+  FOR v_ligne IN
+    SELECT rl.*, p.nom as produit_nom
+    FROM retour_lignes rl
+    LEFT JOIN produits p ON p.id = rl.produit_id
+    WHERE rl.retour_id = p_retour_id
+  LOOP
+    INSERT INTO facture_avoir_lignes (
+      avoir_id,
+      produit_id,
+      description,
+      quantite,
+      prix_unitaire,
+      total_ligne
+    ) VALUES (
+      v_avoir_id,
+      v_ligne.produit_id,
+      v_ligne.produit_nom,
+      v_ligne.quantite,
+      v_ligne.prix_unitaire,
+      v_ligne.quantite * v_ligne.prix_unitaire
+    );
+  END LOOP;
+
+  RETURN v_avoir_id;
+END;
 $$;
 
 
@@ -522,29 +522,29 @@ $$;
 
 CREATE FUNCTION public.create_ecritures_facture_client() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-      DECLARE
-        compte_vente_id INTEGER;
-        compte_tva_id INTEGER;
-        compte_client_id INTEGER;
-      BEGIN
-        compte_vente_id := ensure_plan_compte('701', 'Ventes de marchandises', 'produit', 'classe7');
-        compte_tva_id := ensure_plan_compte('4457', 'TVA collectee', 'passif', 'classe4');
-        compte_client_id := ensure_plan_compte('411', 'Clients', 'actif', 'classe4');
-
-        INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-        VALUES (NEW.numero_facture, NEW.date_facture, 'VENTES', NEW.id, 'facture', 1, compte_client_id, NEW.total, 0, 'Vente client - ' || NEW.numero_facture);
-
-        INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-        VALUES (NEW.numero_facture, NEW.date_facture, 'VENTES', NEW.id, 'facture', 2, compte_vente_id, 0, NEW.sous_total, 'Chiffre d''affaires - ' || NEW.numero_facture);
-
-        IF NEW.tva > 0 THEN
-          INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-          VALUES (NEW.numero_facture, NEW.date_facture, 'VENTES', NEW.id, 'facture', 3, compte_tva_id, 0, NEW.tva, 'TVA collectee - ' || NEW.numero_facture);
-        END IF;
-
-        RETURN NEW;
-      END;
+    AS $$
+      DECLARE
+        compte_vente_id INTEGER;
+        compte_tva_id INTEGER;
+        compte_client_id INTEGER;
+      BEGIN
+        compte_vente_id := ensure_plan_compte('701', 'Ventes de marchandises', 'produit', 'classe7');
+        compte_tva_id := ensure_plan_compte('4457', 'TVA collectee', 'passif', 'classe4');
+        compte_client_id := ensure_plan_compte('411', 'Clients', 'actif', 'classe4');
+
+        INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
+        VALUES (NEW.numero_facture, NEW.date_facture, 'VENTES', NEW.id, 'facture', 1, compte_client_id, NEW.total, 0, 'Vente client - ' || NEW.numero_facture);
+
+        INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
+        VALUES (NEW.numero_facture, NEW.date_facture, 'VENTES', NEW.id, 'facture', 2, compte_vente_id, 0, NEW.sous_total, 'Chiffre d''affaires - ' || NEW.numero_facture);
+
+        IF NEW.tva > 0 THEN
+          INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
+          VALUES (NEW.numero_facture, NEW.date_facture, 'VENTES', NEW.id, 'facture', 3, compte_tva_id, 0, NEW.tva, 'TVA collectee - ' || NEW.numero_facture);
+        END IF;
+
+        RETURN NEW;
+      END;
       $$;
 
 
@@ -554,29 +554,29 @@ CREATE FUNCTION public.create_ecritures_facture_client() RETURNS trigger
 
 CREATE FUNCTION public.create_ecritures_facture_fournisseur() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-      DECLARE
-        compte_achat_id INTEGER;
-        compte_tva_id INTEGER;
-        compte_fournisseur_id INTEGER;
-      BEGIN
-        compte_achat_id := ensure_plan_compte('601', 'Achats de marchandises', 'charge', 'classe6');
-        compte_tva_id := ensure_plan_compte('4456', 'TVA déductible', 'actif', 'classe4');
-        compte_fournisseur_id := ensure_plan_compte('401', 'Fournisseurs', 'passif', 'classe4');
-
-        INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-        VALUES (NEW.numero_facture_interne, NEW.date_facture, 'ACHATS', NEW.id, 'facture_fournisseur', 1, compte_achat_id, NEW.sous_total, 0, 'Achat marchandises - ' || NEW.numero_facture_fournisseur);
-
-        IF NEW.tva > 0 THEN
-          INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-          VALUES (NEW.numero_facture_interne, NEW.date_facture, 'ACHATS', NEW.id, 'facture_fournisseur', 2, compte_tva_id, NEW.tva, 0, 'TVA deductible - ' || NEW.numero_facture_fournisseur);
-        END IF;
-
-        INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-        VALUES (NEW.numero_facture_interne, NEW.date_facture, 'ACHATS', NEW.id, 'facture_fournisseur', 3, compte_fournisseur_id, 0, NEW.total, 'Dette fournisseur - ' || NEW.numero_facture_fournisseur);
-
-        RETURN NEW;
-      END;
+    AS $$
+      DECLARE
+        compte_achat_id INTEGER;
+        compte_tva_id INTEGER;
+        compte_fournisseur_id INTEGER;
+      BEGIN
+        compte_achat_id := ensure_plan_compte('601', 'Achats de marchandises', 'charge', 'classe6');
+        compte_tva_id := ensure_plan_compte('4456', 'TVA déductible', 'actif', 'classe4');
+        compte_fournisseur_id := ensure_plan_compte('401', 'Fournisseurs', 'passif', 'classe4');
+
+        INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
+        VALUES (NEW.numero_facture_interne, NEW.date_facture, 'ACHATS', NEW.id, 'facture_fournisseur', 1, compte_achat_id, NEW.sous_total, 0, 'Achat marchandises - ' || NEW.numero_facture_fournisseur);
+
+        IF NEW.tva > 0 THEN
+          INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
+          VALUES (NEW.numero_facture_interne, NEW.date_facture, 'ACHATS', NEW.id, 'facture_fournisseur', 2, compte_tva_id, NEW.tva, 0, 'TVA deductible - ' || NEW.numero_facture_fournisseur);
+        END IF;
+
+        INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
+        VALUES (NEW.numero_facture_interne, NEW.date_facture, 'ACHATS', NEW.id, 'facture_fournisseur', 3, compte_fournisseur_id, 0, NEW.total, 'Dette fournisseur - ' || NEW.numero_facture_fournisseur);
+
+        RETURN NEW;
+      END;
       $$;
 
 
@@ -586,22 +586,22 @@ CREATE FUNCTION public.create_ecritures_facture_fournisseur() RETURNS trigger
 
 CREATE FUNCTION public.enforce_acompte_application_cap() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_total_applied NUMERIC(15,2);
-  v_montant_acompte NUMERIC(15,2);
-  v_rembourse NUMERIC(15,2);
-BEGIN
-  SELECT COALESCE(SUM(montant),0) INTO v_total_applied
-    FROM acompte_applications WHERE acompte_id = NEW.acompte_id;
-  SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant_acompte, v_rembourse
-    FROM acomptes_clients WHERE id = NEW.acompte_id;
-  IF v_total_applied > v_montant_acompte - v_rembourse THEN
-    RAISE EXCEPTION 'Application dépasse le montant disponible de l''acompte (%/% dont % remboursé)',
-      v_total_applied, v_montant_acompte, v_rembourse;
-  END IF;
-  RETURN NEW;
-END;
+    AS $$
+DECLARE
+  v_total_applied NUMERIC(15,2);
+  v_montant_acompte NUMERIC(15,2);
+  v_rembourse NUMERIC(15,2);
+BEGIN
+  SELECT COALESCE(SUM(montant),0) INTO v_total_applied
+    FROM acompte_applications WHERE acompte_id = NEW.acompte_id;
+  SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant_acompte, v_rembourse
+    FROM acomptes_clients WHERE id = NEW.acompte_id;
+  IF v_total_applied > v_montant_acompte - v_rembourse THEN
+    RAISE EXCEPTION 'Application dépasse le montant disponible de l''acompte (%/% dont % remboursé)',
+      v_total_applied, v_montant_acompte, v_rembourse;
+  END IF;
+  RETURN NEW;
+END;
 $$;
 
 
@@ -611,24 +611,24 @@ $$;
 
 CREATE FUNCTION public.enforce_acompte_fournisseur_application_cap() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_total_applied   NUMERIC(15,2);
-  v_montant_acompte NUMERIC(15,2);
-  v_rembourse       NUMERIC(15,2);
-BEGIN
-  SELECT COALESCE(SUM(montant),0) INTO v_total_applied
-    FROM acompte_applications_fournisseur WHERE acompte_id = NEW.acompte_id;
-  SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant_acompte, v_rembourse
-    FROM acomptes_fournisseur WHERE id = NEW.acompte_id;
-
-  IF v_total_applied > v_montant_acompte - v_rembourse + 0.005 THEN
-    RAISE EXCEPTION
-      'Σ(applications)=%, dépasse le disponible de l''acompte_fournisseur #% (montant=%, remboursé=%)',
-      v_total_applied, NEW.acompte_id, v_montant_acompte, v_rembourse;
-  END IF;
-  RETURN NEW;
-END;
+    AS $$
+DECLARE
+  v_total_applied   NUMERIC(15,2);
+  v_montant_acompte NUMERIC(15,2);
+  v_rembourse       NUMERIC(15,2);
+BEGIN
+  SELECT COALESCE(SUM(montant),0) INTO v_total_applied
+    FROM acompte_applications_fournisseur WHERE acompte_id = NEW.acompte_id;
+  SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant_acompte, v_rembourse
+    FROM acomptes_fournisseur WHERE id = NEW.acompte_id;
+
+  IF v_total_applied > v_montant_acompte - v_rembourse + 0.005 THEN
+    RAISE EXCEPTION
+      'Σ(applications)=%, dépasse le disponible de l''acompte_fournisseur #% (montant=%, remboursé=%)',
+      v_total_applied, NEW.acompte_id, v_montant_acompte, v_rembourse;
+  END IF;
+  RETURN NEW;
+END;
 $$;
 
 
@@ -638,41 +638,41 @@ $$;
 
 CREATE FUNCTION public.enforce_mouvement_append_only() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_statut VARCHAR(20);
-BEGIN
-  IF TG_OP = 'DELETE' THEN
-    RAISE EXCEPTION 'mouvements_caisse is append-only: DELETE forbidden (id=%)', OLD.id;
-  END IF;
-
-  IF TG_OP = 'UPDATE' THEN
-    -- Allow only reversal-link backfill (reversed_by_mouvement_id) and
-    -- updated_at touchups. Block all monetary/source edits.
-    IF NEW.montant IS DISTINCT FROM OLD.montant
-      OR NEW.type IS DISTINCT FROM OLD.type
-      OR NEW.categorie IS DISTINCT FROM OLD.categorie
-      OR NEW.reference_type IS DISTINCT FROM OLD.reference_type
-      OR NEW.reference_id IS DISTINCT FROM OLD.reference_id
-      OR NEW.methode_paiement IS DISTINCT FROM OLD.methode_paiement
-      OR NEW.session_caisse_id IS DISTINCT FROM OLD.session_caisse_id
-    THEN
-      RAISE EXCEPTION 'mouvements_caisse is append-only: cannot mutate financial fields on id=%', OLD.id;
-    END IF;
-  END IF;
-
-  IF TG_OP = 'INSERT' THEN
-    SELECT statut INTO v_statut FROM sessions_caisse WHERE id = NEW.session_caisse_id;
-    IF v_statut IS NULL THEN
-      RAISE EXCEPTION 'Session % introuvable', NEW.session_caisse_id;
-    END IF;
-    IF v_statut <> 'ouverte' THEN
-      RAISE EXCEPTION 'Session % cloturÃ©e â€” impossible d''ajouter un mouvement', NEW.session_caisse_id;
-    END IF;
-  END IF;
-
-  RETURN COALESCE(NEW, OLD);
-END;
+    AS $$
+DECLARE
+  v_statut VARCHAR(20);
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'mouvements_caisse is append-only: DELETE forbidden (id=%)', OLD.id;
+  END IF;
+
+  IF TG_OP = 'UPDATE' THEN
+    -- Allow only reversal-link backfill (reversed_by_mouvement_id) and
+    -- updated_at touchups. Block all monetary/source edits.
+    IF NEW.montant IS DISTINCT FROM OLD.montant
+      OR NEW.type IS DISTINCT FROM OLD.type
+      OR NEW.categorie IS DISTINCT FROM OLD.categorie
+      OR NEW.reference_type IS DISTINCT FROM OLD.reference_type
+      OR NEW.reference_id IS DISTINCT FROM OLD.reference_id
+      OR NEW.methode_paiement IS DISTINCT FROM OLD.methode_paiement
+      OR NEW.session_caisse_id IS DISTINCT FROM OLD.session_caisse_id
+    THEN
+      RAISE EXCEPTION 'mouvements_caisse is append-only: cannot mutate financial fields on id=%', OLD.id;
+    END IF;
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    SELECT statut INTO v_statut FROM sessions_caisse WHERE id = NEW.session_caisse_id;
+    IF v_statut IS NULL THEN
+      RAISE EXCEPTION 'Session % introuvable', NEW.session_caisse_id;
+    END IF;
+    IF v_statut <> 'ouverte' THEN
+      RAISE EXCEPTION 'Session % cloturÃ©e â€” impossible d''ajouter un mouvement', NEW.session_caisse_id;
+    END IF;
+  END IF;
+
+  RETURN COALESCE(NEW, OLD);
+END;
 $$;
 
 
@@ -682,28 +682,28 @@ $$;
 
 CREATE FUNCTION public.enforce_mouvement_magasin_coherence() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_session_magasin INTEGER;
-BEGIN
-  IF NEW.magasin_id IS NULL THEN
-    -- Auto-fill from session
-    SELECT magasin_id INTO NEW.magasin_id
-      FROM sessions_caisse WHERE id = NEW.session_caisse_id;
-    RETURN NEW;
-  END IF;
-
-  SELECT magasin_id INTO v_session_magasin
-    FROM sessions_caisse WHERE id = NEW.session_caisse_id;
-
-  IF v_session_magasin IS NOT NULL AND v_session_magasin <> NEW.magasin_id THEN
-    RAISE EXCEPTION
-      'mouvements_caisse.magasin_id (%) ne correspond pas à sessions_caisse.magasin_id (%) pour session %',
-      NEW.magasin_id, v_session_magasin, NEW.session_caisse_id;
-  END IF;
-
-  RETURN NEW;
-END;
+    AS $$
+DECLARE
+  v_session_magasin INTEGER;
+BEGIN
+  IF NEW.magasin_id IS NULL THEN
+    -- Auto-fill from session
+    SELECT magasin_id INTO NEW.magasin_id
+      FROM sessions_caisse WHERE id = NEW.session_caisse_id;
+    RETURN NEW;
+  END IF;
+
+  SELECT magasin_id INTO v_session_magasin
+    FROM sessions_caisse WHERE id = NEW.session_caisse_id;
+
+  IF v_session_magasin IS NOT NULL AND v_session_magasin <> NEW.magasin_id THEN
+    RAISE EXCEPTION
+      'mouvements_caisse.magasin_id (%) ne correspond pas à sessions_caisse.magasin_id (%) pour session %',
+      NEW.magasin_id, v_session_magasin, NEW.session_caisse_id;
+  END IF;
+
+  RETURN NEW;
+END;
 $$;
 
 
@@ -713,34 +713,34 @@ $$;
 
 CREATE FUNCTION public.enforce_paiement_espece_mouvement() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_methode TEXT;
-  v_source  TEXT;
-  v_mvt     INTEGER;
-  v_deleted TIMESTAMP;
-BEGIN
-  -- Re-fetch current row state at commit time (deferred trigger captures
-  -- NEW from the queueing event; need fresh state to see later UPDATEs).
-  SELECT methode_paiement, source, mouvement_caisse_id, deleted_at
-    INTO v_methode, v_source, v_mvt, v_deleted
-  FROM paiements WHERE id = NEW.id;
-
-  -- Row deleted within tx? skip.
-  IF NOT FOUND OR v_deleted IS NOT NULL THEN
-    RETURN NEW;
-  END IF;
-
-  IF v_methode = 'espece'
-     AND v_source = 'direct'
-     AND v_mvt IS NULL
-  THEN
-    RAISE EXCEPTION
-      'paiement % (espece/direct) sans mouvement_caisse_id à la fin de la transaction',
-      NEW.id;
-  END IF;
-  RETURN NEW;
-END;
+    AS $$
+DECLARE
+  v_methode TEXT;
+  v_source  TEXT;
+  v_mvt     INTEGER;
+  v_deleted TIMESTAMP;
+BEGIN
+  -- Re-fetch current row state at commit time (deferred trigger captures
+  -- NEW from the queueing event; need fresh state to see later UPDATEs).
+  SELECT methode_paiement, source, mouvement_caisse_id, deleted_at
+    INTO v_methode, v_source, v_mvt, v_deleted
+  FROM paiements WHERE id = NEW.id;
+
+  -- Row deleted within tx? skip.
+  IF NOT FOUND OR v_deleted IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF v_methode = 'espece'
+     AND v_source = 'direct'
+     AND v_mvt IS NULL
+  THEN
+    RAISE EXCEPTION
+      'paiement % (espece/direct) sans mouvement_caisse_id à la fin de la transaction',
+      NEW.id;
+  END IF;
+  RETURN NEW;
+END;
 $$;
 
 
@@ -757,12 +757,73 @@ COMMENT ON FUNCTION public.enforce_paiement_espece_mouvement() IS 'Deferred chec
 
 CREATE FUNCTION public.enforce_stock_valeur_invariant() RETURNS trigger
     LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.valeur_stock := ROUND(COALESCE(NEW.quantite, 0) * COALESCE(NEW.cmp, 0), 2);
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enregistrer_commission_vente(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enregistrer_commission_vente() RETURNS trigger
+    LANGUAGE plpgsql
     AS $$
+DECLARE
+  v_user_id  INTEGER;
+  v_employe  RECORD;
 BEGIN
-  NEW.valeur_stock := ROUND(COALESCE(NEW.quantite, 0) * COALESCE(NEW.cmp, 0), 2);
+  -- Vendeur : créateur de la facture, sinon du BL, sinon du devis d'origine.
+  v_user_id := COALESCE(
+    NEW.cree_par,
+    (SELECT bl.cree_par FROM bons_livraison bl WHERE bl.id = NEW.bl_id),
+    (SELECT d.cree_par  FROM devis d          WHERE d.id  = NEW.devis_id)
+  );
+
+  IF v_user_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT e.id, e.commission_taux
+    INTO v_employe
+    FROM employes e
+   WHERE e.utilisateur_id = v_user_id
+     AND e.actif = true
+     AND COALESCE(e.commission_taux, 0) > 0
+   LIMIT 1;
+
+  -- Utilisateur sans fiche employé, employé inactif, ou taux à 0 : rien à faire.
+  IF NOT FOUND THEN
+    RETURN NEW;
+  END IF;
+
+  INSERT INTO commissions_ventes (
+    employe_id, facture_id, montant_vente,
+    taux_commission, montant_commission, date_vente, statut
+  ) VALUES (
+    v_employe.id,
+    NEW.id,
+    NEW.total,
+    v_employe.commission_taux,
+    ROUND(NEW.total * v_employe.commission_taux / 100, 2),
+    COALESCE(NEW.date_facture::date, CURRENT_DATE),
+    'en_attente'
+  )
+  ON CONFLICT (employe_id, facture_id) DO NOTHING;
+
   RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: FUNCTION enregistrer_commission_vente(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.enregistrer_commission_vente() IS 'Enregistre la commission du vendeur à la création d''une facture. Vendeur = factures.cree_par, sinon créateur du BL, sinon du devis.';
 
 
 --
@@ -771,26 +832,26 @@ $$;
 
 CREATE FUNCTION public.ensure_plan_compte(p_numero character varying, p_intitule character varying, p_type_compte character varying, p_categorie character varying) RETURNS integer
     LANGUAGE plpgsql
-    AS $$
-      DECLARE
-        v_compte_id INTEGER;
-      BEGIN
-        SELECT id INTO v_compte_id
-        FROM plan_comptable
-        WHERE numero = p_numero;
-
-        IF v_compte_id IS NULL THEN
-          INSERT INTO plan_comptable (numero, intitule, type_compte, categorie)
-          VALUES (p_numero, p_intitule, p_type_compte, p_categorie)
-          ON CONFLICT (numero) DO UPDATE
-            SET intitule = EXCLUDED.intitule,
-                type_compte = EXCLUDED.type_compte,
-                categorie = EXCLUDED.categorie
-          RETURNING id INTO v_compte_id;
-        END IF;
-
-        RETURN v_compte_id;
-      END;
+    AS $$
+      DECLARE
+        v_compte_id INTEGER;
+      BEGIN
+        SELECT id INTO v_compte_id
+        FROM plan_comptable
+        WHERE numero = p_numero;
+
+        IF v_compte_id IS NULL THEN
+          INSERT INTO plan_comptable (numero, intitule, type_compte, categorie)
+          VALUES (p_numero, p_intitule, p_type_compte, p_categorie)
+          ON CONFLICT (numero) DO UPDATE
+            SET intitule = EXCLUDED.intitule,
+                type_compte = EXCLUDED.type_compte,
+                categorie = EXCLUDED.categorie
+          RETURNING id INTO v_compte_id;
+        END IF;
+
+        RETURN v_compte_id;
+      END;
       $$;
 
 
@@ -800,17 +861,17 @@ CREATE FUNCTION public.ensure_plan_compte(p_numero character varying, p_intitule
 
 CREATE FUNCTION public.generate_demande_numero() RETURNS character varying
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-    v_year INTEGER;
-    v_seq INTEGER;
-    v_numero VARCHAR(50);
-BEGIN
-    v_year := EXTRACT(YEAR FROM CURRENT_DATE);
-    SELECT nextval('demande_reappro_numero_seq') INTO v_seq;
-    v_numero := 'DEM-' || v_year || '-' || LPAD(v_seq::TEXT, 5, '0');
-    RETURN v_numero;
-END;
+    AS $$
+DECLARE
+    v_year INTEGER;
+    v_seq INTEGER;
+    v_numero VARCHAR(50);
+BEGIN
+    v_year := EXTRACT(YEAR FROM CURRENT_DATE);
+    SELECT nextval('demande_reappro_numero_seq') INTO v_seq;
+    v_numero := 'DEM-' || v_year || '-' || LPAD(v_seq::TEXT, 5, '0');
+    RETURN v_numero;
+END;
 $$;
 
 
@@ -827,13 +888,13 @@ COMMENT ON FUNCTION public.generate_demande_numero() IS 'Generates atomic demand
 
 CREATE FUNCTION public.generate_tiers_code() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-BEGIN
-  IF NEW.code IS NULL OR NEW.code = '' THEN
-    NEW.code := 'TI-' || LPAD(NEW.id::text, 5, '0');
-  END IF;
-  RETURN NEW;
-END;
+    AS $$
+BEGIN
+  IF NEW.code IS NULL OR NEW.code = '' THEN
+    NEW.code := 'TI-' || LPAD(NEW.id::text, 5, '0');
+  END IF;
+  RETURN NEW;
+END;
 $$;
 
 
@@ -843,25 +904,25 @@ $$;
 
 CREATE FUNCTION public.get_stock_at_location(p_produit_id integer, p_location_id integer DEFAULT NULL::integer) RETURNS integer
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_stock INTEGER;
-BEGIN
-  IF p_location_id IS NULL THEN
-    -- Get total across all active locations
-    SELECT COALESCE(SUM(spl.quantite), 0) INTO v_stock
-    FROM stock_par_location spl
-    JOIN stock_locations sl ON spl.location_id = sl.id
-    WHERE spl.produit_id = p_produit_id AND sl.actif = true;
-  ELSE
-    -- Get stock at specific location
-    SELECT COALESCE(quantite, 0) INTO v_stock
-    FROM stock_par_location
-    WHERE produit_id = p_produit_id AND location_id = p_location_id;
-  END IF;
-  
-  RETURN v_stock;
-END;
+    AS $$
+DECLARE
+  v_stock INTEGER;
+BEGIN
+  IF p_location_id IS NULL THEN
+    -- Get total across all active locations
+    SELECT COALESCE(SUM(spl.quantite), 0) INTO v_stock
+    FROM stock_par_location spl
+    JOIN stock_locations sl ON spl.location_id = sl.id
+    WHERE spl.produit_id = p_produit_id AND sl.actif = true;
+  ELSE
+    -- Get stock at specific location
+    SELECT COALESCE(quantite, 0) INTO v_stock
+    FROM stock_par_location
+    WHERE produit_id = p_produit_id AND location_id = p_location_id;
+  END IF;
+  
+  RETURN v_stock;
+END;
 $$;
 
 
@@ -871,18 +932,18 @@ $$;
 
 CREATE FUNCTION public.get_user_default_location_id(p_user_id integer) RETURNS integer
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-    v_location_id INTEGER;
-BEGIN
-    SELECT location_id INTO v_location_id FROM user_location_roles
-    WHERE utilisateur_id = p_user_id AND est_defaut = true LIMIT 1;
-    IF v_location_id IS NULL THEN
-        SELECT location_id INTO v_location_id FROM user_location_roles
-        WHERE utilisateur_id = p_user_id LIMIT 1;
-    END IF;
-    RETURN v_location_id;
-END;
+    AS $$
+DECLARE
+    v_location_id INTEGER;
+BEGIN
+    SELECT location_id INTO v_location_id FROM user_location_roles
+    WHERE utilisateur_id = p_user_id AND est_defaut = true LIMIT 1;
+    IF v_location_id IS NULL THEN
+        SELECT location_id INTO v_location_id FROM user_location_roles
+        WHERE utilisateur_id = p_user_id LIMIT 1;
+    END IF;
+    RETURN v_location_id;
+END;
 $$;
 
 
@@ -892,26 +953,26 @@ $$;
 
 CREATE FUNCTION public.get_user_location_role(p_user_id integer, p_location_id integer) RETURNS character varying
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-    v_role VARCHAR(20);
-    v_global_role VARCHAR(20);
-BEGIN
-    SELECT role::text INTO v_global_role FROM utilisateurs WHERE id = p_user_id;
-    IF v_global_role = 'admin' THEN RETURN 'admin'; END IF;
-    SELECT role_at_location INTO v_role FROM user_location_roles
-    WHERE utilisateur_id = p_user_id AND location_id = p_location_id;
-    IF v_role IS NULL THEN
-        IF v_global_role = 'depot_staff' THEN
-            SELECT CASE WHEN location_type = 'depot' THEN 'depot_staff' ELSE NULL END INTO v_role
-            FROM stock_locations WHERE id = p_location_id;
-        ELSIF v_global_role = 'magasin_staff' THEN
-            SELECT CASE WHEN location_type = 'magasin' THEN 'magasin_staff' ELSE NULL END INTO v_role
-            FROM stock_locations WHERE id = p_location_id;
-        END IF;
-    END IF;
-    RETURN COALESCE(v_role, 'none');
-END;
+    AS $$
+DECLARE
+    v_role VARCHAR(20);
+    v_global_role VARCHAR(20);
+BEGIN
+    SELECT role::text INTO v_global_role FROM utilisateurs WHERE id = p_user_id;
+    IF v_global_role = 'admin' THEN RETURN 'admin'; END IF;
+    SELECT role_at_location INTO v_role FROM user_location_roles
+    WHERE utilisateur_id = p_user_id AND location_id = p_location_id;
+    IF v_role IS NULL THEN
+        IF v_global_role = 'depot_staff' THEN
+            SELECT CASE WHEN location_type = 'depot' THEN 'depot_staff' ELSE NULL END INTO v_role
+            FROM stock_locations WHERE id = p_location_id;
+        ELSIF v_global_role = 'magasin_staff' THEN
+            SELECT CASE WHEN location_type = 'magasin' THEN 'magasin_staff' ELSE NULL END INTO v_role
+            FROM stock_locations WHERE id = p_location_id;
+        END IF;
+    END IF;
+    RETURN COALESCE(v_role, 'none');
+END;
 $$;
 
 
@@ -921,33 +982,33 @@ $$;
 
 CREATE FUNCTION public.log_demande_state_change() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-BEGIN
-    -- Only log if status actually changed
-    IF OLD.statut IS DISTINCT FROM NEW.statut THEN
-        INSERT INTO demandes_reapprovisionnement_history (
-            demande_id,
-            from_statut,
-            to_statut,
-            user_id,
-            payload
-        ) VALUES (
-            NEW.id,
-            OLD.statut,
-            NEW.statut,
-            COALESCE(NEW.decided_by_user_id, NEW.executed_by_user_id, NEW.closed_by_user_id),
-            jsonb_build_object(
-                'decided_by_user_id', NEW.decided_by_user_id,
-                'executed_by_user_id', NEW.executed_by_user_id,
-                'closed_by_user_id', NEW.closed_by_user_id,
-                'raison_refus', NEW.raison_refus,
-                'transfert_id', NEW.transfert_id
-            )
-        );
-    END IF;
-    
-    RETURN NEW;
-END;
+    AS $$
+BEGIN
+    -- Only log if status actually changed
+    IF OLD.statut IS DISTINCT FROM NEW.statut THEN
+        INSERT INTO demandes_reapprovisionnement_history (
+            demande_id,
+            from_statut,
+            to_statut,
+            user_id,
+            payload
+        ) VALUES (
+            NEW.id,
+            OLD.statut,
+            NEW.statut,
+            COALESCE(NEW.decided_by_user_id, NEW.executed_by_user_id, NEW.closed_by_user_id),
+            jsonb_build_object(
+                'decided_by_user_id', NEW.decided_by_user_id,
+                'executed_by_user_id', NEW.executed_by_user_id,
+                'closed_by_user_id', NEW.closed_by_user_id,
+                'raison_refus', NEW.raison_refus,
+                'transfert_id', NEW.transfert_id
+            )
+        );
+    END IF;
+    
+    RETURN NEW;
+END;
 $$;
 
 
@@ -957,39 +1018,39 @@ $$;
 
 CREATE FUNCTION public.sync_acompte_after_application() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_acompte_id INTEGER;
-  v_total_applied NUMERIC(15,2);
-  v_montant NUMERIC(15,2);
-  v_rembourse NUMERIC(15,2);
-  v_new_restant NUMERIC(15,2);
-  v_new_statut VARCHAR(30);
-BEGIN
-  v_acompte_id := COALESCE(NEW.acompte_id, OLD.acompte_id);
-  SELECT COALESCE(SUM(montant),0) INTO v_total_applied
-    FROM acompte_applications WHERE acompte_id = v_acompte_id;
-  SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant, v_rembourse
-    FROM acomptes_clients WHERE id = v_acompte_id;
-
-  v_new_restant := GREATEST(v_montant - v_total_applied - v_rembourse, 0);
-  IF v_new_restant <= 0.005 THEN
-    v_new_statut := 'utilise';
-    v_new_restant := 0;
-  ELSIF v_total_applied <= 0.005 THEN
-    v_new_statut := 'disponible';
-  ELSE
-    v_new_statut := 'partiellement_utilise';
-  END IF;
-
-  UPDATE acomptes_clients
-    SET montant_restant = v_new_restant,
-        statut = CASE WHEN statut = 'rembourse' THEN 'rembourse' ELSE v_new_statut END,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = v_acompte_id;
-
-  RETURN COALESCE(NEW, OLD);
-END;
+    AS $$
+DECLARE
+  v_acompte_id INTEGER;
+  v_total_applied NUMERIC(15,2);
+  v_montant NUMERIC(15,2);
+  v_rembourse NUMERIC(15,2);
+  v_new_restant NUMERIC(15,2);
+  v_new_statut VARCHAR(30);
+BEGIN
+  v_acompte_id := COALESCE(NEW.acompte_id, OLD.acompte_id);
+  SELECT COALESCE(SUM(montant),0) INTO v_total_applied
+    FROM acompte_applications WHERE acompte_id = v_acompte_id;
+  SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant, v_rembourse
+    FROM acomptes_clients WHERE id = v_acompte_id;
+
+  v_new_restant := GREATEST(v_montant - v_total_applied - v_rembourse, 0);
+  IF v_new_restant <= 0.005 THEN
+    v_new_statut := 'utilise';
+    v_new_restant := 0;
+  ELSIF v_total_applied <= 0.005 THEN
+    v_new_statut := 'disponible';
+  ELSE
+    v_new_statut := 'partiellement_utilise';
+  END IF;
+
+  UPDATE acomptes_clients
+    SET montant_restant = v_new_restant,
+        statut = CASE WHEN statut = 'rembourse' THEN 'rembourse' ELSE v_new_statut END,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = v_acompte_id;
+
+  RETURN COALESCE(NEW, OLD);
+END;
 $$;
 
 
@@ -999,45 +1060,45 @@ $$;
 
 CREATE FUNCTION public.sync_acompte_fournisseur_state() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_acompte_id      INTEGER;
-  v_total_applied   NUMERIC(15,2);
-  v_montant_total   NUMERIC(15,2);
-  v_rembourse       NUMERIC(15,2);
-  v_montant_restant NUMERIC(15,2);
-  v_statut          VARCHAR(30);
-  v_deja_rembourse  BOOLEAN;
-BEGIN
-  v_acompte_id := COALESCE(NEW.acompte_id, OLD.acompte_id);
-
-  SELECT COALESCE(SUM(montant),0) INTO v_total_applied
-    FROM acompte_applications_fournisseur WHERE acompte_id = v_acompte_id;
-
-  SELECT montant, COALESCE(montant_rembourse, 0), statut = 'rembourse'
-    INTO v_montant_total, v_rembourse, v_deja_rembourse
-    FROM acomptes_fournisseur WHERE id = v_acompte_id;
-
-  v_montant_restant := GREATEST(v_montant_total - v_total_applied - v_rembourse, 0);
-
-  IF v_deja_rembourse THEN
-    v_statut := 'rembourse';
-  ELSIF v_montant_restant <= 0.005 THEN
-    v_statut := 'utilise';
-  ELSIF v_total_applied <= 0.005 THEN
-    v_statut := 'disponible';
-  ELSE
-    v_statut := 'partiellement_utilise';
-  END IF;
-
-  UPDATE acomptes_fournisseur
-  SET montant_restant = v_montant_restant,
-      statut = v_statut,
-      updated_at = CURRENT_TIMESTAMP
-  WHERE id = v_acompte_id;
-
-  RETURN COALESCE(NEW, OLD);
-END;
+    AS $$
+DECLARE
+  v_acompte_id      INTEGER;
+  v_total_applied   NUMERIC(15,2);
+  v_montant_total   NUMERIC(15,2);
+  v_rembourse       NUMERIC(15,2);
+  v_montant_restant NUMERIC(15,2);
+  v_statut          VARCHAR(30);
+  v_deja_rembourse  BOOLEAN;
+BEGIN
+  v_acompte_id := COALESCE(NEW.acompte_id, OLD.acompte_id);
+
+  SELECT COALESCE(SUM(montant),0) INTO v_total_applied
+    FROM acompte_applications_fournisseur WHERE acompte_id = v_acompte_id;
+
+  SELECT montant, COALESCE(montant_rembourse, 0), statut = 'rembourse'
+    INTO v_montant_total, v_rembourse, v_deja_rembourse
+    FROM acomptes_fournisseur WHERE id = v_acompte_id;
+
+  v_montant_restant := GREATEST(v_montant_total - v_total_applied - v_rembourse, 0);
+
+  IF v_deja_rembourse THEN
+    v_statut := 'rembourse';
+  ELSIF v_montant_restant <= 0.005 THEN
+    v_statut := 'utilise';
+  ELSIF v_total_applied <= 0.005 THEN
+    v_statut := 'disponible';
+  ELSE
+    v_statut := 'partiellement_utilise';
+  END IF;
+
+  UPDATE acomptes_fournisseur
+  SET montant_restant = v_montant_restant,
+      statut = v_statut,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE id = v_acompte_id;
+
+  RETURN COALESCE(NEW, OLD);
+END;
 $$;
 
 
@@ -1047,14 +1108,14 @@ $$;
 
 CREATE FUNCTION public.sync_cmp_to_produit() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-BEGIN
-  UPDATE produits
-  SET prix_achat = NEW.cmp
-  WHERE id = NEW.produit_id
-    AND (prix_achat IS NULL OR prix_achat = 0 OR prix_achat != NEW.cmp);
-  RETURN NEW;
-END;
+    AS $$
+BEGIN
+  UPDATE produits
+  SET prix_achat = NEW.cmp
+  WHERE id = NEW.produit_id
+    AND (prix_achat IS NULL OR prix_achat = 0 OR prix_achat != NEW.cmp);
+  RETURN NEW;
+END;
 $$;
 
 
@@ -1064,79 +1125,20 @@ $$;
 
 CREATE FUNCTION public.sync_demande_on_transfer_change() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-BEGIN
-    IF NEW.statut::text = 'livre' AND OLD.statut::text != 'livre' AND NEW.demande_id IS NOT NULL THEN
-        UPDATE demandes_reapprovisionnement
-        SET statut = 'livree', date_livraison = CURRENT_TIMESTAMP
-        WHERE id = NEW.demande_id AND statut = 'en_cours';
-    END IF;
-    IF NEW.demande_id IS NOT NULL AND TG_OP = 'INSERT' THEN
-        UPDATE demandes_reapprovisionnement
-        SET statut = 'en_cours', transfert_id = NEW.id, date_execution = CURRENT_TIMESTAMP
-        WHERE id = NEW.demande_id AND statut IN ('approuvee', 'partiellement_approuvee');
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-
---
--- Name: transferer_fonds_caisse(integer, integer, numeric, integer, text); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.transferer_fonds_caisse(p_caisse_source_id integer, p_caisse_dest_id integer, p_montant numeric, p_user_id integer, p_notes text DEFAULT NULL::text) RETURNS integer
-    LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_transfert_id INTEGER;
-  v_numero_transfert VARCHAR(50);
-  v_next_val INTEGER;
-  v_source_solde NUMERIC;
-BEGIN
-  -- Check source balance
-  SELECT solde_actuel INTO v_source_solde FROM caisses WHERE id = p_caisse_source_id;
-  
-  IF v_source_solde < p_montant THEN
-    RAISE EXCEPTION 'Insufficient funds in source caisse. Available: %, Requested: %', v_source_solde, p_montant;
-  END IF;
-  
-  -- Generate transfer number
-  SELECT COALESCE(MAX(CAST(SUBSTRING(numero_transfert FROM 4) AS INTEGER)), 0) + 1 
-  INTO v_next_val FROM transferts_caisse WHERE numero_transfert LIKE 'TC-%';
-  
-  v_numero_transfert := 'TC-' || LPAD(v_next_val::TEXT, 6, '0');
-  
-  -- Create transfer record
-  INSERT INTO transferts_caisse (
-    numero_transfert,
-    caisse_source_id,
-    caisse_dest_id,
-    montant,
-    statut,
-    cree_par,
-    notes
-  ) VALUES (
-    v_numero_transfert,
-    p_caisse_source_id,
-    p_caisse_dest_id,
-    p_montant,
-    'valide',
-    p_user_id,
-    p_notes
-  ) RETURNING id INTO v_transfert_id;
-  
-  -- Update caisse balances
-  UPDATE caisses 
-  SET solde_actuel = solde_actuel - p_montant 
-  WHERE id = p_caisse_source_id;
-  
-  UPDATE caisses 
-  SET solde_actuel = solde_actuel + p_montant 
-  WHERE id = p_caisse_dest_id;
-  
-  RETURN v_transfert_id;
-END;
+    AS $$
+BEGIN
+    IF NEW.statut::text = 'livre' AND OLD.statut::text != 'livre' AND NEW.demande_id IS NOT NULL THEN
+        UPDATE demandes_reapprovisionnement
+        SET statut = 'livree', date_livraison = CURRENT_TIMESTAMP
+        WHERE id = NEW.demande_id AND statut = 'en_cours';
+    END IF;
+    IF NEW.demande_id IS NOT NULL AND TG_OP = 'INSERT' THEN
+        UPDATE demandes_reapprovisionnement
+        SET statut = 'en_cours', transfert_id = NEW.id, date_execution = CURRENT_TIMESTAMP
+        WHERE id = NEW.demande_id AND statut IN ('approuvee', 'partiellement_approuvee');
+    END IF;
+    RETURN NEW;
+END;
 $$;
 
 
@@ -1146,11 +1148,11 @@ $$;
 
 CREATE FUNCTION public.update_crm_timestamp() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
+    AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
 $$;
 
 
@@ -1160,29 +1162,29 @@ $$;
 
 CREATE FUNCTION public.update_facture_fournisseur_payment_status() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_facture_id INTEGER;
-  total_due    NUMERIC(15,2);
-  total_paid   NUMERIC(15,2);
-BEGIN
-  v_facture_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.facture_id ELSE NEW.facture_id END;
-  SELECT total INTO total_due FROM factures_fournisseur WHERE id = v_facture_id;
-  SELECT COALESCE(SUM(montant), 0) INTO total_paid
-  FROM paiements_fournisseur
-  WHERE facture_id = v_facture_id
-    AND deleted_at IS NULL;
-  UPDATE factures_fournisseur SET
-    montant_paye = total_paid,
-    reste_due    = total_due - total_paid,
-    statut = CASE
-      WHEN total_paid = 0         THEN 'en_attente'
-      WHEN total_paid < total_due THEN 'partiellement_payee'
-      ELSE 'payee'
-    END
-  WHERE id = v_facture_id;
-  RETURN COALESCE(NEW, OLD);
-END;
+    AS $$
+DECLARE
+  v_facture_id INTEGER;
+  total_due    NUMERIC(15,2);
+  total_paid   NUMERIC(15,2);
+BEGIN
+  v_facture_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.facture_id ELSE NEW.facture_id END;
+  SELECT total INTO total_due FROM factures_fournisseur WHERE id = v_facture_id;
+  SELECT COALESCE(SUM(montant), 0) INTO total_paid
+  FROM paiements_fournisseur
+  WHERE facture_id = v_facture_id
+    AND deleted_at IS NULL;
+  UPDATE factures_fournisseur SET
+    montant_paye = total_paid,
+    reste_due    = total_due - total_paid,
+    statut = CASE
+      WHEN total_paid = 0         THEN 'en_attente'
+      WHEN total_paid < total_due THEN 'partiellement_payee'
+      ELSE 'payee'
+    END
+  WHERE id = v_facture_id;
+  RETURN COALESCE(NEW, OLD);
+END;
 $$;
 
 
@@ -1192,12 +1194,12 @@ $$;
 
 CREATE FUNCTION public.update_facture_ht_ttc() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-BEGIN
-  NEW.total_ht  := NEW.sous_total;
-  NEW.total_ttc := NEW.total;
-  RETURN NEW;
-END;
+    AS $$
+BEGIN
+  NEW.total_ht  := NEW.sous_total;
+  NEW.total_ttc := NEW.total;
+  RETURN NEW;
+END;
 $$;
 
 
@@ -1207,33 +1209,33 @@ $$;
 
 CREATE FUNCTION public.update_facture_on_payment_delete() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-      DECLARE
-        total_due NUMERIC(10, 2);
-        total_paid NUMERIC(10, 2);
-      BEGIN
-        -- Get invoice total
-        SELECT total INTO total_due FROM factures WHERE id = OLD.facture_id;
-        
-        -- Calculate total payments (excluding deleted one)
-        SELECT COALESCE(SUM(montant), 0) INTO total_paid 
-        FROM paiements 
-        WHERE facture_id = OLD.facture_id;
-        
-        -- Update invoice status, montant_paye and remaining_due
-        UPDATE factures 
-        SET 
-          montant_paye = total_paid,
-          remaining_due = total_due - total_paid,
-          statut = CASE
-            WHEN total_paid = 0 THEN 'en_attente'
-            WHEN total_paid < total_due THEN 'partielle'
-            WHEN total_paid >= total_due THEN 'payee'
-          END
-        WHERE id = OLD.facture_id;
-        
-        RETURN OLD;
-      END;
+    AS $$
+      DECLARE
+        total_due NUMERIC(10, 2);
+        total_paid NUMERIC(10, 2);
+      BEGIN
+        -- Get invoice total
+        SELECT total INTO total_due FROM factures WHERE id = OLD.facture_id;
+        
+        -- Calculate total payments (excluding deleted one)
+        SELECT COALESCE(SUM(montant), 0) INTO total_paid 
+        FROM paiements 
+        WHERE facture_id = OLD.facture_id;
+        
+        -- Update invoice status, montant_paye and remaining_due
+        UPDATE factures 
+        SET 
+          montant_paye = total_paid,
+          remaining_due = total_due - total_paid,
+          statut = CASE
+            WHEN total_paid = 0 THEN 'en_attente'
+            WHEN total_paid < total_due THEN 'partielle'
+            WHEN total_paid >= total_due THEN 'payee'
+          END
+        WHERE id = OLD.facture_id;
+        
+        RETURN OLD;
+      END;
       $$;
 
 
@@ -1243,27 +1245,27 @@ CREATE FUNCTION public.update_facture_on_payment_delete() RETURNS trigger
 
 CREATE FUNCTION public.update_facture_payment_status() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  v_facture_id  INTEGER;
-  total_due     NUMERIC(15,2);
-  total_paid    NUMERIC(15,2);
-BEGIN
-  v_facture_id := COALESCE(NEW.facture_id, OLD.facture_id);
-  SELECT total INTO total_due FROM factures WHERE id = v_facture_id;
-  SELECT COALESCE(SUM(montant), 0) INTO total_paid
-  FROM paiements WHERE facture_id = v_facture_id;
-  UPDATE factures SET
-    montant_paye = total_paid,
-    remaining_due = total_due - total_paid,
-    statut = CASE
-      WHEN total_paid = 0          THEN 'en_attente'
-      WHEN total_paid < total_due  THEN 'partielle'
-      ELSE 'payee'
-    END
-  WHERE id = v_facture_id;
-  RETURN COALESCE(NEW, OLD);
-END;
+    AS $$
+DECLARE
+  v_facture_id  INTEGER;
+  total_due     NUMERIC(15,2);
+  total_paid    NUMERIC(15,2);
+BEGIN
+  v_facture_id := COALESCE(NEW.facture_id, OLD.facture_id);
+  SELECT total INTO total_due FROM factures WHERE id = v_facture_id;
+  SELECT COALESCE(SUM(montant), 0) INTO total_paid
+  FROM paiements WHERE facture_id = v_facture_id;
+  UPDATE factures SET
+    montant_paye = total_paid,
+    remaining_due = total_due - total_paid,
+    statut = CASE
+      WHEN total_paid = 0          THEN 'en_attente'
+      WHEN total_paid < total_due  THEN 'partielle'
+      ELSE 'payee'
+    END
+  WHERE id = v_facture_id;
+  RETURN COALESCE(NEW, OLD);
+END;
 $$;
 
 
@@ -1273,24 +1275,24 @@ $$;
 
 CREATE FUNCTION public.update_produits_stock_from_locations() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-DECLARE
-  total_stock INTEGER;
-BEGIN
-  -- Calculate total stock across all active locations
-  SELECT COALESCE(SUM(quantite), 0) INTO total_stock
-  FROM stock_par_location spl
-  JOIN stock_locations sl ON spl.location_id = sl.id
-  WHERE spl.produit_id = COALESCE(NEW.produit_id, OLD.produit_id)
-    AND sl.actif = true;
-  
-  -- Update the cache column
-  UPDATE produits 
-  SET stock = total_stock
-  WHERE id = COALESCE(NEW.produit_id, OLD.produit_id);
-  
-  RETURN COALESCE(NEW, OLD);
-END;
+    AS $$
+DECLARE
+  total_stock INTEGER;
+BEGIN
+  -- Calculate total stock across all active locations
+  SELECT COALESCE(SUM(quantite), 0) INTO total_stock
+  FROM stock_par_location spl
+  JOIN stock_locations sl ON spl.location_id = sl.id
+  WHERE spl.produit_id = COALESCE(NEW.produit_id, OLD.produit_id)
+    AND sl.actif = true;
+  
+  -- Update the cache column
+  UPDATE produits 
+  SET stock = total_stock
+  WHERE id = COALESCE(NEW.produit_id, OLD.produit_id);
+  
+  RETURN COALESCE(NEW, OLD);
+END;
 $$;
 
 
@@ -1300,125 +1302,17 @@ $$;
 
 CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
-    AS $$
-BEGIN
-  NEW.updated_at = CURRENT_TIMESTAMP;
-  RETURN NEW;
-END;
+    AS $$
+BEGIN
+  NEW.updated_at = CURRENT_TIMESTAMP;
+  RETURN NEW;
+END;
 $$;
 
 
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
-
---
--- Name: _deprecated_internal_stock_request_lignes; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public._deprecated_internal_stock_request_lignes (
-    id integer CONSTRAINT internal_stock_request_lignes_id_not_null NOT NULL,
-    request_id integer CONSTRAINT internal_stock_request_lignes_request_id_not_null NOT NULL,
-    produit_id integer CONSTRAINT internal_stock_request_lignes_produit_id_not_null NOT NULL,
-    quantite_demandee integer CONSTRAINT internal_stock_request_lignes_quantite_demandee_not_null NOT NULL,
-    quantite_validee integer,
-    quantite_transferee integer DEFAULT 0,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT internal_stock_request_lignes_quantite_demandee_check CHECK ((quantite_demandee > 0))
-);
-
-
---
--- Name: _deprecated_internal_stock_requests; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public._deprecated_internal_stock_requests (
-    id integer CONSTRAINT internal_stock_requests_id_not_null NOT NULL,
-    numero_demande character varying(50) CONSTRAINT internal_stock_requests_numero_demande_not_null NOT NULL,
-    magasin_id integer CONSTRAINT internal_stock_requests_magasin_id_not_null NOT NULL,
-    depot_id integer CONSTRAINT internal_stock_requests_depot_id_not_null NOT NULL,
-    statut character varying(20) DEFAULT 'en_attente'::character varying CONSTRAINT internal_stock_requests_statut_not_null NOT NULL,
-    notes text,
-    motif_refus text,
-    transfer_id integer,
-    cree_par integer,
-    valide_par integer,
-    execute_par integer,
-    date_validation timestamp without time zone,
-    date_execution timestamp without time zone,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT internal_stock_requests_check CHECK ((magasin_id <> depot_id)),
-    CONSTRAINT internal_stock_requests_statut_check CHECK (((statut)::text = ANY (ARRAY[('en_attente'::character varying)::text, ('validee'::character varying)::text, ('refusee'::character varying)::text, ('executee'::character varying)::text, ('annulee'::character varying)::text])))
-);
-
-
---
--- Name: TABLE _deprecated_internal_stock_requests; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public._deprecated_internal_stock_requests IS 'Internal stock requests from magasin to depot';
-
-
---
--- Name: COLUMN _deprecated_internal_stock_requests.statut; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public._deprecated_internal_stock_requests.statut IS 'en_attente=pending validation, validee=approved by depot, refusee=rejected, executee=transfer completed, annulee=cancelled';
-
-
---
--- Name: _deprecated_three_way_match_details_2026_05; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public._deprecated_three_way_match_details_2026_05 (
-    id integer CONSTRAINT three_way_match_details_id_not_null NOT NULL,
-    match_id integer CONSTRAINT three_way_match_details_match_id_not_null NOT NULL,
-    produit_id integer CONSTRAINT three_way_match_details_produit_id_not_null NOT NULL,
-    quantite_commandee integer CONSTRAINT three_way_match_details_quantite_commandee_not_null NOT NULL,
-    quantite_recue integer CONSTRAINT three_way_match_details_quantite_recue_not_null NOT NULL,
-    prix_commande numeric(15,2) CONSTRAINT three_way_match_details_prix_commande_not_null NOT NULL,
-    prix_facture numeric(15,2) CONSTRAINT three_way_match_details_prix_facture_not_null NOT NULL,
-    ecart_quantite integer DEFAULT 0,
-    ecart_prix numeric(15,2) DEFAULT 0.00,
-    commentaire text
-);
-
-
---
--- Name: TABLE _deprecated_three_way_match_details_2026_05; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public._deprecated_three_way_match_details_2026_05 IS 'Table archivée - Détails 3-Way Match supprimé le 2026-05-06. Contient les écarts quantité/prix par produit.';
-
-
---
--- Name: _deprecated_three_way_matches_2026_05; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public._deprecated_three_way_matches_2026_05 (
-    id integer CONSTRAINT three_way_matches_id_not_null NOT NULL,
-    commande_id integer CONSTRAINT three_way_matches_commande_id_not_null NOT NULL,
-    reception_id integer CONSTRAINT three_way_matches_reception_id_not_null NOT NULL,
-    facture_fournisseur_id integer,
-    date_verification timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    statut character varying(20) DEFAULT 'en_attente'::character varying,
-    ecart_quantite integer DEFAULT 0,
-    ecart_prix numeric(15,2) DEFAULT 0.00,
-    notes text,
-    valide_par integer,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT three_way_matches_statut_check CHECK (((statut)::text = ANY (ARRAY[('en_attente'::character varying)::text, ('valide'::character varying)::text, ('ecart_identifie'::character varying)::text, ('rejete'::character varying)::text])))
-);
-
-
---
--- Name: TABLE _deprecated_three_way_matches_2026_05; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public._deprecated_three_way_matches_2026_05 IS 'Table archivée - 3-Way Match supprimé le 2026-05-06. Contient les enregistrements de matching commande/réception/facture.';
-
 
 --
 -- Name: acompte_applications; Type: TABLE; Schema: public; Owner: -
@@ -1640,42 +1534,6 @@ ALTER SEQUENCE public.acomptes_fournisseur_id_seq OWNED BY public.acomptes_fourn
 
 
 --
--- Name: allocation_audit; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.allocation_audit (
-    id integer NOT NULL,
-    tiers_id integer NOT NULL,
-    allocation_type character varying(50) NOT NULL,
-    before_data jsonb,
-    after_data jsonb,
-    created_by integer,
-    notes text,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
-);
-
-
---
--- Name: allocation_audit_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.allocation_audit_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: allocation_audit_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.allocation_audit_id_seq OWNED BY public.allocation_audit.id;
-
-
---
 -- Name: attachments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1767,47 +1625,6 @@ CREATE SEQUENCE public.avoir_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-
-
---
--- Name: barcode_scans; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.barcode_scans (
-    id integer NOT NULL,
-    code_barre character varying(100) NOT NULL,
-    produit_id integer,
-    utilisateur_id integer,
-    date_scan timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    succes boolean DEFAULT true
-);
-
-
---
--- Name: TABLE barcode_scans; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.barcode_scans IS 'Barcode scan history for analytics';
-
-
---
--- Name: barcode_scans_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.barcode_scans_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: barcode_scans_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.barcode_scans_id_seq OWNED BY public.barcode_scans.id;
 
 
 --
@@ -1906,52 +1723,6 @@ CREATE SEQUENCE public.bons_livraison_id_seq
 --
 
 ALTER SEQUENCE public.bons_livraison_id_seq OWNED BY public.bons_livraison.id;
-
-
---
--- Name: caisses; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.caisses (
-    id integer NOT NULL,
-    code character varying(20) NOT NULL,
-    nom character varying(100) NOT NULL,
-    type character varying(20) NOT NULL,
-    location_id integer,
-    caisse_parent_id integer,
-    solde_actuel numeric(15,2) DEFAULT 0.00,
-    actif boolean DEFAULT true,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT caisses_type_check CHECK (((type)::text = ANY (ARRAY[('principale'::character varying)::text, ('magasin'::character varying)::text])))
-);
-
-
---
--- Name: TABLE caisses; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.caisses IS 'Cash register hierarchy - principale and magasin caisses';
-
-
---
--- Name: caisses_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.caisses_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: caisses_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.caisses_id_seq OWNED BY public.caisses.id;
 
 
 --
@@ -2102,7 +1873,7 @@ CREATE TABLE public.commissions_ventes (
     date_vente date NOT NULL,
     statut character varying(20) DEFAULT 'en_attente'::character varying,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT commissions_ventes_statut_check CHECK (((statut)::text = ANY ((ARRAY['en_attente'::character varying, 'validee'::character varying, 'payee'::character varying])::text[])))
+    CONSTRAINT commissions_ventes_statut_check CHECK (((statut)::text = ANY (ARRAY[('en_attente'::character varying)::text, ('validee'::character varying)::text, ('payee'::character varying)::text])))
 );
 
 
@@ -2144,8 +1915,17 @@ CREATE TABLE public.company_settings (
     devise character varying(10) DEFAULT 'FCFA'::character varying,
     logo_url text DEFAULT '/logo.png'::text,
     taux_conversion numeric(10,4) DEFAULT 1.0000,
+    modules_desactives jsonb DEFAULT '[]'::jsonb NOT NULL,
+    CONSTRAINT company_settings_modules_desactives_is_array CHECK ((jsonb_typeof(modules_desactives) = 'array'::text)),
     CONSTRAINT one_row CHECK ((id = 1))
 );
+
+
+--
+-- Name: COLUMN company_settings.modules_desactives; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.company_settings.modules_desactives IS 'Clés des modules masqués dans l''interface (liste d''exclusion). [] = tout actif.';
 
 
 --
@@ -2895,7 +2675,6 @@ CREATE TABLE public.facture_avoir_lignes (
     description character varying(255),
     quantite integer DEFAULT 1 NOT NULL,
     prix_unitaire numeric(15,2) NOT NULL,
-    taux_tva_id integer,
     total_ligne numeric(15,2) NOT NULL,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
@@ -3150,46 +2929,6 @@ CREATE SEQUENCE public.internal_request_numero_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-
-
---
--- Name: internal_stock_request_lignes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.internal_stock_request_lignes_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: internal_stock_request_lignes_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.internal_stock_request_lignes_id_seq OWNED BY public._deprecated_internal_stock_request_lignes.id;
-
-
---
--- Name: internal_stock_requests_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.internal_stock_requests_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: internal_stock_requests_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.internal_stock_requests_id_seq OWNED BY public._deprecated_internal_stock_requests.id;
 
 
 --
@@ -3451,7 +3190,7 @@ CREATE TABLE public.paiements_fournisseur (
     deleted_at timestamp without time zone,
     CONSTRAINT chk_paiements_fournisseur_montant_pos CHECK ((montant > (0)::numeric)),
     CONSTRAINT chk_pf_source CHECK (((source)::text = ANY (ARRAY[('direct'::character varying)::text, ('acompte_application'::character varying)::text, ('reversal'::character varying)::text]))),
-    CONSTRAINT paiements_fournisseur_methode_paiement_check CHECK (((methode_paiement)::text = ANY ((ARRAY['espece'::character varying, 'carte'::character varying, 'cheque'::character varying, 'virement'::character varying, 'mobile_money'::character varying, 'orange_money'::character varying, 'mtn_money'::character varying, 'wave'::character varying, 'compensation'::character varying])::text[])))
+    CONSTRAINT paiements_fournisseur_methode_paiement_check CHECK (((methode_paiement)::text = ANY (ARRAY[('espece'::character varying)::text, ('carte'::character varying)::text, ('cheque'::character varying)::text, ('virement'::character varying)::text, ('mobile_money'::character varying)::text, ('orange_money'::character varying)::text, ('mtn_money'::character varying)::text, ('wave'::character varying)::text, ('compensation'::character varying)::text])))
 );
 
 
@@ -3611,7 +3350,7 @@ CREATE TABLE public.payroll_runs (
     total_cnps numeric(15,2) DEFAULT 0 NOT NULL,
     total_its numeric(15,2) DEFAULT 0 NOT NULL,
     total_charges_patronales numeric(15,2) DEFAULT 0 NOT NULL,
-    CONSTRAINT payroll_runs_statut_check CHECK (((statut)::text = ANY ((ARRAY['brouillon'::character varying, 'valide'::character varying, 'paye'::character varying, 'annule'::character varying])::text[])))
+    CONSTRAINT payroll_runs_statut_check CHECK (((statut)::text = ANY (ARRAY[('brouillon'::character varying)::text, ('valide'::character varying)::text, ('paye'::character varying)::text, ('annule'::character varying)::text])))
 );
 
 
@@ -3658,7 +3397,7 @@ CREATE TABLE public.payslips (
     retenue_cnps numeric(15,2) DEFAULT 0 NOT NULL,
     retenue_its numeric(15,2) DEFAULT 0 NOT NULL,
     cotisations_patronales numeric(15,2) DEFAULT 0 NOT NULL,
-    CONSTRAINT payslips_statut_check CHECK (((statut)::text = ANY ((ARRAY['en_attente'::character varying, 'paye'::character varying])::text[])))
+    CONSTRAINT payslips_statut_check CHECK (((statut)::text = ANY (ARRAY[('en_attente'::character varying)::text, ('paye'::character varying)::text])))
 );
 
 
@@ -3769,101 +3508,6 @@ CREATE SEQUENCE public.plan_comptable_id_seq
 --
 
 ALTER SEQUENCE public.plan_comptable_id_seq OWNED BY public.plan_comptable.id;
-
-
---
--- Name: pos_cart_items; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.pos_cart_items (
-    id integer NOT NULL,
-    session_id integer,
-    produit_id integer,
-    quantite integer DEFAULT 1 NOT NULL,
-    prix_unitaire numeric(15,2) NOT NULL,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
-);
-
-
---
--- Name: TABLE pos_cart_items; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.pos_cart_items IS 'Quick cart items for POS checkout';
-
-
---
--- Name: pos_cart_items_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.pos_cart_items_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: pos_cart_items_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.pos_cart_items_id_seq OWNED BY public.pos_cart_items.id;
-
-
---
--- Name: pos_sessions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.pos_sessions (
-    id integer NOT NULL,
-    utilisateur_id integer,
-    date_ouverture timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    date_fermeture timestamp without time zone,
-    solde_ouverture numeric(15,2) DEFAULT 0.00,
-    total_ventes numeric(15,2) DEFAULT 0.00,
-    nombre_ventes integer DEFAULT 0,
-    statut character varying(20) DEFAULT 'ouverte'::character varying,
-    notes text,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    location_id integer,
-    CONSTRAINT pos_sessions_statut_check CHECK (((statut)::text = ANY (ARRAY[('ouverte'::character varying)::text, ('fermee'::character varying)::text])))
-);
-
-
---
--- Name: TABLE pos_sessions; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.pos_sessions IS 'POS terminal sessions for walk-in sales';
-
-
---
--- Name: COLUMN pos_sessions.location_id; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.pos_sessions.location_id IS 'Location where the POS session operates';
-
-
---
--- Name: pos_sessions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.pos_sessions_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: pos_sessions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.pos_sessions_id_seq OWNED BY public.pos_sessions.id;
 
 
 --
@@ -4223,7 +3867,6 @@ CREATE TABLE public.sessions_caisse (
     notes_fermeture text,
     statut character varying(20) DEFAULT 'ouverte'::character varying,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    caisse_id integer,
     magasin_id integer NOT NULL,
     ouverte_par_user_id integer NOT NULL,
     cloturee_par_user_id integer,
@@ -4531,49 +4174,6 @@ ALTER SEQUENCE public.stock_transfers_id_seq OWNED BY public.stock_transfers.id;
 
 
 --
--- Name: taux_tva; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.taux_tva (
-    id integer NOT NULL,
-    code character varying(20) NOT NULL,
-    taux numeric(5,2) NOT NULL,
-    description text,
-    actif boolean DEFAULT true,
-    date_debut date DEFAULT CURRENT_DATE,
-    date_fin date,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
-);
-
-
---
--- Name: TABLE taux_tva; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.taux_tva IS 'Configuration des taux de TVA';
-
-
---
--- Name: taux_tva_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.taux_tva_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: taux_tva_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.taux_tva_id_seq OWNED BY public.taux_tva.id;
-
-
---
 -- Name: three_way_match_config; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4585,46 +4185,6 @@ CREATE TABLE public.three_way_match_config (
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT three_way_match_config_id_check CHECK ((id = 1))
 );
-
-
---
--- Name: three_way_match_details_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.three_way_match_details_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: three_way_match_details_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.three_way_match_details_id_seq OWNED BY public._deprecated_three_way_match_details_2026_05.id;
-
-
---
--- Name: three_way_matches_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.three_way_matches_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: three_way_matches_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.three_way_matches_id_seq OWNED BY public._deprecated_three_way_matches_2026_05.id;
 
 
 --
@@ -4735,55 +4295,6 @@ CREATE SEQUENCE public.transfert_caisse_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
-
-
---
--- Name: transferts_caisse; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.transferts_caisse (
-    id integer NOT NULL,
-    numero_transfert character varying(50) NOT NULL,
-    caisse_source_id integer NOT NULL,
-    caisse_dest_id integer NOT NULL,
-    montant numeric(15,2) NOT NULL,
-    date_transfert timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    statut character varying(20) DEFAULT 'en_attente'::character varying,
-    cree_par integer,
-    valide_par integer,
-    date_validation timestamp without time zone,
-    notes text,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT transferts_caisse_montant_check CHECK ((montant > (0)::numeric)),
-    CONSTRAINT transferts_caisse_statut_check CHECK (((statut)::text = ANY (ARRAY[('en_attente'::character varying)::text, ('valide'::character varying)::text, ('annule'::character varying)::text])))
-);
-
-
---
--- Name: TABLE transferts_caisse; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public.transferts_caisse IS 'Fund transfers between caisses';
-
-
---
--- Name: transferts_caisse_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.transferts_caisse_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: transferts_caisse_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.transferts_caisse_id_seq OWNED BY public.transferts_caisse.id;
 
 
 --
@@ -5097,34 +4608,6 @@ COMMENT ON VIEW public.vue_session_methode_totaux IS 'Per-session, per-method ca
 
 
 --
--- Name: _deprecated_internal_stock_request_lignes id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_request_lignes ALTER COLUMN id SET DEFAULT nextval('public.internal_stock_request_lignes_id_seq'::regclass);
-
-
---
--- Name: _deprecated_internal_stock_requests id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_requests ALTER COLUMN id SET DEFAULT nextval('public.internal_stock_requests_id_seq'::regclass);
-
-
---
--- Name: _deprecated_three_way_match_details_2026_05 id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_three_way_match_details_2026_05 ALTER COLUMN id SET DEFAULT nextval('public.three_way_match_details_id_seq'::regclass);
-
-
---
--- Name: _deprecated_three_way_matches_2026_05 id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_three_way_matches_2026_05 ALTER COLUMN id SET DEFAULT nextval('public.three_way_matches_id_seq'::regclass);
-
-
---
 -- Name: acompte_applications id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -5153,13 +4636,6 @@ ALTER TABLE ONLY public.acomptes_fournisseur ALTER COLUMN id SET DEFAULT nextval
 
 
 --
--- Name: allocation_audit id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.allocation_audit ALTER COLUMN id SET DEFAULT nextval('public.allocation_audit_id_seq'::regclass);
-
-
---
 -- Name: attachments id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -5174,13 +4650,6 @@ ALTER TABLE ONLY public.audit_log ALTER COLUMN id SET DEFAULT nextval('public.au
 
 
 --
--- Name: barcode_scans id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.barcode_scans ALTER COLUMN id SET DEFAULT nextval('public.barcode_scans_id_seq'::regclass);
-
-
---
 -- Name: bon_livraison_lignes id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -5192,13 +4661,6 @@ ALTER TABLE ONLY public.bon_livraison_lignes ALTER COLUMN id SET DEFAULT nextval
 --
 
 ALTER TABLE ONLY public.bons_livraison ALTER COLUMN id SET DEFAULT nextval('public.bons_livraison_id_seq'::regclass);
-
-
---
--- Name: caisses id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.caisses ALTER COLUMN id SET DEFAULT nextval('public.caisses_id_seq'::regclass);
 
 
 --
@@ -5440,20 +4902,6 @@ ALTER TABLE ONLY public.plan_comptable ALTER COLUMN id SET DEFAULT nextval('publ
 
 
 --
--- Name: pos_cart_items id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.pos_cart_items ALTER COLUMN id SET DEFAULT nextval('public.pos_cart_items_id_seq'::regclass);
-
-
---
--- Name: pos_sessions id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.pos_sessions ALTER COLUMN id SET DEFAULT nextval('public.pos_sessions_id_seq'::regclass);
-
-
---
 -- Name: produits id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -5545,24 +4993,10 @@ ALTER TABLE ONLY public.stock_transfers ALTER COLUMN id SET DEFAULT nextval('pub
 
 
 --
--- Name: taux_tva id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.taux_tva ALTER COLUMN id SET DEFAULT nextval('public.taux_tva_id_seq'::regclass);
-
-
---
 -- Name: tiers id; Type: DEFAULT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.tiers ALTER COLUMN id SET DEFAULT nextval('public.tiers_id_seq'::regclass);
-
-
---
--- Name: transferts_caisse id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transferts_caisse ALTER COLUMN id SET DEFAULT nextval('public.transferts_caisse_id_seq'::regclass);
 
 
 --
@@ -5626,14 +5060,6 @@ ALTER TABLE ONLY public.acomptes_fournisseur
 
 
 --
--- Name: allocation_audit allocation_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.allocation_audit
-    ADD CONSTRAINT allocation_audit_pkey PRIMARY KEY (id);
-
-
---
 -- Name: attachments attachments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5647,14 +5073,6 @@ ALTER TABLE ONLY public.attachments
 
 ALTER TABLE ONLY public.audit_log
     ADD CONSTRAINT audit_log_pkey PRIMARY KEY (id);
-
-
---
--- Name: barcode_scans barcode_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.barcode_scans
-    ADD CONSTRAINT barcode_scans_pkey PRIMARY KEY (id);
 
 
 --
@@ -5679,22 +5097,6 @@ ALTER TABLE ONLY public.bons_livraison
 
 ALTER TABLE ONLY public.bons_livraison
     ADD CONSTRAINT bons_livraison_pkey PRIMARY KEY (id);
-
-
---
--- Name: caisses caisses_code_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.caisses
-    ADD CONSTRAINT caisses_code_key UNIQUE (code);
-
-
---
--- Name: caisses caisses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.caisses
-    ADD CONSTRAINT caisses_pkey PRIMARY KEY (id);
 
 
 --
@@ -6002,38 +5404,6 @@ ALTER TABLE ONLY public.factures
 
 
 --
--- Name: _deprecated_internal_stock_request_lignes internal_stock_request_lignes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_request_lignes
-    ADD CONSTRAINT internal_stock_request_lignes_pkey PRIMARY KEY (id);
-
-
---
--- Name: _deprecated_internal_stock_request_lignes internal_stock_request_lignes_request_id_produit_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_request_lignes
-    ADD CONSTRAINT internal_stock_request_lignes_request_id_produit_id_key UNIQUE (request_id, produit_id);
-
-
---
--- Name: _deprecated_internal_stock_requests internal_stock_requests_numero_demande_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_requests
-    ADD CONSTRAINT internal_stock_requests_numero_demande_key UNIQUE (numero_demande);
-
-
---
--- Name: _deprecated_internal_stock_requests internal_stock_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_requests
-    ADD CONSTRAINT internal_stock_requests_pkey PRIMARY KEY (id);
-
-
---
 -- Name: magasins magasins_code_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6167,22 +5537,6 @@ ALTER TABLE ONLY public.plan_comptable
 
 ALTER TABLE ONLY public.plan_comptable
     ADD CONSTRAINT plan_comptable_pkey PRIMARY KEY (id);
-
-
---
--- Name: pos_cart_items pos_cart_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.pos_cart_items
-    ADD CONSTRAINT pos_cart_items_pkey PRIMARY KEY (id);
-
-
---
--- Name: pos_sessions pos_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.pos_sessions
-    ADD CONSTRAINT pos_sessions_pkey PRIMARY KEY (id);
 
 
 --
@@ -6370,51 +5724,11 @@ ALTER TABLE ONLY public.stock_transfers
 
 
 --
--- Name: taux_tva taux_tva_code_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.taux_tva
-    ADD CONSTRAINT taux_tva_code_key UNIQUE (code);
-
-
---
--- Name: taux_tva taux_tva_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.taux_tva
-    ADD CONSTRAINT taux_tva_pkey PRIMARY KEY (id);
-
-
---
 -- Name: three_way_match_config three_way_match_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.three_way_match_config
     ADD CONSTRAINT three_way_match_config_pkey PRIMARY KEY (id);
-
-
---
--- Name: _deprecated_three_way_match_details_2026_05 three_way_match_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_three_way_match_details_2026_05
-    ADD CONSTRAINT three_way_match_details_pkey PRIMARY KEY (id);
-
-
---
--- Name: _deprecated_three_way_matches_2026_05 three_way_matches_commande_id_reception_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_three_way_matches_2026_05
-    ADD CONSTRAINT three_way_matches_commande_id_reception_id_key UNIQUE (commande_id, reception_id);
-
-
---
--- Name: _deprecated_three_way_matches_2026_05 three_way_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_three_way_matches_2026_05
-    ADD CONSTRAINT three_way_matches_pkey PRIMARY KEY (id);
 
 
 --
@@ -6431,22 +5745,6 @@ ALTER TABLE ONLY public.tiers
 
 ALTER TABLE ONLY public.tiers
     ADD CONSTRAINT tiers_pkey PRIMARY KEY (id);
-
-
---
--- Name: transferts_caisse transferts_caisse_numero_transfert_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transferts_caisse
-    ADD CONSTRAINT transferts_caisse_numero_transfert_key UNIQUE (numero_transfert);
-
-
---
--- Name: transferts_caisse transferts_caisse_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transferts_caisse
-    ADD CONSTRAINT transferts_caisse_pkey PRIMARY KEY (id);
 
 
 --
@@ -6514,31 +5812,10 @@ ALTER TABLE ONLY public.utilisateurs
 
 
 --
--- Name: idx_3wm_commande; Type: INDEX; Schema: public; Owner: -
+-- Name: commissions_ventes_employe_facture_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_3wm_commande ON public._deprecated_three_way_matches_2026_05 USING btree (commande_id);
-
-
---
--- Name: idx_3wm_facture; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_3wm_facture ON public._deprecated_three_way_matches_2026_05 USING btree (facture_fournisseur_id);
-
-
---
--- Name: idx_3wm_reception; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_3wm_reception ON public._deprecated_three_way_matches_2026_05 USING btree (reception_id);
-
-
---
--- Name: idx_3wm_statut; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_3wm_statut ON public._deprecated_three_way_matches_2026_05 USING btree (statut);
+CREATE UNIQUE INDEX commissions_ventes_employe_facture_uniq ON public.commissions_ventes USING btree (employe_id, facture_id);
 
 
 --
@@ -6668,13 +5945,6 @@ CREATE INDEX idx_acomptes_tiers ON public.acomptes_clients USING btree (tiers_id
 
 
 --
--- Name: idx_alloc_audit_tiers; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_alloc_audit_tiers ON public.allocation_audit USING btree (tiers_id, created_at);
-
-
---
 -- Name: idx_attachments_entity; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6752,27 +6022,6 @@ CREATE INDEX idx_avoir_tiers ON public.factures_avoir USING btree (tiers_id);
 
 
 --
--- Name: idx_barcode_scans_code; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_barcode_scans_code ON public.barcode_scans USING btree (code_barre);
-
-
---
--- Name: idx_barcode_scans_date; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_barcode_scans_date ON public.barcode_scans USING btree (date_scan);
-
-
---
--- Name: idx_barcode_scans_produit; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_barcode_scans_produit ON public.barcode_scans USING btree (produit_id);
-
-
---
 -- Name: idx_bl_deleted; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6798,27 +6047,6 @@ CREATE INDEX idx_bl_statut ON public.bons_livraison USING btree (statut);
 --
 
 CREATE INDEX idx_bl_tiers ON public.bons_livraison USING btree (tiers_id);
-
-
---
--- Name: idx_caisses_location; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_caisses_location ON public.caisses USING btree (location_id);
-
-
---
--- Name: idx_caisses_parent; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_caisses_parent ON public.caisses USING btree (caisse_parent_id);
-
-
---
--- Name: idx_caisses_type; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_caisses_type ON public.caisses USING btree (type);
 
 
 --
@@ -7340,48 +6568,6 @@ CREATE INDEX idx_ff_tiers ON public.factures_fournisseur USING btree (tiers_id);
 
 
 --
--- Name: idx_internal_request_lignes_produit; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_request_lignes_produit ON public._deprecated_internal_stock_request_lignes USING btree (produit_id);
-
-
---
--- Name: idx_internal_request_lignes_request; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_request_lignes_request ON public._deprecated_internal_stock_request_lignes USING btree (request_id);
-
-
---
--- Name: idx_internal_requests_created_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_requests_created_at ON public._deprecated_internal_stock_requests USING btree (created_at DESC);
-
-
---
--- Name: idx_internal_requests_depot; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_requests_depot ON public._deprecated_internal_stock_requests USING btree (depot_id);
-
-
---
--- Name: idx_internal_requests_magasin; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_requests_magasin ON public._deprecated_internal_stock_requests USING btree (magasin_id);
-
-
---
--- Name: idx_internal_requests_statut; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_requests_statut ON public._deprecated_internal_stock_requests USING btree (statut);
-
-
---
 -- Name: idx_magasins_code; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7564,48 +6750,6 @@ CREATE INDEX idx_payslips_run ON public.payslips USING btree (payroll_run_id);
 
 
 --
--- Name: idx_pos_cart_produit; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_pos_cart_produit ON public.pos_cart_items USING btree (produit_id);
-
-
---
--- Name: idx_pos_cart_session; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_pos_cart_session ON public.pos_cart_items USING btree (session_id);
-
-
---
--- Name: idx_pos_sessions_date; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_pos_sessions_date ON public.pos_sessions USING btree (date_ouverture);
-
-
---
--- Name: idx_pos_sessions_location; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_pos_sessions_location ON public.pos_sessions USING btree (location_id);
-
-
---
--- Name: idx_pos_sessions_statut; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_pos_sessions_statut ON public.pos_sessions USING btree (statut);
-
-
---
--- Name: idx_pos_sessions_utilisateur; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_pos_sessions_utilisateur ON public.pos_sessions USING btree (utilisateur_id);
-
-
---
 -- Name: idx_produit_categorie; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7739,13 +6883,6 @@ CREATE INDEX idx_retours_tiers ON public.retours USING btree (tiers_id);
 
 
 --
--- Name: idx_sessions_caisse_caisse; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_sessions_caisse_caisse ON public.sessions_caisse USING btree (caisse_id);
-
-
---
 -- Name: idx_sessions_cloturee_par; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7858,13 +6995,6 @@ CREATE INDEX idx_stock_transfers_demande ON public.stock_transfers USING btree (
 
 
 --
--- Name: idx_taux_tva_actif; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_taux_tva_actif ON public.taux_tva USING btree (actif) WHERE (actif = true);
-
-
---
 -- Name: idx_tiers_code; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7925,27 +7055,6 @@ CREATE INDEX idx_transfer_source ON public.stock_transfers USING btree (location
 --
 
 CREATE INDEX idx_transfer_statut ON public.stock_transfers USING btree (statut);
-
-
---
--- Name: idx_transferts_dest; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_transferts_dest ON public.transferts_caisse USING btree (caisse_dest_id);
-
-
---
--- Name: idx_transferts_source; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_transferts_source ON public.transferts_caisse USING btree (caisse_source_id);
-
-
---
--- Name: idx_transferts_statut; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_transferts_statut ON public.transferts_caisse USING btree (statut);
 
 
 --
@@ -8075,6 +7184,13 @@ CREATE TRIGGER trg_after_payment_insert AFTER INSERT OR DELETE OR UPDATE ON publ
 
 
 --
+-- Name: factures trg_commission_vente; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_commission_vente AFTER INSERT ON public.factures FOR EACH ROW EXECUTE FUNCTION public.enregistrer_commission_vente();
+
+
+--
 -- Name: crm_interactions trg_crm_interactions_updated; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8198,13 +7314,6 @@ CREATE TRIGGER trg_tiers_code BEFORE INSERT ON public.tiers FOR EACH ROW EXECUTE
 --
 
 CREATE TRIGGER update_bons_livraison_updated_at BEFORE UPDATE ON public.bons_livraison FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
-
-
---
--- Name: caisses update_caisses_updated_at; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER update_caisses_updated_at BEFORE UPDATE ON public.caisses FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
 --
@@ -8473,14 +7582,6 @@ ALTER TABLE ONLY public.acomptes_fournisseur
 
 
 --
--- Name: allocation_audit allocation_audit_tiers_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.allocation_audit
-    ADD CONSTRAINT allocation_audit_tiers_id_fkey FOREIGN KEY (tiers_id) REFERENCES public.tiers(id) ON DELETE CASCADE;
-
-
---
 -- Name: attachments attachments_cree_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8494,22 +7595,6 @@ ALTER TABLE ONLY public.attachments
 
 ALTER TABLE ONLY public.audit_log
     ADD CONSTRAINT audit_log_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
-
-
---
--- Name: barcode_scans barcode_scans_produit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.barcode_scans
-    ADD CONSTRAINT barcode_scans_produit_id_fkey FOREIGN KEY (produit_id) REFERENCES public.produits(id) ON DELETE SET NULL;
-
-
---
--- Name: barcode_scans barcode_scans_utilisateur_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.barcode_scans
-    ADD CONSTRAINT barcode_scans_utilisateur_id_fkey FOREIGN KEY (utilisateur_id) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
 
 
 --
@@ -8566,22 +7651,6 @@ ALTER TABLE ONLY public.bons_livraison
 
 ALTER TABLE ONLY public.bons_livraison
     ADD CONSTRAINT bons_livraison_tiers_id_fkey FOREIGN KEY (tiers_id) REFERENCES public.tiers(id) ON DELETE RESTRICT;
-
-
---
--- Name: caisses caisses_caisse_parent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.caisses
-    ADD CONSTRAINT caisses_caisse_parent_id_fkey FOREIGN KEY (caisse_parent_id) REFERENCES public.caisses(id) ON DELETE SET NULL;
-
-
---
--- Name: caisses caisses_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.caisses
-    ADD CONSTRAINT caisses_location_id_fkey FOREIGN KEY (location_id) REFERENCES public.stock_locations(id) ON DELETE SET NULL;
 
 
 --
@@ -8969,14 +8038,6 @@ ALTER TABLE ONLY public.facture_avoir_lignes
 
 
 --
--- Name: facture_avoir_lignes facture_avoir_lignes_taux_tva_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.facture_avoir_lignes
-    ADD CONSTRAINT facture_avoir_lignes_taux_tva_id_fkey FOREIGN KEY (taux_tva_id) REFERENCES public.taux_tva(id) ON DELETE SET NULL;
-
-
---
 -- Name: facture_fournisseur_lignes facture_fournisseur_lignes_facture_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9177,70 +8238,6 @@ ALTER TABLE ONLY public.paiements_fournisseur
 
 
 --
--- Name: _deprecated_internal_stock_request_lignes internal_stock_request_lignes_produit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_request_lignes
-    ADD CONSTRAINT internal_stock_request_lignes_produit_id_fkey FOREIGN KEY (produit_id) REFERENCES public.produits(id) ON DELETE RESTRICT;
-
-
---
--- Name: _deprecated_internal_stock_request_lignes internal_stock_request_lignes_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_request_lignes
-    ADD CONSTRAINT internal_stock_request_lignes_request_id_fkey FOREIGN KEY (request_id) REFERENCES public._deprecated_internal_stock_requests(id) ON DELETE CASCADE;
-
-
---
--- Name: _deprecated_internal_stock_requests internal_stock_requests_cree_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_requests
-    ADD CONSTRAINT internal_stock_requests_cree_par_fkey FOREIGN KEY (cree_par) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
-
-
---
--- Name: _deprecated_internal_stock_requests internal_stock_requests_depot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_requests
-    ADD CONSTRAINT internal_stock_requests_depot_id_fkey FOREIGN KEY (depot_id) REFERENCES public.stock_locations(id) ON DELETE RESTRICT;
-
-
---
--- Name: _deprecated_internal_stock_requests internal_stock_requests_execute_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_requests
-    ADD CONSTRAINT internal_stock_requests_execute_par_fkey FOREIGN KEY (execute_par) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
-
-
---
--- Name: _deprecated_internal_stock_requests internal_stock_requests_magasin_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_requests
-    ADD CONSTRAINT internal_stock_requests_magasin_id_fkey FOREIGN KEY (magasin_id) REFERENCES public.stock_locations(id) ON DELETE RESTRICT;
-
-
---
--- Name: _deprecated_internal_stock_requests internal_stock_requests_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_requests
-    ADD CONSTRAINT internal_stock_requests_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.stock_transfers(id) ON DELETE SET NULL;
-
-
---
--- Name: _deprecated_internal_stock_requests internal_stock_requests_valide_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_internal_stock_requests
-    ADD CONSTRAINT internal_stock_requests_valide_par_fkey FOREIGN KEY (valide_par) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
-
-
---
 -- Name: magasins magasins_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9393,38 +8390,6 @@ ALTER TABLE ONLY public.payslips
 
 
 --
--- Name: pos_cart_items pos_cart_items_produit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.pos_cart_items
-    ADD CONSTRAINT pos_cart_items_produit_id_fkey FOREIGN KEY (produit_id) REFERENCES public.produits(id) ON DELETE RESTRICT;
-
-
---
--- Name: pos_cart_items pos_cart_items_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.pos_cart_items
-    ADD CONSTRAINT pos_cart_items_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.pos_sessions(id) ON DELETE CASCADE;
-
-
---
--- Name: pos_sessions pos_sessions_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.pos_sessions
-    ADD CONSTRAINT pos_sessions_location_id_fkey FOREIGN KEY (location_id) REFERENCES public.stock_locations(id) ON DELETE SET NULL;
-
-
---
--- Name: pos_sessions pos_sessions_utilisateur_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.pos_sessions
-    ADD CONSTRAINT pos_sessions_utilisateur_id_fkey FOREIGN KEY (utilisateur_id) REFERENCES public.utilisateurs(id) ON DELETE RESTRICT;
-
-
---
 -- Name: produits produits_cree_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9518,14 +8483,6 @@ ALTER TABLE ONLY public.retours
 
 ALTER TABLE ONLY public.retours
     ADD CONSTRAINT retours_tiers_id_fkey FOREIGN KEY (tiers_id) REFERENCES public.tiers(id) ON DELETE RESTRICT;
-
-
---
--- Name: sessions_caisse sessions_caisse_caisse_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.sessions_caisse
-    ADD CONSTRAINT sessions_caisse_caisse_id_fkey FOREIGN KEY (caisse_id) REFERENCES public.caisses(id) ON DELETE SET NULL;
 
 
 --
@@ -9657,70 +8614,6 @@ ALTER TABLE ONLY public.stock_transfers
 
 
 --
--- Name: _deprecated_three_way_match_details_2026_05 three_way_match_details_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_three_way_match_details_2026_05
-    ADD CONSTRAINT three_way_match_details_match_id_fkey FOREIGN KEY (match_id) REFERENCES public._deprecated_three_way_matches_2026_05(id) ON DELETE CASCADE;
-
-
---
--- Name: _deprecated_three_way_match_details_2026_05 three_way_match_details_produit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_three_way_match_details_2026_05
-    ADD CONSTRAINT three_way_match_details_produit_id_fkey FOREIGN KEY (produit_id) REFERENCES public.produits(id) ON DELETE RESTRICT;
-
-
---
--- Name: _deprecated_three_way_matches_2026_05 three_way_matches_reception_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_three_way_matches_2026_05
-    ADD CONSTRAINT three_way_matches_reception_id_fkey FOREIGN KEY (reception_id) REFERENCES public.receptions(id) ON DELETE RESTRICT;
-
-
---
--- Name: _deprecated_three_way_matches_2026_05 three_way_matches_valide_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._deprecated_three_way_matches_2026_05
-    ADD CONSTRAINT three_way_matches_valide_par_fkey FOREIGN KEY (valide_par) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
-
-
---
--- Name: transferts_caisse transferts_caisse_caisse_dest_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transferts_caisse
-    ADD CONSTRAINT transferts_caisse_caisse_dest_id_fkey FOREIGN KEY (caisse_dest_id) REFERENCES public.caisses(id) ON DELETE RESTRICT;
-
-
---
--- Name: transferts_caisse transferts_caisse_caisse_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transferts_caisse
-    ADD CONSTRAINT transferts_caisse_caisse_source_id_fkey FOREIGN KEY (caisse_source_id) REFERENCES public.caisses(id) ON DELETE RESTRICT;
-
-
---
--- Name: transferts_caisse transferts_caisse_cree_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transferts_caisse
-    ADD CONSTRAINT transferts_caisse_cree_par_fkey FOREIGN KEY (cree_par) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
-
-
---
--- Name: transferts_caisse transferts_caisse_valide_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.transferts_caisse
-    ADD CONSTRAINT transferts_caisse_valide_par_fkey FOREIGN KEY (valide_par) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
-
-
---
 -- Name: user_location_roles user_location_roles_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9769,16 +8662,8 @@ ALTER TABLE ONLY public.utilisateurs
 
 
 --
--- Name: TABLE audit_log; Type: ACL; Schema: public; Owner: -
---
-
-REVOKE ALL ON TABLE public.audit_log FROM postgres;
-GRANT SELECT,INSERT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE public.audit_log TO postgres;
-
-
---
 -- PostgreSQL database dump complete
 --
 
-\unrestrict jhxdCEUMik4hwxUOek30WTjcFS9fPBiYOstHHRyX8GVyRnrL7TAKyaqMzjGXXnh
+\unrestrict Af6qdksytSHBk8jxbogkGxX531PbftGX6obqHvbWnNess7Ke0dG8pNFqxND1eTp
 

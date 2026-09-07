@@ -10,6 +10,13 @@ interface SseNotification {
   timestamp: string;
 }
 
+/**
+ * Pont entre le flux SSE (ouvert une fois dans App) et la cloche des demandes.
+ * Le serveur émet `demande-changed` à chaque transition ; la cloche se contente
+ * de recharger.
+ */
+export const DEMANDES_CHANGED_EVENT = 'demandes:changed';
+
 interface SseLowStock {
   produit_id: number;
   nom: string;
@@ -83,6 +90,14 @@ export function useSseNotifications() {
       } catch {
         toast.warning('Stock faible détecté');
       }
+    });
+
+    // Une demande de réappro a changé d'état côté serveur. Le message ne porte
+    // pas de données : la cloche recharge son propre décompte, filtré par rôle.
+    // On repasse par un événement DOM plutôt que d'ouvrir un second EventSource
+    // dans la cloche — les navigateurs plafonnent les connexions par origine.
+    es.addEventListener('demande-changed', () => {
+      window.dispatchEvent(new CustomEvent(DEMANDES_CHANGED_EVENT));
     });
 
     es.onopen = () => {

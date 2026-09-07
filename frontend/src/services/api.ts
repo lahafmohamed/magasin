@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Produit, FactureComplete, Paiement, StatsDashboard } from '../types';
+import { Produit, FactureComplete, StatsDashboard } from '../types';
 import type { PaymentMethod } from '../utils/paymentMethod';
 
 export interface PaginationMeta {
@@ -112,11 +112,6 @@ export const produitService = {
     return data?.data ?? data ?? [];
   },
 
-  getById: async (id: number): Promise<Produit> => {
-    const { data } = await api.get(`/produits/${id}`);
-    return data;
-  },
-
   create: async (produit: CreateProduitPayload): Promise<{ id: number }> => {
     const { data } = await api.post('/produits', produit);
     return data;
@@ -158,16 +153,6 @@ export const produitService = {
     return data;
   },
 
-  addStockMovement: async (id: number, movement: {
-    type_mouvement: string;
-    quantite: number;
-    raison?: string;
-    reference_liee?: string;
-  }): Promise<{ stock: number }> => {
-    const { data } = await api.post(`/produits/${id}/mouvements`, movement);
-    return data;
-  },
-
   searchFuzzy: async (query: string, limit = 10, threshold = 0.1): Promise<any[]> => {
     const params = new URLSearchParams();
     params.append('q', query);
@@ -176,38 +161,12 @@ export const produitService = {
     const { data } = await api.get(`/produits/search/fuzzy?${params}`);
     return data;
   },
-
-  getSuggestions: async (query: string, limit = 5): Promise<any[]> => {
-    const params = new URLSearchParams();
-    params.append('q', query);
-    params.append('limit', limit.toString());
-    const { data } = await api.get(`/produits/suggestions?${params}`);
-    return data;
-  },
 };
 
 // ========== VENTES (Magasin-only product picker) ==========
 // Used exclusively by Facture and Devis forms. Backend filters dépôt at SQL level
 // and rejects non-magasin location_id with HTTP 422.
 export const ventesService = {
-  searchProducts: async (
-    search?: string,
-    page = 1,
-    limit = 20,
-    sort = 'nom',
-    order = 'asc',
-    locationId?: number,
-  ): Promise<any> => {
-    const params = new URLSearchParams();
-    if (search) params.append('search', search);
-    if (locationId) params.append('location_id', locationId.toString());
-    params.append('page', page.toString());
-    params.append('limit', limit.toString());
-    params.append('sort', sort);
-    params.append('order', order);
-    const { data } = await api.get(`/produits/ventes?${params}`);
-    return data;
-  },
 
   getLocations: async (): Promise<any> => {
     const { data } = await api.get('/produits/ventes/locations');
@@ -269,14 +228,6 @@ export const tiersService = {
     return data;
   },
 
-  getReleveDetaille: async (id: number, from?: string, to?: string): Promise<any> => {
-    const params = new URLSearchParams();
-    if (from) params.append('from', from);
-    if (to) params.append('to', to);
-    const { data } = await api.get(`/tiers/${id}/releve-detaille?${params}`);
-    return data?.data ?? data;
-  },
-
   downloadRelevePdf: async (id: number, raisonSociale: string, from?: string, to?: string): Promise<void> => {
     const params = new URLSearchParams();
     if (from) params.append('from', from);
@@ -318,11 +269,6 @@ export const tiersService = {
 
   delete: async (id: number): Promise<void> => {
     await api.delete(`/tiers/${id}`);
-  },
-
-  promouvoir: async (id: number, role: 'client' | 'fournisseur'): Promise<any> => {
-    const { data } = await api.patch(`/tiers/${id}/promouvoir`, { role });
-    return data;
   },
 
   recordAcompteClient: async (id: number, payload: {
@@ -373,14 +319,7 @@ export const tiersService = {
 
 // ========== ACOMPTES ==========
 export const acompteService = {
-  getById: async (id: number): Promise<any> => {
-    const { data } = await api.get(`/acomptes/${id}`);
-    return data;
-  },
-  listApplications: async (id: number): Promise<any[]> => {
-    const { data } = await api.get(`/acomptes/${id}/applications`);
-    return data ?? [];
-  },
+
   apply: async (id: number, payload: { facture_id: number; montant: number; idempotency_key?: string }): Promise<any> => {
     const { data } = await api.post(`/acomptes/${id}/apply`, payload);
     return data;
@@ -396,25 +335,14 @@ export const acompteService = {
     return data;
   },
   listForClient: async (tiersId: number): Promise<any[]> => {
-    // Reuses /api/comptes/:id/acomptes/disponibles for active-only list.
-    // The endpoint returns the standard envelope, so the response interceptor
-    // has already unwrapped it to the array — reading `.data` again yielded
-    // undefined and silently emptied the list.
-    const { data } = await api.get(`/comptes/${tiersId}/acomptes/disponibles`);
+    const { data } = await api.get(`/tiers/${tiersId}/acomptes-client/disponibles`);
     return data ?? [];
   },
 };
 
 // ========== ACOMPTES FOURNISSEUR ==========
 export const acompteFournisseurService = {
-  getById: async (id: number): Promise<any> => {
-    const { data } = await api.get(`/acomptes/fournisseur/${id}`);
-    return data;
-  },
-  listApplications: async (id: number): Promise<any[]> => {
-    const { data } = await api.get(`/acomptes/fournisseur/${id}/applications`);
-    return data ?? [];
-  },
+
   apply: async (id: number, payload: { facture_id: number; montant: number; idempotency_key?: string }): Promise<any> => {
     const { data } = await api.post(`/acomptes/fournisseur/${id}/apply`, payload);
     return data;
@@ -467,14 +395,6 @@ export const factureService = {
     return data;
   },
 
-  updateStatut: async (id: number, statut: string): Promise<void> => {
-    await api.put(`/factures/${id}/statut`, { statut });
-  },
-
-  delete: async (id: number, restaurerStock = false): Promise<void> => {
-    await api.delete(`/factures/${id}`, { data: { restaurer_stock: restaurerStock } });
-  },
-
   getStats: async (): Promise<StatsDashboard> => {
     const { data } = await api.get('/factures/stats');
     // Unwrap nested data if needed
@@ -518,35 +438,9 @@ export const paiementService = {
     return data;
   },
 
-  getByFacture: async (factureId: number): Promise<Paiement[]> => {
-    const { data } = await api.get(`/factures/${factureId}/paiements`);
-    return data;
-  },
-
-  getAll: async (page = 1, limit = 20, methode?: string, dateDebut?: string, dateFin?: string): Promise<any> => {
-    const params = new URLSearchParams();
-    params.append('page', page.toString());
-    params.append('limit', limit.toString());
-    if (methode) params.append('methode', methode);
-    if (dateDebut) params.append('date_debut', dateDebut);
-    if (dateFin) params.append('date_fin', dateFin);
-    const { data } = await api.get(`/paiements?${params}`);
-    return data;
-  },
-
   getStats: async (): Promise<any> => {
     const { data } = await api.get('/paiements/stats');
     return data;
-  },
-
-  update: async (id: number, paiement: {
-    montant?: number;
-    methode_paiement?: PaymentMethod;
-    reference?: string;
-    notes?: string;
-    date_paiement?: string;
-  }): Promise<void> => {
-    await api.put(`/paiements/${id}`, paiement);
   },
 
   delete: async (id: number): Promise<void> => {
@@ -624,10 +518,6 @@ export const commandeService = {
     await api.put(`/commandes/${id}/statut`, { statut });
   },
 
-  delete: async (id: number): Promise<void> => {
-    await api.delete(`/commandes/${id}`);
-  },
-
   getStats: async (): Promise<any> => {
     const { data } = await api.get('/commandes/stats');
     return data;
@@ -688,22 +578,12 @@ export const receptionService = {
   delete: async (id: number): Promise<void> => {
     await api.delete(`/receptions/${id}`);
   },
-
-  getStats: async (): Promise<any> => {
-    const { data } = await api.get('/receptions/stats');
-    return data;
-  },
 };
 
 // ========== STOCK LOCATIONS ==========
 export const stockLocationService = {
   getAll: async (): Promise<any> => {
     const { data } = await api.get('/stock-locations');
-    return data;
-  },
-
-  getById: async (id: number): Promise<any> => {
-    const { data } = await api.get(`/stock-locations/${id}`);
     return data;
   },
 
@@ -720,14 +600,6 @@ export const stockLocationService = {
 
   getStockLevels: async (locationId: number): Promise<any> => {
     const { data } = await api.get(`/stock-locations/${locationId}/stock`);
-    return data;
-  },
-
-  getProductsWithStock: async (locationId: number, search?: string, limit?: number): Promise<any> => {
-    const params: Record<string, any> = {};
-    if (search) params.search = search;
-    if (limit) params.limit = limit;
-    const { data } = await api.get(`/stock-locations/${locationId}/products-with-stock`, { params });
     return data;
   },
 };
@@ -785,6 +657,11 @@ export const stockTransferService = {
   complete: async (id: number): Promise<void> => {
     await api.post(`/stock-transfers/${id}/complete`);
   },
+
+  /** Annule un transfert non encore complété et relâche le stock réservé. */
+  cancel: async (id: number): Promise<void> => {
+    await api.post(`/stock-transfers/${id}/cancel`);
+  },
 };
 
 
@@ -838,16 +715,6 @@ export const factureFournisseurService = {
   }): Promise<void> => {
     await api.post(`/factures-fournisseur/${factureId}/paiement`, payment);
   },
-
-  getPayable: async (): Promise<any[]> => {
-    const { data } = await api.get('/factures-fournisseur/payable');
-    return data;
-  },
-
-  getStats: async (): Promise<any> => {
-    const { data } = await api.get('/factures-fournisseur/stats');
-    return data;
-  },
 };
 
 // ========== GENERAL LEDGER ==========
@@ -873,37 +740,6 @@ export const generalLedgerService = {
 
   getTrialBalance: async (dateDebut: string, dateFin: string): Promise<any> => {
     const { data } = await api.get('/general-ledger/trial-balance', {
-      params: { date_debut: dateDebut, date_fin: dateFin }
-    });
-    return data;
-  },
-
-  getAccountLedger: async (compteId: number, dateDebut: string, dateFin: string): Promise<any> => {
-    const { data } = await api.get(`/general-ledger/account/${compteId}/ledger`, {
-      params: { date_debut: dateDebut, date_fin: dateFin }
-    });
-    return data;
-  },
-
-  createManualEntry: async (entry: {
-    numero_piece: string;
-    journal: string;
-    date_ecriture: string;
-    lignes: { compte_id: number; debit: number; credit: number; description?: string }[];
-  }): Promise<void> => {
-    await api.post('/general-ledger/manual-entry', entry);
-  },
-
-  getStats: async (date_debut?: string, date_fin?: string): Promise<any> => {
-    const params: any = {};
-    if (date_debut) params.date_debut = date_debut;
-    if (date_fin) params.date_fin = date_fin;
-    const { data } = await api.get('/general-ledger/stats', { params });
-    return data;
-  },
-
-  getJournalBreakdown: async (dateDebut: string, dateFin: string): Promise<any> => {
-    const { data } = await api.get('/general-ledger/journal-breakdown', {
       params: { date_debut: dateDebut, date_fin: dateFin }
     });
     return data;
@@ -959,11 +795,6 @@ export const employeService = {
     return data;
   },
 
-  getById: async (id: number): Promise<any> => {
-    const { data } = await api.get(`/employes/${id}`);
-    return data;
-  },
-
   create: async (employe: {
     matricule: string;
     nom_complet: string;
@@ -999,35 +830,22 @@ export const employeService = {
     return data;
   },
 
-  recordCommission: async (employeId: number, factureId: number, montantVente: number): Promise<void> => {
-    await api.post(`/employes/${employeId}/commission`, {
-      facture_id: factureId,
-      montant_vente: montantVente,
+  /**
+   * Détail des commissions d'un employé. Les lignes sont créées par le trigger
+   * `trg_commission_vente` (migration 100) à chaque facture émise ; celles dont
+   * la facture a été annulée ou supprimée sont exclues côté serveur.
+   */
+  getCommissions: async (employeId: number, dateDebut: string, dateFin: string): Promise<any> => {
+    const { data } = await api.get(`/employes/${employeId}/commissions`, {
+      params: { date_debut: dateDebut, date_fin: dateFin }
     });
+    return data;
   },
 
   getCommissionSummary: async (employeId: number, dateDebut: string, dateFin: string): Promise<any> => {
     const { data } = await api.get(`/employes/${employeId}/commission-summary`, {
       params: { date_debut: dateDebut, date_fin: dateFin }
     });
-    return data;
-  },
-
-  recordShift: async (shift: {
-    employe_id: number;
-    date_shift: string;
-    heure_prevue_debut?: string;
-    heure_prevue_fin?: string;
-    heure_debut?: string;
-    heure_fin?: string;
-    statut?: string;
-    notes?: string;
-  }): Promise<void> => {
-    await api.post('/employes/shifts', shift);
-  },
-
-  getStats: async (): Promise<any> => {
-    const { data } = await api.get('/employes/stats');
     return data;
   },
 };
@@ -1039,10 +857,7 @@ export const payrollService = {
     const { data } = await api.get(`/payroll?page=${page}&limit=${limit}`);
     return data;
   },
-  getStats: async (): Promise<any> => {
-    const { data } = await api.get('/payroll/stats');
-    return data;
-  },
+
   getById: async (id: number): Promise<any> => {
     const { data } = await api.get(`/payroll/${id}`);
     return data;
@@ -1051,10 +866,7 @@ export const payrollService = {
     const { data } = await api.post('/payroll', { periode, notes });
     return data;
   },
-  updatePayslip: async (payslipId: number, payload: { primes?: number; deductions?: number; notes?: string }): Promise<any> => {
-    const { data } = await api.put(`/payroll/payslips/${payslipId}`, payload);
-    return data;
-  },
+
   validate: async (id: number): Promise<any> => {
     const { data } = await api.post(`/payroll/${id}/valider`);
     return data;
@@ -1122,11 +934,6 @@ export const devisService = {
 
   updateStatut: async (id: number, statut: string): Promise<void> => {
     await api.patch(`/devis/${id}/statut`, { statut });
-  },
-
-  convertToFacture: async (id: number): Promise<any> => {
-    const { data } = await api.post(`/devis/${id}/convert`);
-    return data;
   },
 
   update: async (id: number, devis: {
@@ -1200,10 +1007,6 @@ export const bonLivraisonService = {
     return data;
   },
 
-  delete: async (id: number): Promise<void> => {
-    await api.delete(`/bons-livraison/${id}`);
-  },
-
   getStats: async (): Promise<any> => {
     const { data } = await api.get('/bons-livraison/stats');
     return data.data || data;
@@ -1253,11 +1056,6 @@ export const creditNoteService = {
     return data;
   },
 
-  createFromRetour: async (retourId: number): Promise<any> => {
-    const { data } = await api.post('/avoirs/from-retour', { retour_id: retourId });
-    return data;
-  },
-
   createManual: async (avoir: {
     tiers_id: number;
     client_id?: number;
@@ -1269,13 +1067,12 @@ export const creditNoteService = {
     const { data } = await api.post('/avoirs/manual', avoir);
     return data;
   },
-
-  updateStatut: async (id: number, statut: string): Promise<void> => {
-    await api.patch(`/avoirs/${id}/statut`, { statut });
-  },
-
-  delete: async (id: number): Promise<void> => {
-    await api.delete(`/avoirs/${id}`);
+  /**
+   * Impute un avoir « valide » sur une facture du même client. Le serveur
+   * refuse un avoir non validé, une facture annulée ou un client différent.
+   */
+  applyToFacture: async (id: number, factureId: number): Promise<void> => {
+    await api.post(`/avoirs/${id}/apply-to-facture`, { facture_id: factureId });
   },
 };
 
@@ -1317,11 +1114,6 @@ export const retourService = {
 
 // ========== CAISSE ==========
 export const caisseService = {
-  getMagasins: async (): Promise<any[]> => {
-    const { data } = await api.get('/stock-locations');
-    return data?.data || data || [];
-  },
-
   /** Sessions de caisse clôturées/ouvertes, paginées ({ data, pagination } après intercepteur). */
   getHistorique: async (params: {
     magasin_id?: number;
@@ -1474,6 +1266,11 @@ export const adminUserService = {
     const { data } = await api.put(`/admin/users/${id}`, user);
     return data;
   },
+
+  /** Déconnecte immédiatement toutes les sessions actives de cet utilisateur. */
+  revokeAllSessions: async (userId: number): Promise<void> => {
+    await api.post(`/auth/revoke-all-sessions/${userId}`);
+  },
 };
 
 // ========== REPORTS ==========
@@ -1483,11 +1280,6 @@ export const reportService = {
     return data;
   },
 
-  getRevenueTrends: async (months = 12): Promise<any> => {
-    const { data } = await api.get(`/reports/revenue-trends?months=${months}`);
-    return data?.data || data;
-  },
-
   getYoYComparison: async (months = 6): Promise<any> => {
     const { data } = await api.get(`/reports/yoy?months=${months}`);
     return data?.data || data;
@@ -1495,12 +1287,6 @@ export const reportService = {
 
   getRevenueForecast: async (): Promise<any> => {
     const { data } = await api.get('/reports/forecast');
-    return data?.data || data;
-  },
-
-  getConsolidatedDashboard: async (magasinId?: number): Promise<any> => {
-    const params = magasinId ? `?magasin_id=${magasinId}` : '';
-    const { data } = await api.get(`/reports/consolidated${params}`);
     return data?.data || data;
   },
 };
@@ -1546,8 +1332,6 @@ export const companySettingsService = {
     settingsCacheTimestamp = Date.now();
     return data;
   },
-
-  getCached: (): CompanySettings | null => cachedSettings,
 };
 
 // ========== CRM ==========
@@ -1612,15 +1396,6 @@ export const crmService = {
   deleteTache: async (id: number): Promise<void> => {
     await api.delete(`/crm/taches/${id}`);
   },
-
-  getRappels: async (): Promise<any[]> => {
-    const { data } = await api.get('/crm/rappels');
-    return data?.data || data || [];
-  },
-
-  marquerRappelFait: async (id: number): Promise<void> => {
-    await api.post(`/crm/rappels/${id}/done`);
-  },
 };
 
 // ========== AUDIT LOG ==========
@@ -1651,16 +1426,14 @@ export const auditService = {
 
 // ========== COMPTABILITÉ ==========
 export const comptabiliteService = {
-  getPlanComptable: async (classe?: number): Promise<any[]> => {
-    const params = classe ? `?classe=${classe}` : '';
-    const { data } = await api.get(`/comptabilite/plan-comptable${params}`);
-    return data?.data || data;
-  },
-
   /**
    * Saisie d'une pièce comptable manuelle. Le backend (enregistrerPieceSchema)
    * exige: date_ecriture, libelle, lignes >= 2 { compte_numero, debit, credit };
    * il rejette 400 (déséquilibre, compte inconnu) ou période clôturée.
+   *
+   * Seul chemin de saisie : il numérote la pièce lui-même et journalise
+   * l'audit, contrairement à l'ancien /general-ledger/manual-entry supprimé
+   * le 2026-09-07.
    */
   enregistrerPiece: async (payload: {
     journal?: string;
@@ -1674,46 +1447,6 @@ export const comptabiliteService = {
     return data;
   },
 
-  getEcritures: async (params: {
-    date_debut?: string;
-    date_fin?: string;
-    journal?: string;
-    compte_numero?: string;
-    page?: number;
-    limit?: number;
-  } = {}): Promise<any> => {
-    const q = new URLSearchParams();
-    if (params.date_debut) q.append('date_debut', params.date_debut);
-    if (params.date_fin) q.append('date_fin', params.date_fin);
-    if (params.journal) q.append('journal', params.journal);
-    if (params.compte_numero) q.append('compte_numero', params.compte_numero);
-    if (params.page) q.append('page', params.page.toString());
-    if (params.limit) q.append('limit', params.limit.toString());
-    const { data } = await api.get(`/comptabilite/ecritures?${q}`);
-    return data;
-  },
-
-  getJournal: async (params: {
-    date_debut?: string;
-    date_fin?: string;
-    journal?: string;
-  } = {}): Promise<any[]> => {
-    const q = new URLSearchParams();
-    if (params.date_debut) q.append('date_debut', params.date_debut);
-    if (params.date_fin) q.append('date_fin', params.date_fin);
-    if (params.journal) q.append('journal', params.journal);
-    const { data } = await api.get(`/comptabilite/journal?${q}`);
-    return data?.data || data;
-  },
-
-  getBalance: async (date_debut?: string, date_fin?: string): Promise<any[]> => {
-    const q = new URLSearchParams();
-    if (date_debut) q.append('date_debut', date_debut);
-    if (date_fin) q.append('date_fin', date_fin);
-    const { data } = await api.get(`/comptabilite/balance?${q}`);
-    return data?.data || data;
-  },
-
   getGrandLivre: async (compteNumero: string, date_debut?: string, date_fin?: string): Promise<any[]> => {
     const q = new URLSearchParams();
     if (date_debut) q.append('date_debut', date_debut);
@@ -1724,14 +1457,6 @@ export const comptabiliteService = {
 
   getTresorerie: async (jours: number = 90): Promise<any> => {
     const { data } = await api.get(`/comptabilite/tresorerie?jours=${jours}`);
-    return data?.data || data;
-  },
-
-  getRatios: async (date_debut?: string, date_fin?: string): Promise<any> => {
-    const q = new URLSearchParams();
-    if (date_debut) q.append('date_debut', date_debut);
-    if (date_fin) q.append('date_fin', date_fin);
-    const { data } = await api.get(`/comptabilite/ratios?${q}`);
     return data?.data || data;
   },
 };

@@ -1,6 +1,6 @@
 # DESIGN-AUDIT.md — Design System & UX Audit
 
-Audited 2026-07-29 (4 parallel scans: tokens, component library, UX patterns, accessibility/responsive). Companion to [AUDIT.md](AUDIT.md) (code quality) and [FEATURE-AUDIT.md](FEATURE-AUDIT.md) (capability gaps). All file references relative to `frontend/src/`.
+Audited 2026-07-29 (4 parallel scans: tokens, component library, UX patterns, accessibility/responsive). Companion to [AUDIT.md](AUDIT.md) (code quality) and [FEATURE-AUDIT.md](docs/archive/FEATURE-AUDIT.md) (capability gaps). All file references relative to `frontend/src/`.
 
 **Scope:** 138 `.ts/.tsx/.css` files · 46 pages · 21 shared components · 32 `components/ui` primitives.
 

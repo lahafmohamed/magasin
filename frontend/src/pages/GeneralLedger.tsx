@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Download, ExternalLink, FileText, Search } from 'lucide-react';
-import { generalLedgerService } from '../services/api';
+import { Download, ExternalLink, FileDown, FileText, Plus, Search, Trash2 } from 'lucide-react';
+import { comptabiliteService, generalLedgerService } from '../services/api';
 import { toast } from 'sonner';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
@@ -11,6 +11,9 @@ import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
 import { Pagination } from '@/components/ui/pagination';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { MoneyInput } from '@/components/ui/money-input';
+import { Spinner } from '@/components/ui/loading';
 import { downloadCsv } from '../utils/csv';
 import { Input } from '@/components/ui/input';
 import { ledgerSourceHref } from '@/utils/ledger';
@@ -78,17 +81,42 @@ const TYPE_LABELS: Record<string, string> = {
   produit: 'Produit',
 };
 
-const formatNum = (s: string) =>
-  new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Math.round(parseFloat(s) || 0));
+/** Ligne du grand-livre d'un compte (`/comptabilite/grand-livre/:numero`). */
+interface LigneGrandLivre {
+  id: number;
+  numero_piece: string | null;
+  date_ecriture: string;
+  libelle: string | null;
+  debit: string;
+  credit: string;
+}
+
+type PieceLigne = { compte_numero: string; debit: string; credit: string };
+
+type Tab = 'ecritures' | 'grand-livre' | 'trial-balance' | 'chart';
+
+const formatNum = (s: string | number) =>
+  new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(Math.round(parseFloat(String(s)) || 0));
 
 const TABLE_HEAD = 'px-3 py-2 font-medium';
 const NUM_CELL = 'px-3 py-2 text-right num';
+
+/** Date du jour en LOCAL (YYYY-MM-DD) — toISOString() décalerait vers UTC. */
+const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const emptyLignes = (): PieceLigne[] => [
+  { compte_numero: '', debit: '', credit: '' },
+  { compte_numero: '', debit: '', credit: '' },
+];
 
 export default function GeneralLedger() {
   const [ecritures, setEcritures] = useState<EcritureComptable[]>([]);
   const [chartOfAccounts, setChartOfAccounts] = useState<Compte[]>([]);
   const [trialBalance, setTrialBalance] = useState<BalanceComptable[]>([]);
-  const [activeTab, setActiveTab] = useState<'ecritures' | 'chart' | 'trial-balance'>('ecritures');
+  const [activeTab, setActiveTab] = useState<Tab>('ecritures');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [filterJournal, setFilterJournal] = useState<string>('');
@@ -106,6 +134,18 @@ export default function GeneralLedger() {
   const [limit, setLimit] = useState(50);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+
+  // Grand-livre : les écritures d'un seul compte, avec solde cumulé.
+  const [compteGrandLivre, setCompteGrandLivre] = useState('');
+  const [grandLivre, setGrandLivre] = useState<LigneGrandLivre[]>([]);
+
+  // Saisie d'une pièce comptable manuelle.
+  const [pieceOpen, setPieceOpen] = useState(false);
+  const [pieceJournal, setPieceJournal] = useState('OD');
+  const [pieceDate, setPieceDate] = useState(todayLocal);
+  const [pieceLibelle, setPieceLibelle] = useState('');
+  const [pieceLignes, setPieceLignes] = useState<PieceLigne[]>(emptyLignes);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -146,12 +186,14 @@ export default function GeneralLedger() {
     dateFin,
     page,
     limit,
+    compteGrandLivre,
   ]);
 
   /** Recharge l'onglet actif — sert aussi de callback « Réessayer ». */
   const reload = () => {
     if (activeTab === 'ecritures') return fetchEcritures();
     if (activeTab === 'chart') return fetchChartOfAccounts();
+    if (activeTab === 'grand-livre') return fetchGrandLivre();
     return fetchTrialBalance();
   };
 
@@ -213,6 +255,104 @@ export default function GeneralLedger() {
     }
   };
 
+  const fetchGrandLivre = async () => {
+    // Pas de compte choisi : rien à charger, et surtout pas d'état d'erreur.
+    if (!compteGrandLivre) {
+      setGrandLivre([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await comptabiliteService.getGrandLivre(compteGrandLivre, dateDebut, dateFin);
+      setGrandLivre(data || []);
+    } catch (e) {
+      setError(e);
+      setGrandLivre([]);
+      toast.error(getErrorMessage(e, 'Erreur chargement grand-livre'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ===== Saisie d'une pièce comptable =====
+  const updateLigne = (idx: number, patch: Partial<PieceLigne>) => {
+    setPieceLignes((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+  };
+
+  const num = (v: string) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const totalDebit = pieceLignes.reduce((s, l) => s + num(l.debit), 0);
+  const totalCredit = pieceLignes.reduce((s, l) => s + num(l.credit), 0);
+  const ecart = totalDebit - totalCredit;
+  const equilibre = Math.abs(ecart) < 0.005;
+  // Chaque ligne porte un compte et exactement un des deux sens (débit XOR crédit).
+  const lignesValides = pieceLignes.every(
+    (l) => l.compte_numero && num(l.debit) > 0 !== num(l.credit) > 0
+  );
+  const canSubmit =
+    !!pieceLibelle.trim() && !!pieceDate && pieceLignes.length >= 2 && lignesValides && equilibre && !saving;
+
+  const resetPiece = () => {
+    setPieceJournal('OD');
+    setPieceDate(todayLocal());
+    setPieceLibelle('');
+    setPieceLignes(emptyLignes());
+  };
+
+  const submitPiece = async () => {
+    if (!canSubmit) return;
+    setSaving(true);
+    try {
+      const res = await comptabiliteService.enregistrerPiece({
+        journal: pieceJournal,
+        date_ecriture: pieceDate,
+        libelle: pieceLibelle.trim(),
+        lignes: pieceLignes.map((l) => ({
+          compte_numero: l.compte_numero,
+          debit: num(l.debit),
+          credit: num(l.credit),
+        })),
+      });
+      const numero = res?.data?.numero_piece;
+      toast.success(numero ? `Écriture ${numero} enregistrée` : 'Écriture enregistrée');
+      setPieceOpen(false);
+      resetPiece();
+      // La nouvelle pièce doit apparaître tout de suite dans l'onglet consulté.
+      reload();
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Erreur lors de l'enregistrement de l'écriture"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openBlob = (blob: Blob) => {
+    const url = window.URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+  };
+
+  const exportBilan = async () => {
+    try {
+      openBlob(await generalLedgerService.exportBalanceSheetPdf(dateFin));
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Erreur lors de la génération du bilan'));
+    }
+  };
+
+  const exportCompteResultat = async () => {
+    try {
+      openBlob(await generalLedgerService.exportIncomeStatementPdf(dateDebut, dateFin));
+    } catch (e) {
+      toast.error(getErrorMessage(e, 'Erreur lors de la génération du compte de résultat'));
+    }
+  };
+
   const exportToPDF = async () => {
     try {
       const blob = await generalLedgerService.exportPdf({
@@ -224,6 +364,8 @@ export default function GeneralLedger() {
         description: debouncedDescriptionSearch || undefined,
         type: activeTab === 'ecritures' ? 'ecritures' : activeTab === 'chart' ? 'chart' : 'balance',
       });
+      // Le grand-livre n'a pas de gabarit PDF côté serveur : le bouton est masqué
+      // sur cet onglet, cette garde couvre un appel qui passerait quand même.
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -290,32 +432,65 @@ export default function GeneralLedger() {
         parseFloat(b.solde).toFixed(0),
       ]);
       downloadCsv(`balance_${dateDebut}_${dateFin}.csv`, headers, rows);
+    } else if (activeTab === 'grand-livre') {
+      const headers = ['Date', 'N° pièce', 'Libellé', 'Débit', 'Crédit', 'Solde cumulé'];
+      let solde = 0;
+      const rows = grandLivre.map((l) => {
+        solde += (parseFloat(l.debit) || 0) - (parseFloat(l.credit) || 0);
+        return [
+          new Date(l.date_ecriture).toLocaleDateString('fr-FR'),
+          l.numero_piece ?? '',
+          l.libelle ?? '',
+          (parseFloat(l.debit) || 0).toFixed(0),
+          (parseFloat(l.credit) || 0).toFixed(0),
+          solde.toFixed(0),
+        ];
+      });
+      downloadCsv(`grand_livre_${compteGrandLivre}_${dateDebut}_${dateFin}.csv`, headers, rows);
     }
     if (!exportFailed) toast.success('Export CSV réussi');
   };
 
   return (
     <div className="container mx-auto p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Grand livre comptable</h1>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={exportToPDF} className="gap-2">
-            <FileText className="h-4 w-4" />
-            Exporter en PDF
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Comptabilité</h1>
+          <p className="text-sm text-muted-foreground">OHADA / SYSCOHADA</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={exportBilan} className="gap-2">
+            <FileDown className="h-4 w-4" />
+            Bilan PDF
           </Button>
+          <Button variant="outline" onClick={exportCompteResultat} className="gap-2">
+            <FileDown className="h-4 w-4" />
+            Compte de résultat PDF
+          </Button>
+          {activeTab !== 'grand-livre' && (
+            <Button variant="outline" onClick={exportToPDF} className="gap-2">
+              <FileText className="h-4 w-4" />
+              Exporter en PDF
+            </Button>
+          )}
           <Button variant="outline" onClick={exportToCSV} className="gap-2">
             <Download className="h-4 w-4" />
             Exporter en CSV
           </Button>
+          <Button onClick={() => setPieceOpen(true)} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Nouvelle écriture
+          </Button>
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'ecritures' | 'chart' | 'trial-balance')}>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)}>
       <TabsList className="mb-6">
         {[
           { id: 'ecritures', label: 'Écritures' },
-          { id: 'chart', label: 'Plan comptable' },
+          { id: 'grand-livre', label: 'Grand-livre' },
           { id: 'trial-balance', label: 'Balance' },
+          { id: 'chart', label: 'Plan comptable' },
         ].map((tab) => (
           <TabsTrigger key={tab.id} value={tab.id}>
             {tab.label}
@@ -390,6 +565,23 @@ export default function GeneralLedger() {
               </div>
             </>
           )}
+          {activeTab === 'grand-livre' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="gl-compte-gl">Compte</Label>
+              <Select value={compteGrandLivre} onValueChange={setCompteGrandLivre}>
+                <SelectTrigger id="gl-compte-gl">
+                  <SelectValue placeholder="Choisir un compte…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {chartOfAccounts.map((compte) => (
+                    <SelectItem key={compte.id} value={compte.numero}>
+                      {compte.numero} — {compte.intitule}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
       </div>
 
@@ -463,6 +655,67 @@ export default function GeneralLedger() {
                 />
               )}
             </QueryState>
+          </div>
+        </div>
+      </TabsContent>
+
+      <TabsContent value="grand-livre">
+        <div className="rounded-md border bg-card shadow-sm">
+          <div className="p-5">
+            <h2 className="text-lg font-semibold mb-3">Grand-livre</h2>
+            {!compteGrandLivre ? (
+              <p className="text-sm text-muted-foreground">
+                Choisissez un compte ci-dessus pour voir ses mouvements et son solde cumulé sur la période.
+              </p>
+            ) : (
+              <QueryState
+                loading={loading}
+                error={error}
+                isEmpty={grandLivre.length === 0}
+                onRetry={reload}
+                skeleton={<TableSkeleton rows={8} columns={6} />}
+                emptyTitle="Aucun mouvement"
+                emptyDescription="Aucun mouvement sur ce compte pour la période sélectionnée."
+                emptyIcon={Search}
+              >
+                <div className="overflow-x-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 text-left">
+                      <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+                        <th className={TABLE_HEAD}>Date</th>
+                        <th className={TABLE_HEAD}>N° pièce</th>
+                        <th className={TABLE_HEAD}>Libellé</th>
+                        <th className={TABLE_HEAD + ' text-right'}>Débit (FCFA)</th>
+                        <th className={TABLE_HEAD + ' text-right'}>Crédit (FCFA)</th>
+                        <th className={TABLE_HEAD + ' text-right'}>Solde cumulé</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {(() => {
+                        // Le solde cumulé se calcule en parcourant les lignes dans
+                        // l'ordre chronologique renvoyé par le serveur.
+                        let solde = 0;
+                        return grandLivre.map((ligne) => {
+                          solde += (parseFloat(ligne.debit) || 0) - (parseFloat(ligne.credit) || 0);
+                          return (
+                            <tr key={ligne.id} className="hover:bg-muted/30">
+                              <td className="px-3 py-2 text-xs num">
+                                {new Date(ligne.date_ecriture).toLocaleDateString('fr-FR')}
+                              </td>
+                              <td className="px-3 py-2 font-medium text-xs num">{ligne.numero_piece || '—'}</td>
+                              <td className="px-3 py-2 text-xs">{ligne.libelle || '—'}</td>
+                              <td className={NUM_CELL}>{parseFloat(ligne.debit) > 0 ? formatNum(ligne.debit) : ''}</td>
+                              <td className={NUM_CELL}>{parseFloat(ligne.credit) > 0 ? formatNum(ligne.credit) : ''}</td>
+                              <td className={NUM_CELL + ' font-semibold'}>{formatNum(solde)}</td>
+                            </tr>
+                          );
+                        });
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              </QueryState>
+            )}
           </div>
         </div>
       </TabsContent>
@@ -567,6 +820,117 @@ export default function GeneralLedger() {
         </div>
       </TabsContent>
       </Tabs>
+
+      {/* Saisie d'une pièce comptable — le seul chemin d'écriture manuelle. */}
+      <Dialog open={pieceOpen} onOpenChange={(o) => { if (!saving) setPieceOpen(o); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Nouvelle écriture comptable</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="piece-journal">Journal</Label>
+                <Select value={pieceJournal} onValueChange={setPieceJournal}>
+                  <SelectTrigger id="piece-journal">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="VENTES">VENTES — Ventes</SelectItem>
+                    <SelectItem value="ACHATS">ACHATS — Achats</SelectItem>
+                    <SelectItem value="TRESORERIE">TRESORERIE — Trésorerie / Caisse</SelectItem>
+                    <SelectItem value="OD">OD — Opérations diverses</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="piece-date">Date</Label>
+                <DatePicker id="piece-date" value={pieceDate} onChange={setPieceDate} required />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="piece-libelle">Libellé</Label>
+              <Input
+                id="piece-libelle"
+                value={pieceLibelle}
+                maxLength={500}
+                placeholder="Libellé de l'écriture"
+                onChange={(e) => setPieceLibelle(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium">Lignes</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => setPieceLignes((ls) => [...ls, { compte_numero: '', debit: '', credit: '' }])}
+                >
+                  <Plus className="h-3.5 w-3.5" /> Ajouter une ligne
+                </Button>
+              </div>
+              <div className="hidden sm:grid grid-cols-[1fr_9rem_9rem_2rem] gap-2 px-0.5 text-xs text-muted-foreground">
+                <span>Compte</span><span>Débit</span><span>Crédit</span><span />
+              </div>
+              {pieceLignes.map((l, i) => (
+                <div key={i} className="grid grid-cols-1 sm:grid-cols-[1fr_9rem_9rem_2rem] gap-2 items-center">
+                  <Select value={l.compte_numero} onValueChange={(v) => updateLigne(i, { compte_numero: v })}>
+                    <SelectTrigger aria-label={`Compte ligne ${i + 1}`}>
+                      <SelectValue placeholder="Compte…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {chartOfAccounts.map((c) => (
+                        <SelectItem key={c.id} value={c.numero}>
+                          {c.numero} — {c.intitule}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <MoneyInput value={l.debit} onChange={(raw) => updateLigne(i, { debit: raw })} aria-label={`Débit ligne ${i + 1}`} />
+                  <MoneyInput value={l.credit} onChange={(raw) => updateLigne(i, { credit: raw })} aria-label={`Crédit ligne ${i + 1}`} />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 justify-self-end sm:justify-self-auto text-muted-foreground"
+                    aria-label={`Supprimer la ligne ${i + 1}`}
+                    disabled={pieceLignes.length <= 2}
+                    onClick={() => setPieceLignes((ls) => ls.filter((_, j) => j !== i))}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-md border bg-muted/40 p-3 text-sm space-y-1">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Total débit</span>
+                <span className="num">{formatNum(totalDebit)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Total crédit</span>
+                <span className="num">{formatNum(totalCredit)}</span>
+              </div>
+              <div className="flex justify-between font-semibold">
+                <span>Écart</span>
+                <span className={`num ${equilibre ? '' : 'text-danger-700'}`}>{formatNum(ecart)}</span>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPieceOpen(false)} disabled={saving}>
+              Annuler
+            </Button>
+            <Button onClick={submitPiece} disabled={!canSubmit} className="gap-1">
+              {saving && <Spinner />} Enregistrer l'écriture
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

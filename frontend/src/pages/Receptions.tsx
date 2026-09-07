@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ArrowLeft, PackageCheck, Search } from 'lucide-react';
-import { api } from '../services/authService';
+import { receptionService, stockLocationService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -72,8 +72,8 @@ export default function Receptions() {
 
   const fetchLocations = useCallback(async () => {
     try {
-      const { data } = await api.get('/stock-locations');
-      const allLocations: StockLocation[] = data.data || data;
+      const data = await stockLocationService.getAll();
+      const allLocations: StockLocation[] = data?.data ?? data ?? [];
       const activeLocations = allLocations.filter((location) => location.actif);
       setLocations(activeLocations);
 
@@ -92,8 +92,8 @@ export default function Receptions() {
     setLoading(true);
     setError(null);
     try {
-      const { data } = await api.get('/receptions/pending');
-      setOrders(data.data || data);
+      const data = await receptionService.getPending();
+      setOrders(data ?? []);
     } catch (err) {
       setError(err);
       setOrders([]);
@@ -105,8 +105,7 @@ export default function Receptions() {
 
   const selectOrder = useCallback(async (order: Order) => {
     try {
-      const { data } = await api.get(`/receptions/order/${order.id}`);
-      const orderDetail = data.data || data;
+      const orderDetail = await receptionService.getOrderDetails(order.id);
       setSelectedOrder(orderDetail);
       const quantities: Record<number, number> = {};
       orderDetail.lignes.forEach((ligne: any) => {
@@ -189,7 +188,7 @@ export default function Receptions() {
     setSubmitting(true);
 
     try {
-      await api.post('/receptions', {
+      await receptionService.create({
         commande_id: selectedOrder.id,
         location_id: parseInt(selectedLocationId, 10),
         lignes,

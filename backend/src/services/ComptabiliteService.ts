@@ -14,31 +14,6 @@ interface PieceInput {
 }
 
 export class ComptabiliteService {
-  // ========== PLAN COMPTABLE ==========
-
-  async getPlanComptable(classe?: number): Promise<any[]> {
-    let query = 'SELECT * FROM plan_comptable WHERE actif = true';
-    const params: any[] = [];
-    if (classe) {
-      query += ' AND classe = $1';
-      params.push(classe);
-    }
-    query += ' ORDER BY numero ASC';
-    const { rows } = await pool.query(query, params);
-    return rows;
-  }
-
-  async chercherCompte(search: string): Promise<any[]> {
-    const { rows } = await pool.query(
-      `SELECT * FROM plan_comptable
-       WHERE actif = true
-         AND (numero ILIKE $1 OR intitule ILIKE $1)
-       ORDER BY numero ASC LIMIT 20`,
-      [`%${search}%`]
-    );
-    return rows;
-  }
-
   // ========== ÉCRITURES ==========
 
   /**
@@ -70,6 +45,21 @@ export class ComptabiliteService {
 
       // Refuse posting into a closed accounting period (nice 422 before the DB trigger fires).
       await checkPeriodIsOpen(new Date(date_ecriture), client);
+
+      // Comptes inconnus : sans ce contrôle, l'INSERT viole
+      // fk_ecritures_compte_numero et l'utilisateur reçoit un 500 opaque au lieu
+      // du numéro de compte fautif. C'est la régression que couvrait l'ancien
+      // /general-ledger/manual-entry, supprimé le 2026-09-07.
+      const numeros = [...new Set(lignes.map((l) => l.compte_numero))];
+      const { rows: connus } = await client.query(
+        'SELECT numero FROM plan_comptable WHERE numero = ANY($1::varchar[])',
+        [numeros]
+      );
+      const trouves = new Set(connus.map((r) => r.numero));
+      const inconnus = numeros.filter((n) => !trouves.has(n));
+      if (inconnus.length > 0) {
+        throw businessError(404, `Compte introuvable au plan comptable : ${inconnus.join(', ')}`);
+      }
 
       for (const ligne of lignes) {
         await client.query(
@@ -105,87 +95,6 @@ export class ComptabiliteService {
   }
 
   /**
-   * Récupère les écritures avec pagination et filtres
-   */
-  async getEcritures(options: {
-    date_debut?: string;
-    date_fin?: string;
-    journal?: string;
-    compte_numero?: string;
-    tiers_id?: number;
-    page?: number;
-    limit?: number;
-  } = {}): Promise<{ data: any[]; total: number; total_debit: number; total_credit: number }> {
-    const page = options.page || 1;
-    const limit = options.limit || 50;
-    const offset = (page - 1) * limit;
-
-    let query = 'SELECT e.*, pc.intitule as compte_intitule FROM ecritures_comptables e LEFT JOIN plan_comptable pc ON e.compte_numero = pc.numero WHERE 1=1';
-    const params: any[] = [];
-    let paramIdx = 1;
-
-    if (options.date_debut) {
-      query += ` AND e.date_ecriture >= $${paramIdx++}`;
-      params.push(options.date_debut);
-    }
-    if (options.date_fin) {
-      query += ` AND e.date_ecriture <= $${paramIdx++}`;
-      params.push(options.date_fin);
-    }
-    if (options.journal) {
-      query += ` AND e.journal = $${paramIdx++}`;
-      params.push(options.journal);
-    }
-    if (options.compte_numero) {
-      query += ` AND e.compte_numero LIKE $${paramIdx++}`;
-      params.push(`${options.compte_numero}%`);
-    }
-    if (options.tiers_id) {
-      query += ` AND e.tiers_id = $${paramIdx++}`;
-      params.push(options.tiers_id);
-    }
-
-    // Total count & sums — fully parameterized (no string interpolation, SQLi safe)
-    let countQuery = `SELECT COUNT(*) as total, COALESCE(SUM(debit), 0) as total_debit, COALESCE(SUM(credit), 0) as total_credit FROM ecritures_comptables e WHERE 1=1`;
-    const countParams: any[] = [];
-    let countIdx = 1;
-    if (options.date_debut) {
-      countQuery += ` AND e.date_ecriture >= $${countIdx++}`;
-      countParams.push(options.date_debut);
-    }
-    if (options.date_fin) {
-      countQuery += ` AND e.date_ecriture <= $${countIdx++}`;
-      countParams.push(options.date_fin);
-    }
-    if (options.journal) {
-      countQuery += ` AND e.journal = $${countIdx++}`;
-      countParams.push(options.journal);
-    }
-    if (options.compte_numero) {
-      countQuery += ` AND e.compte_numero LIKE $${countIdx++}`;
-      countParams.push(`${options.compte_numero}%`);
-    }
-    if (options.tiers_id) {
-      countQuery += ` AND e.tiers_id = $${countIdx++}`;
-      countParams.push(options.tiers_id);
-    }
-    const countResult = await pool.query(countQuery, countParams);
-
-    query += ' ORDER BY e.date_ecriture DESC, e.id ASC';
-    query += ` LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
-    params.push(limit, offset);
-
-    const { rows } = await pool.query(query, params);
-
-    return {
-      data: rows,
-      total: parseInt(countResult.rows[0].total),
-      total_debit: parseFloat(countResult.rows[0].total_debit),
-      total_credit: parseFloat(countResult.rows[0].total_credit),
-    };
-  }
-
-  /**
    * Grand-livre : toutes les écritures d'un compte sur une période
    */
   async getGrandLivre(compteNumero: string, dateDebut?: string, dateFin?: string): Promise<any[]> {
@@ -207,60 +116,6 @@ export class ComptabiliteService {
 
     query += ' ORDER BY e.date_ecriture ASC, e.id ASC';
 
-    const { rows } = await pool.query(query, params);
-    return rows;
-  }
-
-  /**
-   * Balance générale : soldes de tous les comptes sur une période
-   */
-  async getBalance(dateDebut?: string, dateFin?: string): Promise<any[]> {
-    let query = `SELECT
-                  pc.numero, pc.intitule, pc.classe, pc.type_compte,
-                  COALESCE(SUM(e.debit), 0) as total_debit,
-                  COALESCE(SUM(e.credit), 0) as total_credit,
-                  COALESCE(SUM(e.debit), 0) - COALESCE(SUM(e.credit), 0) as solde
-                 FROM plan_comptable pc
-                 LEFT JOIN ecritures_comptables e ON pc.numero = e.compte_numero`;
-    const conditions: string[] = [];
-    const params: any[] = [];
-    let paramIdx = 1;
-    if (dateDebut) { conditions.push(`e.date_ecriture >= $${paramIdx++}`); params.push(dateDebut); }
-    if (dateFin) { conditions.push(`e.date_ecriture <= $${paramIdx++}`); params.push(dateFin); }
-
-    if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
-    query += ' GROUP BY pc.numero, pc.intitule, pc.classe, pc.type_compte';
-    query += ' ORDER BY pc.numero ASC';
-
-    const { rows } = await pool.query(query, params);
-    return rows;
-  }
-
-  /**
-   * Journal général : toutes les écritures triées par date
-   */
-  async getJournal(dateDebut?: string, dateFin?: string, journal?: string): Promise<any[]> {
-    let query = `SELECT e.*, pc.intitule as compte_intitule
-                 FROM ecritures_comptables e
-                 LEFT JOIN plan_comptable pc ON e.compte_numero = pc.numero
-                 WHERE 1=1`;
-    const params: any[] = [];
-    let paramIdx = 1;
-
-    if (dateDebut) {
-      query += ` AND e.date_ecriture >= $${paramIdx++}`;
-      params.push(dateDebut);
-    }
-    if (dateFin) {
-      query += ` AND e.date_ecriture <= $${paramIdx++}`;
-      params.push(dateFin);
-    }
-    if (journal) {
-      query += ` AND e.journal = $${paramIdx++}`;
-      params.push(journal);
-    }
-
-    query += ' ORDER BY e.date_ecriture ASC, e.numero_piece ASC, e.id ASC';
     const { rows } = await pool.query(query, params);
     return rows;
   }
@@ -360,77 +215,6 @@ export class ComptabiliteService {
       total_encaissements: encaissements.reduce((s: number, e: any) => s + parseFloat(e.montant || 0), 0),
       total_decaissements: decaissements.reduce((s: number, e: any) => s + parseFloat(e.montant || 0), 0)
         + depenses.reduce((s: number, e: any) => s + parseFloat(e.montant || 0), 0),
-    };
-  }
-
-  // ========== RATIOS FINANCIERS ==========
-
-  async getRatiosFinanciers(dateDebut?: string, dateFin?: string): Promise<any> {
-    if (!dateDebut) {
-      const d = new Date();
-      d.setMonth(d.getMonth() - 12);
-      dateDebut = d.toISOString().slice(0, 10);
-    }
-    if (!dateFin) {
-      dateFin = new Date().toISOString().slice(0, 10);
-    }
-
-    const [pnl, stockValue, clients, fournisseurs] = await Promise.all([
-      pool.query(
-        `SELECT
-           COALESCE(SUM(f.total) FILTER (WHERE f.statut != 'annulee'), 0) as chiffre_affaires,
-           COALESCE(SUM(f.total * 0.7), 0) as cout_ventes_estime -- estimation 70% marge
-         FROM factures f
-         WHERE f.date_facture BETWEEN $1 AND $2 AND f.deleted_at IS NULL`,
-        [dateDebut, dateFin]
-      ),
-      pool.query(
-        // Canonical inventory valuation: maintained per-location value (= quantite × cmp),
-        // kept correct on receptions, sales and transfers by trigger trg_stock_valeur_invariant (076).
-        `SELECT COALESCE(SUM(spl.valeur_stock), 0) as valeur_stock
-         FROM stock_par_location spl
-         JOIN produits p ON p.id = spl.produit_id
-         WHERE p.deleted_at IS NULL`
-      ),
-      pool.query(
-        `SELECT
-           COALESCE(SUM(f.remaining_due) FILTER (WHERE f.statut IN ('en_attente', 'partielle') AND f.deleted_at IS NULL), 0) as creances
-         FROM factures f
-         WHERE f.deleted_at IS NULL`
-      ),
-      pool.query(
-        `SELECT
-           COALESCE(SUM(montant_restant), 0) as dettes_fournisseurs
-         FROM acomptes
-         WHERE statut = 'actif' AND direction = 'sortant'`
-      ),
-    ]);
-
-    const ca = parseFloat(pnl.rows[0].chiffre_affaires);
-    const coutVentes = parseFloat(pnl.rows[0].cout_ventes_estime);
-    const stock = parseFloat(stockValue.rows[0].valeur_stock);
-    const creances = parseFloat(clients.rows[0].creances);
-    const dettesFourn = parseFloat(fournisseurs.rows[0].dettes_fournisseurs);
-
-    // Calcul des ratios
-    const margeBrute = ca > 0 ? ((ca - coutVentes) / ca) * 100 : 0;
-    const delaiClient = ca > 0 ? (creances / (ca / 365)) : 0;
-    const rotationStock = coutVentes > 0 ? (stock / (coutVentes / 365)) : 0;
-    const bfr = creances + stock - dettesFourn;
-
-    return {
-      periode: { debut: dateDebut, fin: dateFin },
-      chiffre_affaires: ca,
-      marge_brute: { valeur: ca - coutVentes, pourcentage: Math.round(margeBrute * 100) / 100 },
-      besoin_fonds_roulement: Math.round(bfr),
-      ratios: {
-        delai_moyen_client: Math.round(delaiClient),
-        rotation_stock: Math.round(rotationStock),
-        ratio_liquidite: dettesFourn > 0 ? Math.round(((creances + stock) / dettesFourn) * 100) / 100 : 0,
-      },
-      creances,
-      dettes_fournisseurs: dettesFourn,
-      valeur_stock: stock,
     };
   }
 }

@@ -128,25 +128,6 @@ export const createCompensationSchema = z.object({
   notes: z.string().max(2000).optional().or(z.literal('')),
 });
 
-// Legacy aliases kept for backward compat with existing routes during transition
-export const createClientSchema = z.object({
-  nom: z.string().min(1, 'Nom requis').max(100),
-  prenom: z.string().max(100).optional().or(z.literal('')),
-  telephone: z.string().max(20).optional().or(z.literal('')),
-  email: z.string().email('Email invalide').max(255).optional().or(z.literal('')).optional().or(z.null()),
-  adresse: z.string().max(1000).optional().or(z.literal('')),
-  nif: z.string().max(50).optional().or(z.literal('')),
-});
-
-export const updateClientSchema = z.object({
-  nom: z.string().min(1).max(100).optional(),
-  prenom: z.string().max(100).optional().or(z.literal('')).optional(),
-  telephone: z.string().max(20).optional().or(z.literal('')).optional(),
-  email: z.string().email('Email invalide').max(255).optional().or(z.literal('')).optional().or(z.null()),
-  adresse: z.string().max(1000).optional().or(z.literal('')).optional(),
-  nif: z.string().max(50).optional().or(z.literal('')).optional(),
-});
-
 // ============================================
 // Facture schemas
 // ============================================
@@ -198,12 +179,6 @@ export const createPaiementSchema = z.object({
   idempotency_key: z.string().max(255).optional(),
   skip_acompte_application: z.boolean().optional(),
 });
-
-// ============================================
-// Fournisseur schemas — legacy aliases pointing to tiers schemas
-// ============================================
-export const createFournisseurSchema = createTiersSchema;
-export const updateFournisseurSchema = updateTiersSchema;
 
 // ============================================
 // Commande schemas
@@ -491,23 +466,6 @@ export const createStockLocationSchema = z.object({
 });
 export const updateStockLocationSchema = createStockLocationSchema.partial();
 
-// POST /caisses-hierarchy — create caisse.
-export const createCaisseSchema = z.object({
-  code: z.string().min(1, 'Code requis').max(50),
-  nom: z.string().min(1, 'Nom requis').max(100),
-  type: z.string().min(1, 'Type requis').max(50),
-  location_id: z.coerce.number().int().positive().optional().nullable(),
-  caisse_parent_id: z.coerce.number().int().positive().optional().nullable(),
-});
-
-// POST /caisses-hierarchy/transferts — move money between caisses.
-export const transfertFondsSchema = z.object({
-  caisse_source_id: z.coerce.number().int().positive('Caisse source requise'),
-  caisse_dest_id: z.coerce.number().int().positive('Caisse destination requise'),
-  montant: z.coerce.number().positive('Montant doit être positif'),
-  notes: z.string().max(1000).optional().or(z.literal('')),
-});
-
 // Admin user management (create / update)
 const strongPassword = z.string().refine(isStrongPassword, PASSWORD_POLICY_MESSAGE);
 
@@ -564,28 +522,6 @@ export const createMouvementDiversSchema = z.object({
 });
 
 // ============================================
-// POS schemas
-// ============================================
-export const openPosSessionSchema = z.object({
-  solde_ouverture: z.coerce.number().nonnegative("Solde d'ouverture doit être positif ou nul").optional(),
-  location_id: z.coerce.number().int().positive('Location ID invalide').optional(),
-});
-
-export const posQuickSaleLigneSchema = z.object({
-  produit_id: z.coerce.number().int().positive('Produit ID requis'),
-  quantite: z.coerce.number().positive('Quantité doit être positive'),
-  // Le prix est ignoré côté serveur (prix catalogue autoritaire), accepté pour compat
-  prix_unitaire: z.coerce.number().nonnegative().optional(),
-});
-
-export const posQuickSaleSchema = z.object({
-  sessionId: z.coerce.number().int().positive('Session ID requis'),
-  items: z.array(posQuickSaleLigneSchema).min(1, 'Au moins un article requis'),
-  client_id: z.coerce.number().int().positive().nullable().optional(),
-  methode_paiement: paymentMethodEnum.optional(),
-});
-
-// ============================================
 // Dépenses (V2) schemas
 // ============================================
 export const createDepenseSchema = z.object({
@@ -602,22 +538,6 @@ export const createDepenseSchema = z.object({
 
 export const updateDepenseSchema = createDepenseSchema.omit({ magasin_id: true }).partial();
 
-// ============================================
-// General ledger (manual entry) schemas
-// ============================================
-export const manualEntryLigneSchema = z.object({
-  compte_id: z.coerce.number().int().positive('Compte requis'),
-  debit: z.coerce.number().nonnegative('Débit invalide'),
-  credit: z.coerce.number().nonnegative('Crédit invalide'),
-  description: z.string().max(500).optional().or(z.literal('')),
-});
-
-export const createManualEntrySchema = z.object({
-  numero_piece: z.string().min(1, 'Numéro de pièce requis').max(50),
-  journal: z.string().min(1, 'Journal requis').max(20),
-  date_ecriture: z.string().min(1, "Date d'écriture requise"),
-  lignes: z.array(manualEntryLigneSchema).min(1, 'Au moins une ligne requise'),
-});
 
 // ============================================
 // Comptabilité (pièce comptable) schemas
@@ -660,11 +580,6 @@ export const updateEmployeSchema = createEmployeSchema
   .omit({ utilisateur_id: true })
   .partial()
   .extend({ actif: z.boolean().optional() });
-
-export const recordEmployeCommissionSchema = z.object({
-  facture_id: z.coerce.number().int().positive('Facture ID requis'),
-  montant_vente: z.coerce.number().positive('Montant de vente doit être positif'),
-});
 
 export const recordEmployeShiftSchema = z.object({
   employe_id: z.coerce.number().int().positive('Employé requis'),

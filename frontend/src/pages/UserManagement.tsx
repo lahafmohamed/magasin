@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Plus, Shield, ShieldAlert, KeyRound, MapPin, Search, Users } from 'lucide-react';
+import { Plus, Shield, ShieldAlert, KeyRound, LogOut, MapPin, Search, Users } from 'lucide-react';
 import { adminUserService, stockLocationService } from '../services/api';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingState, Spinner } from '@/components/ui/loading';
 import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { getErrorMessage } from '@/utils/errors';
 import { formatRole, formatLocationType } from '@/utils/roles';
 
@@ -66,6 +67,31 @@ export default function UserManagement() {
   });
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [revoking, setRevoking] = useState<number | null>(null);
+  const confirm = useConfirm();
+
+  /**
+   * Coupe toutes les sessions actives d'un compte. Utile quand un poste reste
+   * connecté, quand un salarié quitte la société, ou après un mot de passe
+   * compromis : désactiver le compte n'expulse pas les jetons déjà émis.
+   */
+  const handleRevokeSessions = async (user: User) => {
+    if (!(await confirm({
+      title: `Déconnecter ${user.username} de tous ses appareils ?`,
+      description: "Toutes les sessions ouvertes de ce compte sont fermées immédiatement. La personne devra se reconnecter.",
+      confirmLabel: 'Révoquer les sessions',
+      destructive: true,
+    }))) return;
+    setRevoking(user.id);
+    try {
+      await adminUserService.revokeAllSessions(user.id);
+      toast.success(`Sessions de ${user.username} révoquées`);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur lors de la révocation des sessions'));
+    } finally {
+      setRevoking(null);
+    }
+  };
 
   useEffect(() => {
     fetchData();
@@ -301,9 +327,21 @@ export default function UserManagement() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(user)}>
-                        Modifier
-                      </Button>
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1"
+                          disabled={revoking === user.id}
+                          onClick={() => handleRevokeSessions(user)}
+                        >
+                          {revoking === user.id ? <Spinner /> : <LogOut className="h-3.5 w-3.5" aria-hidden="true" />}
+                          Révoquer les sessions
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleOpenEdit(user)}>
+                          Modifier
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))

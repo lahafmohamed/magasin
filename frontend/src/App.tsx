@@ -1,5 +1,5 @@
 import { Suspense, lazy, type ComponentProps, type ReactNode } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './lib/AuthContext';
 import { ModulesProvider } from './lib/ModulesContext';
 import ModuleGuard from './components/ModuleGuard';
@@ -63,7 +63,6 @@ const TiersDetail = lazy(() => import('./pages/TiersDetail'));
 const CompanySettings = lazy(() => import('./pages/CompanySettings'));
 const ParametresFinance = lazy(() => import('./pages/ParametresFinance'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
-const Comptabilite = lazy(() => import('./pages/Comptabilite'));
 const Tresorerie = lazy(() => import('./pages/Tresorerie'));
 
 type RequiredRoles = NonNullable<ComponentProps<typeof ProtectedRoute>['requiredRoles']>;
@@ -185,7 +184,10 @@ function AppWithShortcuts() {
         <Route path="/settings" element={protectedPage(<CompanySettings />, ACCESS.managers)} />
         <Route path="/admin/parametres-finance" element={protectedPage(<ParametresFinance />, ACCESS.admin)} />
         <Route path="/admin/audit" element={protectedPage(<AuditLog />, ACCESS.admin)} />
-        <Route path="/comptabilite" element={protectedPage(<Comptabilite />, ACCESS.managers)} />
+        {/* « Saisie comptable » a fusionné avec le grand livre le 2026-09-07 :
+            même table, mêmes onglets Balance et Plan comptable en double. La
+            redirection garde vivants les favoris et les anciens liens. */}
+        <Route path="/comptabilite" element={<Navigate to="/general-ledger" replace />} />
         <Route path="/tresorerie" element={protectedPage(<Tresorerie />, ACCESS.managers)} />
       </Routes>
     </Suspense>

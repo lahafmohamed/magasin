@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { demandeService } from '../services/api';
 import { useAuth } from '../lib/AuthContext';
 import { usePermission, Permissions } from './usePermission';
+import { DEMANDES_CHANGED_EVENT } from './useSseNotifications';
 
 interface NotificationState {
   unreadCount: number;
@@ -23,9 +24,13 @@ interface DemandeNotification {
 }
 
 /**
- * Hook for real-time demande notifications with polling
+ * Décompte des demandes de réapprovisionnement en attente, pour la cloche.
+ *
+ * Rafraîchi par le flux SSE (`demande-changed`) ; `pollInterval` n'est plus
+ * qu'un filet de sécurité si le flux tombe, d'où les 5 minutes par défaut au
+ * lieu des 30 secondes d'origine (jusqu'à 3 requêtes par tour et par poste).
  */
-export function useDemandeNotifications(pollInterval = 30000) {
+export function useDemandeNotifications(pollInterval = 300000) {
   const { user } = useAuth();
   const { hasPermission, userRole } = usePermission();
   
@@ -172,6 +177,16 @@ export function useDemandeNotifications(pollInterval = 30000) {
       }
     };
   }, [fetchNotifications, pollInterval]);
+
+  // Rechargement piloté par le flux SSE : le serveur signale chaque transition
+  // de demande, donc la cloche est à jour sans attendre le prochain sondage.
+  // Le sondage subsiste en filet (flux coupé, onglet réveillé), mais à un rythme
+  // lent — il tournait à 30 s et lançait jusqu'à trois requêtes à chaque tour.
+  useEffect(() => {
+    const onChanged = () => fetchNotifications();
+    window.addEventListener(DEMANDES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(DEMANDES_CHANGED_EVENT, onChanged);
+  }, [fetchNotifications]);
 
   // Visibility change handler (refresh when tab becomes active)
   useEffect(() => {

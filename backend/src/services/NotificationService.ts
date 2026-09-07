@@ -102,6 +102,22 @@ export class NotificationService {
   }
 
   /**
+   * Signale qu'une demande de réapprovisionnement a changé d'état.
+   *
+   * Le message ne transporte volontairement aucune donnée métier : il sert
+   * d'invalidation, la cloche recharge son propre décompte. Répliquer ici la
+   * machine à états (qui doit voir quoi selon son rôle et son magasin) la
+   * dupliquerait des deux côtés, et pousserait des numéros de demande vers des
+   * sessions qui n'y ont pas accès.
+   *
+   * Diffusé à tous les rôles : chaque poste filtre ensuite via ses propres
+   * appels, déjà gardés par `authorize` côté serveur.
+   */
+  static demandeChanged(action: string): void {
+    this.broadcast('demande-changed', { action, timestamp: new Date().toISOString() });
+  }
+
+  /**
    * Envoie une alerte de stock faible
    */
   static lowStockAlert(produit: { id: number; nom: string; reference: string; stock: number; stock_min: number }): void {
@@ -137,15 +153,11 @@ export class NotificationService {
     );
   }
 
-  static getClientCount(): number {
-    return this.clients.length;
-  }
-
   /**
    * Émet une alerte pour chaque produit vendu qui vient de passer sous son seuil.
    * Appelé APRÈS le commit d'une vente : jamais dans la transaction, jamais bloquant.
    * Le stock lu est le stock consolidé (somme des emplacements), cohérent avec
-   * `/produits/alertes-stock`.
+   * `/produits/reorder-suggestions`.
    */
   static async checkLowStock(produitIds: number[]): Promise<void> {
     const ids = [...new Set(produitIds)].filter((id) => Number.isInteger(id) && id > 0);

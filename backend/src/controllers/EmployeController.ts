@@ -102,27 +102,6 @@ export class EmployeController {
     }
   }
 
-  /**
-   * Record commission for employee
-   */
-  static async recordCommission(req: Request, res: Response): Promise<void> {
-    try {
-      const { id } = req.params;
-      const { facture_id, montant_vente } = req.body;
-
-      if (!facture_id || !montant_vente) {
-        res.status(400).json({ success: false, error: 'Facture et montant de vente sont requis' });
-        return;
-      }
-
-      await employeService.recordCommission(parseInt(id), facture_id, montant_vente, req);
-
-      successResponse(res, null, 'Commission enregistrée avec succès');
-    } catch (error: any) {
-      console.error('EmployeController:', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
-    }
-  }
 
   /**
    * Get employee commissions

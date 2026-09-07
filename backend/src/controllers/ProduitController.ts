@@ -319,17 +319,6 @@ export class ProduitController {
     }
   }
 
-  static async getAlertesStock(req: Request, res: Response): Promise<void> {
-    try {
-      const { page, limit } = parsePagination(req.query);
-      const result = await produitService.getAll(undefined, undefined, true, { page, limit, sort: 'p.nom', order: 'ASC' });
-      successResponse(res, result.data, undefined, result.pagination);
-    } catch (error) {
-      loggerError('GET /api/produits/alertes-stock', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
-    }
-  }
-
   static async getReorderSuggestions(_req: Request, res: Response): Promise<void> {
     try {
       const data = await produitService.getReorderSuggestions();

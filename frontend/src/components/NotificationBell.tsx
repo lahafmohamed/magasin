@@ -32,7 +32,7 @@ export function NotificationBell() {
     isLoading,
     refresh,
     dismissNotification,
-  } = useDemandeNotifications(30000); // Poll every 30 seconds
+  } = useDemandeNotifications(); // SSE pilote le rafraîchissement ; sondage lent en filet
 
   const handleNotificationClick = (notification: any) => {
     setOpen(false);

@@ -36,7 +36,7 @@ describe('enveloppe de réponse API', () => {
     '/api/paiements?page=1&limit=5',
     '/api/paiements/stats',
     '/api/commandes/stats',
-    '/api/produits/alertes-stock',
+    '/api/produits/reorder-suggestions',
   ];
 
   it.each(readEndpoints)('%s renvoie une enveloppe { success, data }', async (url) => {
@@ -96,7 +96,7 @@ describe('enveloppe de réponse API', () => {
     );
     try {
       const res = await request(app)
-        .get(`/api/comptes/${tiers.id}/acomptes/disponibles`)
+        .get(`/api/tiers/${tiers.id}/acomptes-client/disponibles`)
         .set(auth());
 
       expect(res.status).toBe(200);

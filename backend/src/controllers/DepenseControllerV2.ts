@@ -231,40 +231,4 @@ export class DepenseControllerV2 {
       res.status(500).json({ error: 'Erreur serveur' });
     }
   }
-
-  /**
-   * Get reports by location
-   * GET /api/depenses/reports/by-location
-   */
-  static async reportByLocation(req: Request, res: Response): Promise<void> {
-    try {
-      const { date_debut, date_fin } = req.query;
-      const report = await depenseServiceV2.getReportByLocation(
-        date_debut as string,
-        date_fin as string
-      );
-      res.json({ success: true, data: report });
-    } catch (error: any) {
-      console.error('Erreur GET /api/depenses/reports/by-location:', error);
-      res.status(500).json({ error: 'Erreur serveur' });
-    }
-  }
-
-  /**
-   * Get reports by category
-   * GET /api/depenses/reports/by-categorie
-   */
-  static async reportByCategorie(req: Request, res: Response): Promise<void> {
-    try {
-      const { date_debut, date_fin } = req.query;
-      const report = await depenseServiceV2.getReportByCategorie(
-        date_debut as string,
-        date_fin as string
-      );
-      res.json({ success: true, data: report });
-    } catch (error: any) {
-      console.error('Erreur GET /api/depenses/reports/by-categorie:', error);
-      res.status(500).json({ error: 'Erreur serveur' });
-    }
-  }
 }

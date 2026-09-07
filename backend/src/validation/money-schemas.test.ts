@@ -4,9 +4,7 @@ import {
   refundAcompteSchema,
   createMouvementDiversSchema,
   ouvrirSessionCaisseSchema,
-  posQuickSaleSchema,
   createDepenseSchema,
-  createManualEntrySchema,
   enregistrerPieceSchema,
   createEmployeSchema,
   updateEmployeSchema,
@@ -14,7 +12,6 @@ import {
   updateCrmInteractionSchema,
   updatePaiementSchema,
   createStockTransferSchema,
-  transfertFondsSchema,
   recordAcompteSchema,
   updateReturnStatutSchema,
   applyAvoirToFactureSchema,
@@ -94,26 +91,6 @@ describe('Money-route Zod schemas', () => {
     });
   });
 
-  describe('posQuickSaleSchema', () => {
-    it('accepts a sale with at least one item', () => {
-      const r = posQuickSaleSchema.safeParse({
-        sessionId: 3,
-        items: [{ produit_id: 5, quantite: 2 }],
-      });
-      expect(r.success).toBe(true);
-    });
-    it('rejects an empty items array', () => {
-      expect(posQuickSaleSchema.safeParse({ sessionId: 3, items: [] }).success).toBe(false);
-    });
-    it('accepts a null client_id (walk-in)', () => {
-      const r = posQuickSaleSchema.safeParse({
-        sessionId: 3,
-        items: [{ produit_id: 5, quantite: 1 }],
-        client_id: null,
-      });
-      expect(r.success).toBe(true);
-    });
-  });
 
   describe('createDepenseSchema', () => {
     it('accepts a valid expense', () => {
@@ -162,16 +139,7 @@ describe('Money-route Zod schemas', () => {
     });
   });
 
-  describe('createManualEntrySchema / enregistrerPieceSchema', () => {
-    it('manual entry accepts one balanced line', () => {
-      const r = createManualEntrySchema.safeParse({
-        numero_piece: 'OD-2026-1',
-        journal: 'OD',
-        date_ecriture: '2026-07-18',
-        lignes: [{ compte_id: 1, debit: 1000, credit: 0 }],
-      });
-      expect(r.success).toBe(true);
-    });
+  describe('enregistrerPieceSchema', () => {
     it('piece requires at least 2 lignes', () => {
       const r = enregistrerPieceSchema.safeParse({
         date_ecriture: '2026-07-18',
@@ -267,16 +235,6 @@ describe('Money-route Zod schemas', () => {
         location_source_id: 1, location_destination_id: 2,
         lignes: [{ produit_id: 5, quantite_demandee: 0 }],
       }).success).toBe(false);
-    });
-  });
-
-  describe('transfertFondsSchema', () => {
-    it('accepts a valid inter-caisse transfer', () => {
-      expect(transfertFondsSchema.safeParse({ caisse_source_id: 1, caisse_dest_id: 2, montant: 5000 }).success).toBe(true);
-    });
-    it('rejects missing ids and non-positive amounts', () => {
-      expect(transfertFondsSchema.safeParse({ caisse_dest_id: 2, montant: 5000 }).success).toBe(false);
-      expect(transfertFondsSchema.safeParse({ caisse_source_id: 1, caisse_dest_id: 2, montant: -1 }).success).toBe(false);
     });
   });
 

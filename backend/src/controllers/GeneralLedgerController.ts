@@ -74,27 +74,6 @@ export class GeneralLedgerController {
   }
 
   /**
-   * Get account ledger
-   */
-  static async getAccountLedger(req: Request, res: Response): Promise<void> {
-    try {
-      const { id } = req.params;
-      const { date_debut, date_fin } = req.query;
-
-      if (!date_debut || !date_fin) {
-        res.status(400).json({ success: false, error: 'Date de début et de fin sont requises' });
-        return;
-      }
-
-      const ledger = await generalLedgerService.getAccountLedger(parseInt(id), date_debut as string, date_fin as string);
-      successResponse(res, ledger, 'Grand livre du compte récupéré avec succès');
-    } catch (error: any) {
-      console.error('GeneralLedgerController:', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
-    }
-  }
-
-  /**
    * Get journal entries by document
    */
   static async getByDocument(req: Request, res: Response): Promise<void> {
@@ -102,70 +81,6 @@ export class GeneralLedgerController {
       const { pieceType, pieceId } = req.params;
       const entries = await generalLedgerService.getByDocument(pieceType, parseInt(pieceId));
       successResponse(res, entries, 'Écritures par document récupérées avec succès');
-    } catch (error: any) {
-      console.error('GeneralLedgerController:', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
-    }
-  }
-
-  /**
-   * Create manual journal entry
-   */
-  static async createManualEntry(req: AuthRequest, res: Response): Promise<void> {
-    try {
-      const { numero_piece, journal, date_ecriture, lignes } = req.body;
-
-      if (!numero_piece || !journal || !date_ecriture || !lignes || lignes.length === 0) {
-        res.status(400).json({ success: false, error: 'Numéro de pièce, journal, date et lignes sont requis' });
-        return;
-      }
-
-      await generalLedgerService.createManualEntry(
-        numero_piece,
-        journal,
-        date_ecriture,
-        lignes,
-        req.user?.id
-      );
-
-      res.status(201).json({ success: true, message: 'Écriture comptable créée avec succès' });
-    } catch (error: any) {
-      // Surface the service's user-facing validation (unbalanced entry, unknown
-      // account, closed period) instead of a blanket 500.
-      const status = businessStatusOf(error);
-      if (!status) console.error('GeneralLedgerController:', error);
-      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
-    }
-  }
-
-  /**
-   * Get accounting statistics
-   */
-  static async getStats(req: Request, res: Response): Promise<void> {
-    try {
-      const { date_debut, date_fin } = req.query;
-      const stats = await generalLedgerService.getStats(date_debut as string, date_fin as string);
-      successResponse(res, stats, 'Statistiques comptables récupérées avec succès');
-    } catch (error: any) {
-      console.error('GeneralLedgerController:', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
-    }
-  }
-
-  /**
-   * Get journal breakdown
-   */
-  static async getJournalBreakdown(req: Request, res: Response): Promise<void> {
-    try {
-      const { date_debut, date_fin } = req.query;
-
-      if (!date_debut || !date_fin) {
-        res.status(400).json({ success: false, error: 'Date de début et de fin sont requises' });
-        return;
-      }
-
-      const breakdown = await generalLedgerService.getJournalBreakdown(date_debut as string, date_fin as string);
-      successResponse(res, breakdown, 'Répartition par journal récupérée avec succès');
     } catch (error: any) {
       console.error('GeneralLedgerController:', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });

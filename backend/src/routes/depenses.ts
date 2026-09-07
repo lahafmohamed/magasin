@@ -26,10 +26,4 @@ router.delete('/:id', authorize(['admin', 'manager', 'caissier', 'magasin_staff'
 // GET /api/depenses/categories/list - Get expense categories
 router.get('/categories/list', DepenseControllerV2.getCategories);
 
-// GET /api/depenses/reports/by-location - Report by location
-router.get('/reports/by-location', authorize(['admin', 'manager']), DepenseControllerV2.reportByLocation);
-
-// GET /api/depenses/reports/by-categorie - Report by category
-router.get('/reports/by-categorie', authorize(['admin', 'manager']), DepenseControllerV2.reportByCategorie);
-
 export default router;

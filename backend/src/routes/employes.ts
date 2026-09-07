@@ -5,7 +5,6 @@ import { validateBody } from '../middleware/validation';
 import {
   createEmployeSchema,
   updateEmployeSchema,
-  recordEmployeCommissionSchema,
   recordEmployeShiftSchema,
 } from '../validation/schemas';
 
@@ -21,7 +20,6 @@ router.get('/stats', hrAccess, EmployeController.getStats);
 router.get('/:id', hrAccess, EmployeController.getById);
 router.post('/', hrAccess, validateBody(createEmployeSchema), EmployeController.create);
 router.put('/:id', hrAccess, validateBody(updateEmployeSchema), EmployeController.update);
-router.post('/:id/commission', hrAccess, validateBody(recordEmployeCommissionSchema), EmployeController.recordCommission);
 router.get('/:id/commissions', hrAccess, EmployeController.getCommissions);
 router.get('/:id/commission-summary', hrAccess, EmployeController.getCommissionSummary);
 router.post('/shifts', hrAccess, validateBody(recordEmployeShiftSchema), EmployeController.recordShift);

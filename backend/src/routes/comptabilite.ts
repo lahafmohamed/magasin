@@ -1,3 +1,16 @@
+/**
+ * Comptabilité — ce que le grand livre (`/api/general-ledger`) ne couvre pas.
+ *
+ * Les lectures du grand livre (écritures, balance, plan comptable) vivaient ici
+ * en double : `/plan-comptable`, `/ecritures`, `/balance` et `/journal` étaient
+ * les jumeaux de `/chart-of-accounts`, `GET /`, `/trial-balance` et du filtre
+ * `journal` côté general-ledger, avec deux écrans qui affichaient la même chose.
+ * Ils ont été supprimés le 2026-09-07 au profit de `/api/general-ledger`.
+ *
+ * Il reste ici ce qui n'existe nulle part ailleurs : la saisie d'une pièce
+ * (numérotation automatique + lien tiers + journal d'audit), le grand-livre d'un
+ * compte par numéro, et la trésorerie prévisionnelle.
+ */
 import { Router, Request, Response } from 'express';
 import { authenticate, authorize } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
@@ -9,47 +22,9 @@ const router = Router();
 router.use(authenticate);
 router.use(authorize(['admin', 'manager']));
 
-// ========== PLAN COMPTABLE ==========
-router.get('/plan-comptable', async (req: Request, res: Response) => {
-  try {
-    const classe = req.query.classe ? parseInt(req.query.classe as string) : undefined;
-    const data = await comptabiliteService.getPlanComptable(classe);
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('GET /api/comptabilite/plan-comptable error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur' });
-  }
-});
-
-router.get('/plan-comptable/search', async (req: Request, res: Response) => {
-  try {
-    const query = req.query.q as string || '';
-    const data = await comptabiliteService.chercherCompte(query);
-    res.json({ success: true, data });
-  } catch {
-    res.status(500).json({ success: false, error: 'Erreur serveur' });
-  }
-});
-
-// ========== ÉCRITURES ==========
-router.get('/ecritures', async (req: Request, res: Response) => {
-  try {
-    const data = await comptabiliteService.getEcritures({
-      date_debut: req.query.date_debut as string,
-      date_fin: req.query.date_fin as string,
-      journal: req.query.journal as string,
-      compte_numero: req.query.compte_numero as string,
-      tiers_id: req.query.tiers_id ? parseInt(req.query.tiers_id as string) : undefined,
-      page: req.query.page ? parseInt(req.query.page as string) : 1,
-      limit: req.query.limit ? parseInt(req.query.limit as string) : 50,
-    });
-    res.json({ success: true, ...data });
-  } catch (error) {
-    console.error('GET /api/comptabilite/ecritures error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur' });
-  }
-});
-
+// ========== SAISIE D'UNE PIÈCE ==========
+// Seul chemin de saisie manuelle : il numérote la pièce lui-même
+// (`piece_comptable_seq`), accepte un tiers par ligne et journalise l'audit.
 router.post('/ecritures', validateBody(enregistrerPieceSchema), async (req: Request, res: Response) => {
   try {
     const result = await comptabiliteService.enregistrerPiece({
@@ -63,6 +38,7 @@ router.post('/ecritures', validateBody(enregistrerPieceSchema), async (req: Requ
 });
 
 // ========== GRAND-LIVRE ==========
+// Par numéro de compte (le plan comptable est la clé métier côté utilisateur).
 router.get('/grand-livre/:compteNumero', async (req: Request, res: Response) => {
   try {
     const data = await comptabiliteService.getGrandLivre(
@@ -77,35 +53,6 @@ router.get('/grand-livre/:compteNumero', async (req: Request, res: Response) => 
   }
 });
 
-// ========== BALANCE ==========
-router.get('/balance', async (req: Request, res: Response) => {
-  try {
-    const data = await comptabiliteService.getBalance(
-      req.query.date_debut as string,
-      req.query.date_fin as string
-    );
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('GET /api/comptabilite/balance error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur' });
-  }
-});
-
-// ========== JOURNAL ==========
-router.get('/journal', async (req: Request, res: Response) => {
-  try {
-    const data = await comptabiliteService.getJournal(
-      req.query.date_debut as string,
-      req.query.date_fin as string,
-      req.query.journal as string
-    );
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('GET /api/comptabilite/journal error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur' });
-  }
-});
-
 // ========== TRÉSORERIE PRÉVISIONNELLE ==========
 router.get('/tresorerie', async (req: Request, res: Response) => {
   try {
@@ -114,20 +61,6 @@ router.get('/tresorerie', async (req: Request, res: Response) => {
     res.json({ success: true, data });
   } catch (error) {
     console.error('GET /api/comptabilite/tresorerie error:', error);
-    res.status(500).json({ success: false, error: 'Erreur serveur' });
-  }
-});
-
-// ========== RATIOS FINANCIERS ==========
-router.get('/ratios', async (req: Request, res: Response) => {
-  try {
-    const data = await comptabiliteService.getRatiosFinanciers(
-      req.query.date_debut as string,
-      req.query.date_fin as string
-    );
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('GET /api/comptabilite/ratios error:', error);
     res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 });

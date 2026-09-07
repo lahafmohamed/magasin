@@ -5,8 +5,6 @@ import {
   updateFactureStatutSchema,
   createProduitSchema,
   updateProduitSchema,
-  createClientSchema,
-  updateClientSchema,
   createPaiementSchema,
   adjustStockSchema,
   stockMovementSchema,
@@ -366,53 +364,6 @@ describe('Zod Validation Schemas', () => {
     });
   });
 
-  // ============================================
-  // Client Validation Tests
-  // ============================================
-
-  describe('createClientSchema', () => {
-    it('should validate valid client', () => {
-      const result = createClientSchema.safeParse({
-        nom: 'Dupont',
-        prenom: 'Jean',
-        email: 'jean@example.com',
-        telephone: '0612345678',
-        adresse: '123 Test St',
-        nif: '123456789',
-      });
-      expect(result.success).toBe(true);
-    });
-
-    it('should reject empty name', () => {
-      const result = createClientSchema.safeParse({ nom: '' });
-      expect(result.success).toBe(false);
-    });
-
-    it('should reject invalid email', () => {
-      const result = createClientSchema.safeParse({
-        nom: 'Test',
-        email: 'not-an-email',
-      });
-      expect(result.success).toBe(false);
-    });
-
-    it('should accept minimal client (name only)', () => {
-      const result = createClientSchema.safeParse({ nom: 'Minimal' });
-      expect(result.success).toBe(true);
-    });
-  });
-
-  describe('updateClientSchema', () => {
-    it('should accept partial update', () => {
-      const result = updateClientSchema.safeParse({ telephone: '0699999999' });
-      expect(result.success).toBe(true);
-    });
-
-    it('should accept empty object', () => {
-      const result = updateClientSchema.safeParse({});
-      expect(result.success).toBe(true);
-    });
-  });
 
   // ============================================
   // Paiement Validation Tests

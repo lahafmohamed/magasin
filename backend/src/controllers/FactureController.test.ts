@@ -20,13 +20,15 @@ async function getAuthToken(): Promise<string> {
 // Helper to create a test client via API
 async function createTestClient(): Promise<number> {
   const res = await request(app)
-    .post('/api/clients')
+    .post('/api/tiers')
     .set('Authorization', `Bearer ${authToken}`)
     .send({
-      nom: 'API Test Client',
+      raison_sociale: 'API Test Client',
       prenom: 'Test',
       email: `apitest-${Date.now()}@example.com`,
       telephone: '00000000',
+      est_client: true,
+      est_fournisseur: false,
     });
   return res.body.data.id;
 }
@@ -71,7 +73,7 @@ describe('Factures API (Integration)', () => {
     }
     // Cleanup: delete created client
     await request(app)
-      .delete(`/api/clients/${createdClientId}`)
+      .delete(`/api/tiers/${createdClientId}`)
       .set('Authorization', `Bearer ${authToken}`);
   });
 

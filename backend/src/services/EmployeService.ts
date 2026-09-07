@@ -243,65 +243,16 @@ export class EmployeService extends BaseService<EmployeRecord> {
   }
 
   /**
-   * Record sales commission for employee
-   */
-  async recordCommission(employeId: number, factureId: number, montantVente: number, _req?: any): Promise<void> {
-    const client = await pool.connect();
-
-    try {
-      await client.query('BEGIN');
-
-      // Get employee commission rate
-      const { rows: employeRows } = await client.query(
-        'SELECT commission_taux FROM employes WHERE id = $1 AND actif = true',
-        [employeId]
-      );
-
-      if (employeRows.length === 0) {
-        throw businessError(404, 'Employé non trouvé ou inactif');
-      }
-
-      const commissionTaux = employeRows[0].commission_taux;
-      const montantCommission = montantVente * commissionTaux / 100;
-
-      // Get invoice date
-      const { rows: factureRows } = await client.query(
-        'SELECT date_facture FROM factures WHERE id = $1',
-        [factureId]
-      );
-
-      if (factureRows.length === 0) {
-        throw businessError(404, 'Facture non trouvée');
-      }
-
-      // Insert commission record
-      await client.query(
-        `INSERT INTO commissions_ventes (employe_id, facture_id, montant_vente, taux_commission, montant_commission, date_vente)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [employeId, factureId, montantVente, commissionTaux, montantCommission, factureRows[0].date_facture]
-      );
-
-      await client.query('COMMIT');
-
-      logger.info({ employeId, factureId, montantCommission }, 'Commission recorded');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      logger.error({ err: error }, 'Error recording commission');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  /**
    * Get employee commissions
    */
   async getCommissions(employeId: number, dateDebut?: string, dateFin?: string): Promise<any[]> {
     let query = `
       SELECT cv.*, f.numero_facture
       FROM commissions_ventes cv
-      LEFT JOIN factures f ON cv.facture_id = f.id
+      JOIN factures f ON f.id = cv.facture_id
       WHERE cv.employe_id = $1
+        AND f.deleted_at IS NULL
+        AND f.statut <> 'annulee'
     `;
     const params: any[] = [employeId];
 
@@ -326,15 +277,20 @@ export class EmployeService extends BaseService<EmployeRecord> {
    */
   async getCommissionSummary(employeId: number, dateDebut: string, dateFin: string): Promise<any> {
     const { rows } = await pool.query(
-      `SELECT 
+      // Même filtre que la paie : une facture annulée ou supprimée ne compte pas,
+      // sinon le récapitulatif de la fiche employé contredirait son bulletin.
+      `SELECT
         COUNT(*) as total_ventes,
-        COALESCE(SUM(montant_vente), 0) as total_montant_ventes,
-        COALESCE(SUM(montant_commission), 0) as total_commissions,
-        COUNT(CASE WHEN statut = 'en_attente' THEN 1 END) as commissions_en_attente,
-        COUNT(CASE WHEN statut = 'payee' THEN 1 END) as commissions_payees
-       FROM commissions_ventes
-       WHERE employe_id = $1
-         AND date_vente BETWEEN $2::date AND $3::date`,
+        COALESCE(SUM(cv.montant_vente), 0) as total_montant_ventes,
+        COALESCE(SUM(cv.montant_commission), 0) as total_commissions,
+        COUNT(CASE WHEN cv.statut = 'en_attente' THEN 1 END) as commissions_en_attente,
+        COUNT(CASE WHEN cv.statut = 'payee' THEN 1 END) as commissions_payees
+       FROM commissions_ventes cv
+       JOIN factures f ON f.id = cv.facture_id
+       WHERE cv.employe_id = $1
+         AND cv.date_vente BETWEEN $2::date AND $3::date
+         AND f.deleted_at IS NULL
+         AND f.statut <> 'annulee'`,
       [employeId, dateDebut, dateFin]
     );
     return rows[0];

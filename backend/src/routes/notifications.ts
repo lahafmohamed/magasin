@@ -63,16 +63,5 @@ router.get('/stream', async (req: Request, res: Response) => {
   NotificationService.addClient(req, res, { id: decoded.id ?? 0, role: decoded.role ?? '' });
 });
 
-// Endpoint pour récupérer l'état du service (admin/manager-only)
-router.get('/status', authenticate, authorize(['admin', 'manager']), (_req: Request, res: Response) => {
-  res.json({
-    success: true,
-    data: {
-      clients: NotificationService.getClientCount(),
-      status: 'running',
-    },
-  });
-});
-
 export default router;
 export { NotificationService };

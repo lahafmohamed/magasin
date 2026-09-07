@@ -114,20 +114,27 @@ sweep, and release/rollback approval. See
 
 ## 4. DELETE
 
+> **Mise à jour 2026-09-07** — un audit dédié « fonctionnalités inutiles »
+> ([DEAD-FEATURE-AUDIT-2026-09-07.md](DEAD-FEATURE-AUDIT-2026-09-07.md)) a repris
+> cette section et exécuté le lot 1 : ~1 750 LOC, 11 tables et ~25 endpoints
+> supprimés (POS, hiérarchie de caisses, admin-allocation, shims
+> `clients`/`fournisseurs`/`comptes`), migration `099` + `ci-baseline.sql`
+> régénéré. Les lignes ci-dessous sont annotées en conséquence.
+
 | file or function path | evidence it is unused | removal risk |
 |---|---|---|
-| backend/src/routes/pos.ts:21 + controllers/POSController.ts:42 `scanBarcode` + services/POSService.ts:92 `scanBarcode` | Whole barcode vertical slice: grep of `scanBarcode`/`pos/scan`/`barcode` across frontend/src = zero hits; no UI ever calls it | Low — alternatively wire it into CaisseV2 (product decision); table below goes with it |
-| backend/src/db/014_pos_terminal.sql:41 table `barcode_scans` | Zero TS references | Needs manual confirmation — drop requires a migration |
+| backend/src/routes/pos.ts + controllers/POSController.ts + services/POSService.ts | ✅ **DELETED 2026-09-07** — the whole POS module, not just the barcode slice: zero `/api/pos` calls anywhere in frontend/src, no route, no menu entry | — |
+| backend/src/db/014_pos_terminal.sql:41 table `barcode_scans` | ✅ **DROPPED 2026-09-07** in migration `099` (orphaned once POSService went) | — |
 | frontend/src/components/RequirePermission.tsx (`RequireAnyPermission`, `RequireAllPermissions`, `RequireLocationAccess`, `withPermission`) | ✅ **DELETED 2026-07-22** — 4 unused components removed; `RequirePermission` (the one used by DemandesList) kept | — |
 | frontend/src/hooks/usePermission.ts (`hasAnyPermission`, `hasAllPermissions`, `canAccessLocation`, `getActionState`) | ✅ **DELETED 2026-07-22** — 4 unused props removed (their only callers were the deleted components); the discarded `_canAccessLocation` destructure in StockTransfers.tsx also cleaned up. `hasPermission`/`userRole`/`userPermissions` kept | — |
 | backend/src/validation/schemas.ts `paginationSchema` / `sortQuerySchema` | ✅ **DELETED 2026-07-22** — zero refs; app uses utils/pagination.ts `parsePagination` | — |
-| ~~backend/src/validation/schemas.ts:213-214 fournisseur schema aliases~~ | ✅ No longer dead — wired into routes/fournisseurs.ts POST/PUT on 2026-07-22 (the "use instead of delete" option) | — |
+| backend/src/validation/schemas.ts fournisseur schema aliases | ✅ **DELETED 2026-09-07** — dead again once `routes/fournisseurs.ts` (a deprecated shim to `/api/tiers` with zero frontend callers) was removed | — |
 | backend/src/validation/phase3-schemas.ts `productImportSchema` | ✅ **DELETED 2026-07-22** — no bulk-import route exists | — |
 | backend/src/models/UserModel.ts `findByEmail()` | ✅ **DELETED 2026-07-22** — sole importer (AuthController) never called it | — |
 | frontend/src/lib/chartColors.ts `CHART_AXIS_TICK` | ✅ **DELETED 2026-07-22** — zero refs (siblings all used) | — |
 | frontend/src/utils/format.ts `fuzzyMatch()` | ✅ **DELETED 2026-07-22** — zero callers (`fuzzyScore` kept) | — |
-| backend/src/db/043_unified_tiers.sql:277 table `allocation_audit` | Zero references in backend/src/**/*.ts; no write path exists | Needs manual confirmation — may be intended future FIFO audit trail; wiring it beats dropping it |
-| backend/src/db/014_pos_terminal.sql:28 table `pos_cart_items` | Zero TS references; POS quick-sale flow bypasses it | Needs manual confirmation — migration to drop |
+| backend/src/db/043_unified_tiers.sql:277 table `allocation_audit` | ✅ **DROPPED 2026-09-07** in migration `099` — no write path was ever added; the real FIFO trail lives in `acomptes_applications` | — |
+| backend/src/db/014_pos_terminal.sql:28 table `pos_cart_items` | ✅ **DROPPED 2026-09-07** in migration `099`, with `pos_sessions`, `caisses`, `transferts_caisse` and the 4 `_deprecated_*` tables | — |
 | backend/seed-fournisseurs-excel.mjs | Not in any package.json script, ci.yml, or docs (sibling seeders are documented) | Needs manual confirmation — one-off historical importer; keep if source Excel may be re-imported |
 | backend/seed-test-data.mjs | Same: no script/CI/doc wiring anywhere | Needs manual confirmation |
 | `tiers.solde_client_actuel` / `solde_fournisseur_actuel` columns (read at backend/src/services/TiersService.ts:20,22,53) | Displayed values come from live `calculer_solde_*()` functions instead; cached columns are decorative | Needs manual confirmation — API-visible sort keys; drop requires migration + FE check |

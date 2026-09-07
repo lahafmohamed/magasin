@@ -163,54 +163,6 @@ export class ReportingService {
   }
 
   /**
-   * Inventory valuation report (FIFO-style weighted average)
-   */
-  async getInventoryValuation(): Promise<any> {
-    const { rows } = await pool.query(
-      `SELECT
-        COUNT(*) FILTER (WHERE deleted_at IS NULL) as total_produits,
-        COALESCE(SUM(stock) FILTER (WHERE deleted_at IS NULL), 0) as total_unites,
-        COALESCE(SUM(stock * prix_achat) FILTER (WHERE deleted_at IS NULL), 0) as valeur_achat,
-        COALESCE(SUM(stock * prix_vente) FILTER (WHERE deleted_at IS NULL), 0) as valeur_vente,
-        COALESCE(SUM(stock * (prix_vente - prix_achat)) FILTER (WHERE deleted_at IS NULL), 0) as marge_potentielle,
-        -- Average margin percentage
-        CASE 
-          WHEN COALESCE(SUM(stock * prix_vente) FILTER (WHERE deleted_at IS NULL), 0) = 0 THEN 0
-          ELSE ROUND(
-            (COALESCE(SUM(stock * (prix_vente - prix_achat)) FILTER (WHERE deleted_at IS NULL), 0) / 
-             COALESCE(SUM(stock * prix_vente) FILTER (WHERE deleted_at IS NULL), 0)) * 100, 2
-          )
-        END as marge_moyenne_pourcentage
-       FROM produits`
-    );
-    return rows[0];
-  }
-
-  /**
-   * Inventory turnover rate
-   */
-  async getInventoryTurnover(days: number = 30): Promise<any> {
-    const { rows } = await pool.query(
-      `SELECT
-        COALESCE(SUM(dl.quantite), 0) as unites_vendues,
-        COALESCE(AVG(p.stock), 0) as stock_moyen,
-        CASE 
-          WHEN COALESCE(AVG(p.stock), 0) = 0 THEN 0
-          ELSE ROUND(COALESCE(SUM(dl.quantite), 0) / AVG(p.stock), 2)
-        END as taux_rotation,
-        COUNT(DISTINCT p.id) as produits_actifs
-       FROM document_lignes dl
-       LEFT JOIN produits p ON dl.produit_id = p.id
-       LEFT JOIN factures f ON dl.document_type = 'facture' AND dl.document_id = f.id
-       WHERE f.date_facture >= CURRENT_DATE - ($1 || ' days')::interval
-         AND f.statut != 'annulee'
-         AND p.deleted_at IS NULL`,
-      [days]
-    );
-    return rows[0];
-  }
-
-  /**
    * Sales by category
    */
   async getSalesByCategory(dateDebut: string, dateFin: string): Promise<any[]> {

@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { creditNoteService } from '../services/api';
+import { creditNoteService, factureService } from '../services/api';
 import { AvoirComplete } from '../types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { DocumentPicker, type DocumentOption } from '@/components/DocumentPicker';
 import StatusBadge from '@/components/StatusBadge';
 import { DocumentPrint } from '@/components/ui/print-layout';
 import { PrintPreview, usePrintFormat } from '@/components/ui/print-preview';
 import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
-import { PageLoading } from '@/components/ui/loading';
+import { PageLoading, Spinner } from '@/components/ui/loading';
 import { formatXOF, formatDate } from '@/utils/format';
 import { getErrorMessage } from '@/utils/errors';
-import { AlertCircle, ArrowLeft, FileText, User, Calendar, Printer, RefreshCw } from 'lucide-react';
+import { AlertCircle, ArrowLeft, FileText, User, Calendar, Printer, RefreshCw, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function AvoirDetail() {
@@ -23,6 +26,9 @@ export default function AvoirDetail() {
   const [error, setError] = useState<unknown>(null);
   const [showPrintLayout, setShowPrintLayout] = useState(false);
   const [printFormat, setPrintFormat] = usePrintFormat();
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [targetFacture, setTargetFacture] = useState<DocumentOption | null>(null);
+  const [applying, setApplying] = useState(false);
 
   const loadAvoir = useCallback(async () => {
     if (!id) return;
@@ -43,6 +49,44 @@ export default function AvoirDetail() {
   useEffect(() => {
     loadAvoir();
   }, [loadAvoir]);
+
+  /**
+   * Factures imputables : celles du client de l'avoir qui restent dues. Le
+   * serveur revérifie le client et refuse une facture annulée — ce filtre
+   * évite surtout de proposer un choix qui sera rejeté.
+   */
+  const searchFacturesClient = useCallback(async (query: string): Promise<DocumentOption[]> => {
+    const nomClient = `${avoir?.client_nom ?? ''} ${avoir?.client_prenom ?? ''}`.trim();
+    const res = await factureService.getAll(query || nomClient, undefined, 1, 20);
+    const rows = res?.data ?? res ?? [];
+    return rows
+      .filter((f: any) => Number(f.tiers_id ?? f.client_id) === Number(avoir?.client_id))
+      .filter((f: any) => f.statut !== 'annulee' && f.statut !== 'payee')
+      .map((f: any) => ({
+        id: f.id,
+        numero: f.numero_facture,
+        tiers_nom: f.client_nom,
+        montant: f.remaining_due ?? f.total,
+        date: f.date_facture,
+        statut: f.statut,
+      }));
+  }, [avoir?.client_id, avoir?.client_nom, avoir?.client_prenom]);
+
+  const submitApply = async () => {
+    if (!avoir || !targetFacture) return;
+    setApplying(true);
+    try {
+      await creditNoteService.applyToFacture(avoir.id, targetFacture.id);
+      toast.success(`Avoir imputé sur la facture ${targetFacture.numero}`);
+      setApplyOpen(false);
+      setTargetFacture(null);
+      loadAvoir();
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Erreur lors de l'imputation de l'avoir"));
+    } finally {
+      setApplying(false);
+    }
+  };
 
   if (loading) {
     return <PageLoading message="Chargement de l'avoir…" />;
@@ -105,12 +149,50 @@ export default function AvoirDetail() {
         </div>
         <div className="flex gap-2">
           <StatusBadge type="avoir" statut={avoir.statut} />
+          {avoir.statut === 'valide' && (
+            <Button onClick={() => setApplyOpen(true)} className="gap-2">
+              <Link2 className="h-4 w-4" />
+              Imputer sur une facture
+            </Button>
+          )}
           <Button variant="outline" onClick={() => setShowPrintLayout(true)} className="gap-2">
             <Printer className="h-4 w-4" />
             Imprimer
           </Button>
         </div>
       </div>
+
+      {/* Imputation de l'avoir sur une facture du même client */}
+      <Dialog open={applyOpen} onOpenChange={(o) => { if (!applying) setApplyOpen(o); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Imputer l'avoir {avoir.numero_avoir}</DialogTitle>
+            <DialogDescription>
+              Le montant de {formatXOF(total)} vient en déduction du reste dû de la facture choisie.
+              Seules les factures non soldées de {avoir.client_nom} sont proposées.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="avoir-facture-cible">Facture</Label>
+            <DocumentPicker
+              inputId="avoir-facture-cible"
+              value={targetFacture}
+              onChange={setTargetFacture}
+              search={searchFacturesClient}
+              placeholder="Chercher une facture…"
+              disabled={applying}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApplyOpen(false)} disabled={applying}>
+              Annuler
+            </Button>
+            <Button onClick={submitApply} disabled={!targetFacture || applying} className="gap-1">
+              {applying && <Spinner />} Imputer l'avoir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Document lifecycle strip */}
       <DocumentLifecycle

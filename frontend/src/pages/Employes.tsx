@@ -51,6 +51,22 @@ interface CommissionSummary {
   commissions_payees: number;
 }
 
+/**
+ * Une commission par facture émise. Les lignes sont créées automatiquement à la
+ * facturation (trigger `trg_commission_vente`, migration 100) d'après le taux
+ * de l'employé ; celles dont la facture a été annulée sont exclues côté serveur.
+ */
+interface CommissionLigne {
+  id: number;
+  facture_id: number;
+  numero_facture: string | null;
+  date_vente: string;
+  montant_vente: string;
+  taux_commission: string;
+  montant_commission: string;
+  statut: string;
+}
+
 const DEPARTEMENTS = ['Vente', 'Magasin', 'Administration'];
 
 type EmployeSortKey = 'matricule' | 'nom_complet' | 'departement';
@@ -99,6 +115,7 @@ export default function Employes() {
   // detail
   const [detail, setDetail] = useState<Employe | null>(null);
   const [commissionSummary, setCommissionSummary] = useState<CommissionSummary | null>(null);
+  const [commissionLignes, setCommissionLignes] = useState<CommissionLigne[]>([]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -140,11 +157,16 @@ export default function Employes() {
   const openDetail = async (employe: Employe) => {
     setDetail(employe);
     setCommissionSummary(null);
+    setCommissionLignes([]);
     try {
       const dateDebut = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
       const dateFin = new Date().toISOString().split('T')[0];
-      const data = await employeService.getCommissionSummary(employe.id, dateDebut, dateFin);
-      setCommissionSummary(data.data || data);
+      const [summary, lignes] = await Promise.all([
+        employeService.getCommissionSummary(employe.id, dateDebut, dateFin),
+        employeService.getCommissions(employe.id, dateDebut, dateFin),
+      ]);
+      setCommissionSummary(summary.data || summary);
+      setCommissionLignes(lignes?.data ?? lignes ?? []);
     } catch (err) {
       toast.error(getErrorMessage(err, 'Erreur chargement commissions'));
     }
@@ -459,7 +481,7 @@ export default function Employes() {
       </Dialog>
 
       {/* Detail dialog */}
-      <Dialog open={!!detail} onOpenChange={(o) => { if (!o) { setDetail(null); setCommissionSummary(null); } }}>
+      <Dialog open={!!detail} onOpenChange={(o) => { if (!o) { setDetail(null); setCommissionSummary(null); setCommissionLignes([]); } }}>
         <DialogContent className="sm:max-w-lg">
           {detail && (
             <>
@@ -494,6 +516,43 @@ export default function Employes() {
                       <div className="text-xs text-muted-foreground num">{commissionSummary.commissions_payees} payées</div>
                     </div>
                   </div>
+
+                  {commissionLignes.length === 0 ? (
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      Aucune vente commissionnée cette année. Une commission est enregistrée
+                      automatiquement à chaque facture émise par cet employé, si son taux est
+                      supérieur à 0.
+                    </p>
+                  ) : (
+                    <div className="mt-3 max-h-64 overflow-y-auto rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Facture</TableHead>
+                            <TableHead className="text-right">Vente</TableHead>
+                            <TableHead className="text-right">Taux</TableHead>
+                            <TableHead className="text-right">Commission</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {commissionLignes.map((c) => (
+                            <TableRow key={c.id} className="text-sm">
+                              <TableCell className="text-xs">
+                                {new Date(c.date_vente).toLocaleDateString('fr-FR')}
+                              </TableCell>
+                              <TableCell className="text-xs">{c.numero_facture || '—'}</TableCell>
+                              <TableCell className="text-right text-xs">{formatFCFA(c.montant_vente)}</TableCell>
+                              <TableCell className="text-right text-xs">{c.taux_commission}%</TableCell>
+                              <TableCell className="text-right text-xs font-semibold text-success-700">
+                                {formatFCFA(c.montant_commission)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-23 · **Scope:** full repo · **Method:** backend route inventory (36 routers / 300+ endpoints) cross-referenced against every frontend call site, module-by-module feature comparison against standard retail+wholesale ERP scope, UI-primitive adoption counts. Analysis only — no source changed.
 
-Companion docs: [AUDIT.md](AUDIT.md) (code quality / refactor / security, 2026-07-22) · [PLAN.md](PLAN.md) (sprint tracking) · [CLAUDE.md](CLAUDE.md) (conventions).
+Companion docs: [AUDIT.md](../../AUDIT.md) (code quality / refactor / security, 2026-07-22) · [PLAN.md](../../PLAN.md) (sprint tracking) · [CLAUDE.md](../../CLAUDE.md) (conventions).
 This document covers what the code **does not do**; AUDIT.md covers how well it does what it does.
 
 ---
@@ -193,4 +193,4 @@ Ordered by value-per-hour, not by section.
 
 ---
 
-*Feature-gap and usability audit, 2026-07-23. No source modified. Code-quality, security and refactor findings live in [AUDIT.md](AUDIT.md).*
+*Feature-gap and usability audit, 2026-07-23. No source modified. Code-quality, security and refactor findings live in [AUDIT.md](../../AUDIT.md).*

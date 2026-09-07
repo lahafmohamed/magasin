@@ -82,27 +82,6 @@ export class ReportingController {
     }
   }
 
-  static async getInventoryValuation(req: Request, res: Response): Promise<void> {
-    try {
-      const data = await reportingService.getInventoryValuation();
-      res.json({ success: true, data });
-    } catch (error) {
-      consoleError('GET /api/reports/inventory', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
-    }
-  }
-
-  static async getInventoryTurnover(req: Request, res: Response): Promise<void> {
-    try {
-      const days = parseInt(req.query.days as string) || 30;
-      const data = await reportingService.getInventoryTurnover(days);
-      res.json({ success: true, data });
-    } catch (error) {
-      consoleError('GET /api/reports/turnover', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
-    }
-  }
-
   static async getSalesByCategory(req: Request, res: Response): Promise<void> {
     try {
       const { date_debut, date_fin } = req.query;

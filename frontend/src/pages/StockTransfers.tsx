@@ -3,7 +3,7 @@ import { stockTransferService, stockLocationService, produitService } from '../s
 import { fuzzyScore } from '../utils/format';
 import { usePermission, Permissions } from '../hooks/usePermission';
 import { toast } from 'sonner';
-import { Plus, Search, ArrowRight, CheckCircle, X, Filter, RefreshCw, Package, ClipboardList, AlertCircle } from 'lucide-react';
+import { Plus, Search, ArrowRight, CheckCircle, XCircle, X, Filter, RefreshCw, Package, ClipboardList, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -80,6 +80,7 @@ export default function StockTransfers() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [completing, setCompleting] = useState<number | null>(null);
+  const [cancelling, setCancelling] = useState<number | null>(null);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -178,6 +179,31 @@ export default function StockTransfers() {
       toast.error(getErrorMessage(err, 'Erreur complétion transfert'));
     } finally {
       setCompleting(null);
+    }
+  };
+
+  /**
+   * Annulation d'un transfert non complété. Le serveur relâche le stock retenu
+   * à l'emplacement source ; un transfert déjà complété ou annulé est refusé.
+   */
+  const handleCancel = async (transferId: number, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!(await confirm({
+      title: 'Annuler ce transfert ?',
+      description: "La marchandise reste à l'emplacement source. Le transfert ne pourra plus être complété.",
+      confirmLabel: 'Annuler le transfert',
+      destructive: true,
+    }))) return;
+    setCancelling(transferId);
+    try {
+      await stockTransferService.cancel(transferId);
+      toast.success('Transfert annulé');
+      fetchAll();
+      if (selectedTransfer?.id === transferId) setDetailOpen(false);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Erreur annulation transfert'));
+    } finally {
+      setCancelling(null);
     }
   };
 
@@ -403,6 +429,22 @@ export default function StockTransfers() {
                             Compléter
                           </Button>
                         )}
+                        {transfer.statut === 'en_attente' && canExecute && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="gap-1"
+                            disabled={cancelling === transfer.id}
+                            onClick={(e) => handleCancel(transfer.id, e)}
+                          >
+                            {cancelling === transfer.id ? (
+                              <Spinner />
+                            ) : (
+                              <XCircle className="h-3.5 w-3.5" />
+                            )}
+                            Annuler
+                          </Button>
+                        )}
                         <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); handleOpenDetail(transfer); }}>
                           Détails
                         </Button>
@@ -462,6 +504,17 @@ export default function StockTransfers() {
 
               <DialogFooter>
                 <Button variant="outline" onClick={() => setDetailOpen(false)}>Fermer</Button>
+                {selectedTransfer.statut === 'en_attente' && (
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    disabled={cancelling === selectedTransfer.id}
+                    onClick={() => handleCancel(selectedTransfer.id)}
+                  >
+                    {cancelling === selectedTransfer.id ? <Spinner /> : <XCircle className="h-4 w-4" />}
+                    Annuler le transfert
+                  </Button>
+                )}
                 {selectedTransfer.statut === 'en_attente' && (
                   <Button
                     className="gap-2 bg-success-600 hover:bg-success-700"

@@ -174,10 +174,15 @@ export class PayrollService {
                 COALESCE(c.total_commissions, 0) AS commissions
          FROM employes e
          LEFT JOIN (
-           SELECT employe_id, SUM(montant_commission) AS total_commissions
-           FROM commissions_ventes
-           WHERE date_vente BETWEEN $1 AND $2
-           GROUP BY employe_id
+           -- Une facture annulée ou supprimée ne paie pas de commission : la
+           -- ligne reste en base (trace), mais elle sort du brut du bulletin.
+           SELECT cv.employe_id, SUM(cv.montant_commission) AS total_commissions
+           FROM commissions_ventes cv
+           JOIN factures f ON f.id = cv.facture_id
+           WHERE cv.date_vente BETWEEN $1 AND $2
+             AND f.deleted_at IS NULL
+             AND f.statut <> 'annulee'
+           GROUP BY cv.employe_id
          ) c ON c.employe_id = e.id
          WHERE e.actif = true`,
         [dateDebut, dateFin]

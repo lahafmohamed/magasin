@@ -215,7 +215,7 @@ export const MODULES: ModuleDefinition[] = [
   {
     key: 'comptabilite',
     label: 'Comptabilité',
-    description: 'Grand livre, balance et plan comptable (OHADA).',
+    description: 'Écritures, grand-livre, balance, plan comptable et saisie manuelle (OHADA).',
     categorie: 'Finance',
     paths: ['/general-ledger', '/comptabilite'],
   },
