@@ -35,7 +35,7 @@ describe('ChangePassword', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Changement de mot de passe requis' })).toBeInTheDocument();
     expect(screen.getByText('Le mot de passe doit contenir :')).toBeInTheDocument();
     expect(screen.getByLabelText('Nouveau mot de passe')).toHaveAttribute('aria-describedby', 'new-rules');
-    await waitFor(() => expect(document.title).toBe('Changer le mot de passe · Hitek'));
+    await waitFor(() => expect(document.title).toBe('Changer le mot de passe · nolyxERP'));
   });
 
   it('puts a mismatch under the confirmation field, without calling the server', () => {

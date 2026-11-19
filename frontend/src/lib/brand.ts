@@ -3,17 +3,17 @@ import { createContext, useContext } from 'react';
 /**
  * Identité affichée dans le cadre de l'application (menu, onglet du navigateur).
  *
- * Avant la connexion on ne connaît que le produit, « Hitek » : les paramètres
+ * Avant la connexion on ne connaît que le produit, « nolyxERP » : les paramètres
  * de l'entreprise exigent une session. Après, c'est le nom de l'entreprise
  * (`company_settings.nom`) — chaque client SaaS voit le sien, plus jamais un
- * « Hitek-CI » codé en dur.
+ * nom de produit codé en dur.
  *
  * Module volontairement autonome (aucun import de contexte ni de service) :
  * `PageShell` et `useDocumentTitle` en dépendent, et les tests de pages
  * simulent `ModulesContext` / `AuthContext` sans ce fichier.
  */
 
-export const PRODUCT_NAME = 'Hitek';
+export const PRODUCT_NAME = 'nolyxERP';
 
 /**
  * Logo livré avec le programme : une bannière rectangulaire illisible à 28 px
@@ -24,7 +24,7 @@ export const PRODUCT_NAME = 'Hitek';
 const BUNDLED_PLACEHOLDER_LOGO = '/logo.png';
 
 export interface CompanyBrand {
-  /** Nom de l'entreprise, ou « Hitek » tant qu'il n'est pas connu. */
+  /** Nom de l'entreprise, ou « nolyxERP » tant qu'il n'est pas connu. */
   name: string;
   /** Logo propre au client (carré de préférence), sinon `null`. */
   logoUrl: string | null;
@@ -40,7 +40,7 @@ export function buildBrand(settings?: { nom?: string | null; logo_url?: string |
   return {
     name,
     logoUrl: logo && logo !== BUNDLED_PLACEHOLDER_LOGO ? logo : null,
-    initial: name.charAt(0).toLocaleUpperCase('fr-FR') || 'H',
+    initial: name.charAt(0).toLocaleUpperCase('fr-FR') || 'N',
     loaded: !!settings,
   };
 }

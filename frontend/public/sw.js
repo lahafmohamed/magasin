@@ -1,6 +1,6 @@
-// v3: stop caching /api responses — bump forces the activate handler to purge
-// the v2 cache, which may still hold financial API data on shared machines.
-const CACHE_NAME = 'hitek-cache-v3';
+// v4: rebrand nolyxERP — bump forces the activate handler to purge the old
+// hitek-cache-v3, which may still hold financial API data on shared machines.
+const CACHE_NAME = 'nolyx-cache-v4';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/logo.png',

@@ -236,7 +236,7 @@ export default function CompanySettingsPage() {
               <CardDescription>Nom et coordonnées imprimés en tête de vos factures, devis et bons de livraison</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {field('Nom de l’entreprise', 'nom', { placeholder: 'Ex. : Hitek Plateau', autoComplete: 'organization', required: true })}
+              {field('Nom de l’entreprise', 'nom', { placeholder: 'Ex. : Boutique Plateau', autoComplete: 'organization', required: true })}
               <div className="space-y-1.5">
                 <Label htmlFor="adresse">Adresse</Label>
                 <Textarea

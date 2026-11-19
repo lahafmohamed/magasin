@@ -119,7 +119,7 @@ export function DocumentPrint({
   const devise = settings?.devise || 'FCFA';
   const fmtMoney = (n: number) => formatCurrency(n, devise);
   const companyName = settings?.nom || '';
-  // Logo du client seulement : jamais le `/logo.png` livré (bannière Hitek sur
+  // Logo du client seulement : jamais le `/logo.png` livré (bannière nolyxERP sur
   // damier gris), ni d'image vide quand aucun logo n'est enregistré.
   const logoUrl = buildBrand(settings).logoUrl;
   const paid = docType === 'facture' ? Math.max(0, toNumber(montantPaye) ?? 0) : 0;

@@ -50,7 +50,7 @@ describe('Login', () => {
     renderLogin();
     expect(screen.getByRole('main')).toBeInTheDocument();
     // La marque au-dessus, le titre de l'écran en h1 (même en-tête que le changement de mot de passe).
-    expect(screen.getByText('Hitek')).toBeInTheDocument();
+    expect(screen.getByText('nolyxERP')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: 'Connexion' })).toBeInTheDocument();
     expect(screen.queryByText(/Magasin Programme/)).not.toBeInTheDocument();
     expect(screen.getByLabelText('Identifiant')).toBeInTheDocument();
@@ -59,7 +59,7 @@ describe('Login', () => {
     expect(screen.getByText(/Mot de passe oublié/)).toBeInTheDocument();
     expect(screen.queryByText(/comptes de démonstration/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/manager123/i)).not.toBeInTheDocument();
-    await waitFor(() => expect(document.title).toBe('Connexion · Hitek'));
+    await waitFor(() => expect(document.title).toBe('Connexion · nolyxERP'));
   });
 
   it('explains empty fields as instructions linked to each field', async () => {

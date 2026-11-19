@@ -11,7 +11,7 @@ const renderInRouter = (ui: React.ReactNode) => render(<MemoryRouter>{ui}</Memor
 
 describe('PageShell', () => {
   beforeEach(() => {
-    document.title = 'Hitek';
+    document.title = 'nolyxERP';
   });
 
   it('rend un seul h1, focalisable par le cadre, et le titre d’onglet', () => {
@@ -24,7 +24,7 @@ describe('PageShell', () => {
     expect(headings).toHaveLength(1);
     expect(headings[0]).toHaveAttribute('tabindex', '-1');
     expect(headings[0]).toHaveTextContent('Factures');
-    expect(document.title).toBe('Factures · Hitek');
+    expect(document.title).toBe('Factures · nolyxERP');
   });
 
   it('nomme l’onglet avec le nom de l’entreprise et le titre de document', () => {
@@ -49,13 +49,13 @@ describe('PageShell', () => {
         <Fallback />
       </>
     );
-    expect(document.title).toBe('Facture FAC-2026-00001 · Hitek');
+    expect(document.title).toBe('Facture FAC-2026-00001 · nolyxERP');
     rerender(
       <MemoryRouter>
         <Fallback />
       </MemoryRouter>
     );
-    expect(document.title).toBe('Facture · Hitek');
+    expect(document.title).toBe('Facture · nolyxERP');
   });
 
   it('ne coupe pas un code de document à ses tirets', () => {

@@ -44,11 +44,11 @@ export class CompanySettingsService {
       await pool.query(`
         CREATE TABLE IF NOT EXISTS company_settings (
           id INTEGER PRIMARY KEY DEFAULT 1,
-          nom VARCHAR(100) NOT NULL DEFAULT 'Hitek-CI',
-          adresse TEXT DEFAULT 'Abidjan, Côte d''Ivoire',
-          telephone VARCHAR(50) DEFAULT '+225 07 00 00 00',
-          email VARCHAR(100) DEFAULT 'contact@hitek-ci.com',
-          site_web VARCHAR(100) DEFAULT 'www.hitek-ci.com',
+          nom VARCHAR(100) NOT NULL DEFAULT 'Mon entreprise',
+          adresse TEXT DEFAULT '',
+          telephone VARCHAR(50) DEFAULT '',
+          email VARCHAR(100) DEFAULT '',
+          site_web VARCHAR(100) DEFAULT '',
           nif VARCHAR(50) DEFAULT '',
           rc VARCHAR(50) DEFAULT '',
           ai VARCHAR(50) DEFAULT '',
@@ -74,7 +74,7 @@ export class CompanySettingsService {
 
       await pool.query(`
         INSERT INTO company_settings (id, nom, adresse, telephone, email, devise)
-        VALUES (1, 'Hitek-CI', 'Abidjan, Côte d''Ivoire', '+225 07 00 00 00', 'contact@hitek-ci.com', 'FCFA')
+        VALUES (1, 'Mon entreprise', '', '', '', 'FCFA')
         ON CONFLICT (id) DO NOTHING;
       `);
     } catch (error) {
@@ -105,7 +105,7 @@ export class CompanySettingsService {
     const oldSettings = this.cachedSettings || await this.getSettings();
 
     const {
-      nom = oldSettings.nom || 'Hitek-CI',
+      nom = oldSettings.nom || 'Mon entreprise',
       adresse = oldSettings.adresse ?? '',
       telephone = oldSettings.telephone ?? '',
       email = oldSettings.email ?? '',

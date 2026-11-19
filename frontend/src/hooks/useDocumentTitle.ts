@@ -47,7 +47,7 @@ export interface DocumentTitleOptions {
 /**
  * Pose le titre de l'onglet tant que le composant est monté.
  *
- *   useDocumentTitle('Connexion');                 // → « Connexion · Hitek »
+ *   useDocumentTitle('Connexion');                 // → « Connexion · nolyxERP »
  *   useDocumentTitle(`Facture ${facture.numero}`); // → « Facture FAC-… · Hitek Plateau »
  */
 export function useDocumentTitle(title: string | null | undefined, options: DocumentTitleOptions = {}): void {

@@ -5,6 +5,7 @@ import { businessError } from '../utils/errors';
 import { assertPositiveSalePrices, calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { ClientAllocationService } from './ClientAllocationService';
+import { convertBlToFactureInTx } from './DocumentConversion';
 import { creditService } from './CreditService';
 import { listSalesDocuments, salesDocumentStats, SalesDocumentConfig } from './SalesDocumentQuery';
 
@@ -48,10 +49,11 @@ export class BonLivraisonService {
 
   private async convertToFactureFallback(
     client: any,
-    blId: number
+    blId: number,
+    userId: number
   ): Promise<{ facture_id: number; numero_facture: string }> {
     const { rows: blRows } = await client.query(
-      `SELECT id, tiers_id, sous_total, tva, total, notes, location_id, facture_id
+      `SELECT id, tiers_id, devis_id, sous_total, tva, total, notes, location_id, facture_id
        FROM bons_livraison
        WHERE id = $1
        FOR UPDATE`,
@@ -76,6 +78,37 @@ export class BonLivraisonService {
     }
 
     const numeroFacture = await generateDocumentNumber('facture', client);
+    const delaiPaiement = await fetchClientPaymentTerm(client, bl.tiers_id);
+    const dateEcheance = formatDateForPg(calculateDueDate(delaiPaiement));
+    await ensureRequiredAccountsForInvoice(client);
+
+    // On facture ce qui a été livré (livraison partielle possible), avec le
+    // même arrondi par ligne que la création directe — le total de la facture
+    // est la somme des lignes converties, pas une copie du total du BL.
+    const { rows: lignesRows } = await client.query(
+      `SELECT dl.id, dl.produit_id, dl.description, dl.quantite, dl.quantite_livree,
+              dl.prix_unitaire, dl.remise_pct, dl.remise_montant,
+              COALESCE(NULLIF(dl.prix_achat_unitaire, 0), p.prix_achat, 0) AS prix_achat_unitaire
+       FROM document_lignes dl
+       LEFT JOIN produits p ON p.id = dl.produit_id
+       WHERE dl.document_type = 'bl' AND dl.document_id = $1
+       ORDER BY dl.id`,
+      [blId]
+    );
+    assertPositiveSalePrices(lignesRows);
+
+    const delivered = lignesRows.map((l: any) => ({
+      ...l,
+      quantite: Number(l.quantite_livree ?? l.quantite),
+    }));
+    const { totalLignes, sousTotal } = computeLineTotals(
+      delivered.map((l: any) => ({
+        quantite: l.quantite,
+        prix_unitaire: Number(l.prix_unitaire),
+        remise_pct: Number(l.remise_pct || 0),
+        remise_montant: Number(l.remise_montant || 0),
+      }))
+    );
 
     const { rows: factureRows } = await client.query(
       `INSERT INTO factures (
@@ -91,52 +124,55 @@ export class BonLivraisonService {
         remaining_due,
         statut,
         notes,
-        location_id
-      ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6, $7, $8, $9, $10, $11, $12)
+        location_id,
+        date_echeance,
+        delai_paiement,
+        cree_par
+      ) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING id`,
       [
         numeroFacture,
         bl.tiers_id,
         blId,
         bl.devis_id || null,
-        bl.sous_total,
+        sousTotal,
         bl.tva,
-        bl.total,
+        sousTotal,
         0,
-        bl.total,
+        sousTotal,
         'en_attente',
         bl.notes || null,
         bl.location_id || null,
+        dateEcheance,
+        delaiPaiement,
+        userId || null,
       ]
     );
 
     const factureId = factureRows[0].id;
 
-    const { rows: lignesRows } = await client.query(
-      `SELECT produit_id, quantite_livree, prix_unitaire, total_ligne
-       FROM document_lignes
-       WHERE document_type = 'bl' AND document_id = $1
-       ORDER BY id`,
-      [blId]
-    );
-    assertPositiveSalePrices(lignesRows);
-
-    for (const ligne of lignesRows) {
+    for (const [index, ligne] of delivered.entries()) {
       await client.query(
         `INSERT INTO document_lignes (
           document_type,
           document_id,
           produit_id,
+          description,
           quantite,
           prix_unitaire,
-          total_ligne
-        ) VALUES ('facture', $1, $2, $3, $4, $5)`,
+          total_ligne,
+          parent_ligne_id,
+          prix_achat_unitaire
+        ) VALUES ('facture', $1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           factureId,
           ligne.produit_id,
-          ligne.quantite_livree,
+          ligne.description || null,
+          ligne.quantite,
           ligne.prix_unitaire,
-          ligne.total_ligne,
+          totalLignes[index],
+          ligne.id,
+          ligne.prix_achat_unitaire,
         ]
       );
     }
@@ -773,39 +809,10 @@ export class BonLivraisonService {
       );
       assertPositiveSalePrices(conversionLines);
 
-      let factureId: number;
-      let numeroFacture: string;
-
-      await client.query('SAVEPOINT bl_convert_sp');
-      try {
-        // Preferred path: DB-native conversion.
-        const { rows } = await client.query(
-          'SELECT convert_bl_to_facture($1, $2) as facture_id',
-          [id, userId]
-        );
-
-        factureId = rows[0].facture_id;
-
-        const { rows: factureRows } = await client.query(
-          'SELECT numero_facture FROM factures WHERE id = $1',
-          [factureId]
-        );
-        numeroFacture = factureRows[0].numero_facture;
-      } catch (error: any) {
-        const isLegacyNumeroParseError =
-          error?.code === '22P02' &&
-          String(error?.message || '').includes('invalid input syntax for type integer');
-
-        if (!isLegacyNumeroParseError) {
-          throw error;
-        }
-
-        // Legacy SQL function fails on FAC-YYYY-##### formats.
-        await client.query('ROLLBACK TO SAVEPOINT bl_convert_sp');
-        const fallbackResult = await this.convertToFactureFallback(client, id);
-        factureId = fallbackResult.facture_id;
-        numeroFacture = fallbackResult.numero_facture;
-      }
+      // Chemin applicatif unique : la fonction SQL legacy convert_bl_to_facture
+      // hardcodait 'net_30' sans échéance, auteur ni coût d'achat (migration 113).
+      const { facture_id: factureId, numero_facture: numeroFacture } =
+        await convertBlToFactureInTx(client, id, userId);
 
       // Get the created invoice details to insert into compte_client_lignes
       const { rows: factRows } = await client.query(

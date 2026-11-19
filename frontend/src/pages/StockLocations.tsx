@@ -458,7 +458,7 @@ function CreateLocationDialog({
               id="emplacement-nom"
               value={values.nom}
               onChange={(e) => setValues((v) => ({ ...v, nom: e.target.value }))}
-              placeholder="Ex. : Hitek Plateau"
+              placeholder="Ex. : Magasin Plateau"
               maxLength={100}
               required
               {...fieldErrorProps('emplacement-nom', errors.nom)}

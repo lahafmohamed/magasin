@@ -6,6 +6,8 @@ import { assertPositiveSalePrices, calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { resolveSalesLocationId } from './StockMagasinService';
 import { creditService } from './CreditService';
+import { ClientAllocationService } from './ClientAllocationService';
+import { convertBlToFactureInTx } from './DocumentConversion';
 import { listSalesDocuments, salesDocumentStats, SalesDocumentConfig } from './SalesDocumentQuery';
 
 export interface DevisLigneInput {
@@ -172,120 +174,6 @@ export class DevisService {
     }
 
     return { bl_id: blId, numero_bl: numeroBL };
-  }
-
-  private async convertToFactureFallback(
-    client: any,
-    id: number,
-    userId: number
-  ): Promise<{ facture_id: number; numero_facture: string }> {
-    const { rows: devisRows } = await client.query(
-      `SELECT id, tiers_id, sous_total, tva, total, notes, remise_globale, remise_globale_pct, facture_id
-       FROM devis
-       WHERE id = $1
-       FOR UPDATE`,
-      [id]
-    );
-
-    if (devisRows.length === 0) {
-      throw new Error('Devis non trouvé');
-    }
-
-    const devis = devisRows[0];
-    if (devis.facture_id) {
-      const { rows: existingFacture } = await client.query(
-        'SELECT numero_facture FROM factures WHERE id = $1',
-        [devis.facture_id]
-      );
-      return {
-        facture_id: devis.facture_id,
-        numero_facture: existingFacture[0]?.numero_facture || '',
-      };
-    }
-
-    const { rows: lignes } = await client.query(
-      `SELECT dl.produit_id, dl.quantite, dl.prix_unitaire, dl.total_ligne
-       FROM document_lignes dl
-       WHERE dl.document_type = 'devis' AND dl.document_id = $1
-       ORDER BY dl.id`,
-      [id]
-    );
-
-    if (lignes.length === 0) {
-      throw new Error('Le devis ne contient aucune ligne à convertir');
-    }
-    assertPositiveSalePrices(lignes);
-
-    const numeroFacture = await generateDocumentNumber('facture', client);
-
-    const { rows: factureRows } = await client.query(
-      `INSERT INTO factures (
-        numero_facture,
-        tiers_id,
-        devis_id,
-        sous_total,
-        tva,
-        total,
-        montant_paye,
-        remaining_due,
-        statut,
-        notes,
-        cree_par,
-        remise_globale,
-        remise_globale_pct
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
-      )
-      RETURNING id`,
-      [
-        numeroFacture,
-        devis.tiers_id,
-        id,
-        devis.sous_total,
-        devis.tva,
-        devis.total,
-        0,
-        devis.total,
-        'en_attente',
-        devis.notes || null,
-        userId || null,
-        devis.remise_globale || 0,
-        devis.remise_globale_pct || 0,
-      ]
-    );
-
-    const factureId = factureRows[0].id;
-
-    for (const ligne of lignes) {
-      const totalLigne = Number(ligne.total_ligne || Number(ligne.quantite) * Number(ligne.prix_unitaire));
-
-      await client.query(
-        `INSERT INTO document_lignes (
-          document_type,
-          document_id,
-          produit_id,
-          quantite,
-          prix_unitaire,
-          total_ligne,
-          parent_ligne_id
-        ) VALUES ('facture', $1, $2, $3, $4, $5, $6)`,
-        [
-          factureId,
-          ligne.produit_id,
-          ligne.quantite,
-          ligne.prix_unitaire,
-          totalLigne,
-          ligne.id,
-        ]
-      );
-    }
-
-    await client.query(
-      'UPDATE devis SET statut = $1, facture_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
-      ['converti', factureId, id]
-    );
-
-    return { facture_id: factureId, numero_facture: numeroFacture };
   }
 
   /**
@@ -831,39 +719,31 @@ export class DevisService {
       );
       assertPositiveSalePrices(conversionLines);
 
-      let factureId: number;
-      let numeroFacture: string;
+      // Chemin de conversion unique : le BL livré devient la facture (on
+      // facture ce qui a été livré), puis le devis est marqué converti.
+      const { facture_id: factureId, numero_facture: numeroFacture } =
+        await convertBlToFactureInTx(client, deliveredBLRows[0].id, userId);
 
-      await client.query('SAVEPOINT devis_convert_sp');
-      try {
-        // Use DB-native function when available and healthy.
-        const { rows } = await client.query(
-          'SELECT convert_devis_to_facture($1, $2) as facture_id',
-          [id, userId]
-        );
+      await client.query(
+        'UPDATE devis SET statut = $1, facture_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+        ['converti', factureId, id]
+      );
 
-        factureId = rows[0].facture_id;
-
-        const { rows: factureRows } = await client.query(
-          'SELECT numero_facture FROM factures WHERE id = $1',
-          [factureId]
-        );
-        numeroFacture = factureRows[0].numero_facture;
-      } catch (error: any) {
-        const isLegacyNumeroParseError =
-          error?.code === '22P02' &&
-          String(error?.message || '').includes('invalid input syntax for type integer');
-
-        if (!isLegacyNumeroParseError) {
-          throw error;
-        }
-
-        // Legacy SQL function fails on FAC-YYYY-##### patterns; fallback to safe app conversion.
-        await client.query('ROLLBACK TO SAVEPOINT devis_convert_sp');
-        const fallbackResult = await this.convertToFactureFallback(client, id, userId);
-        factureId = fallbackResult.facture_id;
-        numeroFacture = fallbackResult.numero_facture;
+      // Relevé client + allocations, comme FactureService.create et le chemin BL.
+      const { rows: factRows } = await client.query(
+        'SELECT total, notes, tiers_id FROM factures WHERE id = $1',
+        [factureId]
+      );
+      if (factRows.length === 0) {
+        throw new Error('Facture non trouvée après conversion');
       }
+      await client.query(
+        `INSERT INTO compte_client_lignes
+           (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
+         VALUES ($1, 'facture', $2, $3, $4, 0, $5, $6)`,
+        [factRows[0].tiers_id, factureId, numeroFacture, factRows[0].total, factRows[0].notes || null, userId || null]
+      );
+      await ClientAllocationService.recomputeClientAllocations(factRows[0].tiers_id, { transaction: client });
 
       await client.query('COMMIT');
 

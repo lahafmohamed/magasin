@@ -1,7 +1,7 @@
 {
-  "name": "Hitek — Gestion commerciale",
-  "short_name": "Hitek",
-  "description": "Gestion commerciale : ventes, stock, caisse et comptabilité.",
+  "name": "nolyxERP — Gestion commerciale",
+  "short_name": "nolyxERP",
+  "description": "Gestion commerciale : ventes, stock et caisse pour boutiques.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

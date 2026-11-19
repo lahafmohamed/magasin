@@ -6,6 +6,7 @@ import { calculateTotals, roundMoney } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { businessError } from '../utils/errors';
 import { formatMontantFcfa } from '../utils/money';
+import { calculateDueDate, formatDateForPg, ensureRequiredAccountsForInvoice } from '../utils/dueDate';
 import { paiementAcompteLisible } from '../utils/caisseLibelle';
 import { ClientAllocationService } from './ClientAllocationService';
 import { checkPeriodIsOpen } from './PeriodService';
@@ -88,17 +89,6 @@ export class FactureService {
     return resolveSalesLocationId(requestedLocationId ?? null, client);
   }
 
-  private async ensureRequiredAccountsForInvoice(client: any): Promise<void> {
-    await client.query(
-      `INSERT INTO plan_comptable (numero, intitule, type_compte, categorie)
-       VALUES
-        ('411', 'Clients', 'actif', 'classe4'),
-        ('701', 'Ventes de marchandises', 'produit', 'classe7'),
-        ('4457', 'TVA collectée', 'passif', 'classe4')
-       ON CONFLICT (numero) DO NOTHING`
-    );
-  }
-
   private async getPrincipalLocationId(client: any): Promise<number> {
     const { rows } = await client.query(
       'SELECT id FROM stock_locations WHERE est_principal = true AND actif = true LIMIT 1'
@@ -111,26 +101,6 @@ export class FactureService {
     return rows[0].id;
   }
 
-  private calculateDueDate(delaiPaiement?: string): Date {
-    const now = new Date();
-    const normalized = (delaiPaiement || 'immediat').toLowerCase();
-
-    const daysByTerm: Record<string, number> = {
-      immediat: 0,
-      net_30: 30,
-      net_60: 60,
-      net_90: 90,
-    };
-
-    const daysToAdd = daysByTerm[normalized] ?? 0;
-    now.setDate(now.getDate() + daysToAdd);
-
-    return now;
-  }
-
-  private formatDateForPg(date: Date): string {
-    return date.toISOString().split('T')[0];
-  }
 
   /**
    * Get paginated invoices with optional filters
@@ -458,10 +428,10 @@ export class FactureService {
       }
 
       const delaiPaiement = clientRows[0].delai_paiement || 'immediat';
-      const dateEcheance = this.formatDateForPg(this.calculateDueDate(delaiPaiement));
+      const dateEcheance = formatDateForPg(calculateDueDate(delaiPaiement));
 
       // Guard against legacy DB trigger variants that assume these accounts already exist.
-      await this.ensureRequiredAccountsForInvoice(client);
+      await ensureRequiredAccountsForInvoice(client);
 
       // Insert invoice
       let factureResult: any[] = [];
