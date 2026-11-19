@@ -57,6 +57,25 @@ export function formatPeriodePdf(debut?: string | null, fin?: string | null): st
   return '';
 }
 
+/**
+ * Mentions légales de l'en-tête des documents : uniquement les champs
+ * renseignés, joints par « · ». L'ancien en-tête imprimait
+ * « NIF : x · RCCM : - · AI : - » dès que le NIF existait — des tirets
+ * parasites sur les documents remis au client. Chaîne vide = rien à imprimer.
+ */
+export function formatMentionsLegalesPdf(
+  settings?: { nif?: string | null; rc?: string | null; ai?: string | null } | null
+): string {
+  const parts: string[] = [];
+  const nif = settings?.nif?.trim();
+  const rc = settings?.rc?.trim();
+  const ai = settings?.ai?.trim();
+  if (nif) parts.push(`NIF : ${nif}`);
+  if (rc) parts.push(`RCCM : ${rc}`);
+  if (ai) parts.push(`AI : ${ai}`);
+  return parts.join(' · ');
+}
+
 /** Mois de paie « 2026-10 » → « octobre 2026 » ; valeur illisible rendue telle quelle. */
 export function formatMoisPdf(periode: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})$/.exec(periode ?? '');
@@ -730,8 +749,9 @@ export class PDFService {
           doc.text(`Tél. : ${settings.telephone}`, 200, currentY, { align: 'right', width: 355 });
           currentY = doc.y;
         }
-        if (settings.nif) {
-          doc.fontSize(7).text(`NIF : ${settings.nif} · RCCM : ${settings.rc || '-'} · AI : ${settings.ai || '-'}`, 200, currentY, { align: 'right', width: 355 });
+        const mentions = formatMentionsLegalesPdf(settings);
+        if (mentions) {
+          doc.fontSize(7).text(mentions, 200, currentY, { align: 'right', width: 355 });
         }
         doc.y = Math.max(doc.y, 100);
       } else {
@@ -739,7 +759,8 @@ export class PDFService {
         doc.fontSize(10).font('Helvetica');
         if (settings.adresse) doc.text(settings.adresse, { align: 'center' });
         if (settings.telephone) doc.text(`Tél. : ${settings.telephone}`, { align: 'center' });
-        if (settings.nif) doc.fontSize(8).text(`NIF : ${settings.nif} · RCCM : ${settings.rc || '-'} · AI : ${settings.ai || '-'}`, { align: 'center' });
+        const mentions = formatMentionsLegalesPdf(settings);
+        if (mentions) doc.fontSize(8).text(mentions, { align: 'center' });
       }
       doc.moveDown(1);
 

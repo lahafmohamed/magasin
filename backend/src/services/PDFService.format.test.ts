@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { companyName, formatDatePdf, formatMoisPdf, formatNombrePdf, formatPeriodePdf } from './PDFService';
+import { companyName, formatDatePdf, formatMentionsLegalesPdf, formatMoisPdf, formatNombrePdf, formatPeriodePdf } from './PDFService';
 
 /**
  * CPG2-04 : les PDF imprimaient « Période : 2026-10-01 au 2026-10-31 »,
@@ -81,5 +81,29 @@ describe('companyName', () => {
     expect(companyName({ nom: '' })).toBe('');
     expect(companyName({ nom: null })).toBe('');
     expect(companyName(undefined)).toBe('');
+  });
+});
+
+/**
+ * v1 : l'en-tête imprimait « NIF : x · RCCM : - · AI : - » dès que le NIF
+ * était saisi — des tirets parasites sur les documents remis au client.
+ * Seuls les champs renseignés s'impriment.
+ */
+describe('mentions légales de l’en-tête', () => {
+  it('n’imprime que les champs renseignés', () => {
+    expect(formatMentionsLegalesPdf({ nif: '1234567 A' })).toBe('NIF : 1234567 A');
+    expect(formatMentionsLegalesPdf({ rc: 'CI-ABJ-2020-B-1234' })).toBe('RCCM : CI-ABJ-2020-B-1234');
+    expect(formatMentionsLegalesPdf({ ai: '2024-001' })).toBe('AI : 2024-001');
+  });
+
+  it('joint les mentions par « · » quand elles existent', () => {
+    expect(formatMentionsLegalesPdf({ nif: 'N1', rc: 'R1', ai: 'A1' })).toBe('NIF : N1 · RCCM : R1 · AI : A1');
+    expect(formatMentionsLegalesPdf({ nif: 'N1', ai: 'A1' })).toBe('NIF : N1 · AI : A1');
+  });
+
+  it('ne rend rien quand aucun champ n’est rempli', () => {
+    expect(formatMentionsLegalesPdf({})).toBe('');
+    expect(formatMentionsLegalesPdf({ nif: '', rc: null, ai: '   ' })).toBe('');
+    expect(formatMentionsLegalesPdf(undefined)).toBe('');
   });
 });
