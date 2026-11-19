@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Af6qdksytSHBk8jxbogkGxX531PbftGX6obqHvbWnNess7Ke0dG8pNFqxND1eTp
+\restrict 32QMuwd3Eiz42CTsrmBHOioeAIafYgnOc7eepkuRQKXhQhqtisRdK3N4pk9IcAj
 
 -- Dumped from database version 18.3
 -- Dumped by pg_dump version 18.3
@@ -52,61 +52,33 @@ CREATE TYPE public.transfer_statut_new AS ENUM (
 CREATE FUNCTION public.adjust_stock_at_location(p_produit_id integer, p_location_id integer, p_quantity integer, p_operation character varying) RETURNS void
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_current_stock INTEGER;
-
   v_new_stock INTEGER;
-
 BEGIN
-
   -- Get current stock at location
-
   SELECT COALESCE(quantite, 0) INTO v_current_stock
-
   FROM stock_par_location
-
   WHERE produit_id = p_produit_id AND location_id = p_location_id;
-
   
-
   -- Calculate new stock
-
   IF p_operation = 'add' THEN
-
     v_new_stock := v_current_stock + p_quantity;
-
   ELSIF p_operation = 'remove' THEN
-
     IF v_current_stock < p_quantity THEN
-
       RAISE EXCEPTION 'Insufficient stock at location % for product %', p_location_id, p_produit_id;
-
     END IF;
-
     v_new_stock := v_current_stock - p_quantity;
-
   ELSE
-
     RAISE EXCEPTION 'Invalid operation: %', p_operation;
-
   END IF;
-
   
-
   -- Update or insert
-
   INSERT INTO stock_par_location (produit_id, location_id, quantite)
-
   VALUES (p_produit_id, p_location_id, v_new_stock)
-
   ON CONFLICT (produit_id, location_id) 
-
   DO UPDATE SET quantite = v_new_stock;
-
 END;
-
 $$;
 
 
@@ -117,71 +89,38 @@ $$;
 CREATE FUNCTION public.assert_ecriture_period_open() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_statut TEXT;
-
   v_month  INT;
-
   v_year   INT;
-
 BEGIN
-
   -- Check the NEW period (INSERT / UPDATE target) and the OLD period
-
   -- (UPDATE source / DELETE) — a closed period blocks both moving in and
-
   -- mutating/removing an existing posting.
-
   FOR v_year, v_month IN
-
     SELECT DISTINCT EXTRACT(YEAR FROM d)::int, EXTRACT(MONTH FROM d)::int
-
     FROM (VALUES
-
       (CASE WHEN TG_OP IN ('INSERT','UPDATE') THEN NEW.date_ecriture END),
-
       (CASE WHEN TG_OP IN ('UPDATE','DELETE') THEN OLD.date_ecriture END)
-
     ) AS v(d)
-
     WHERE d IS NOT NULL
-
   LOOP
-
     SELECT statut INTO v_statut
-
     FROM periodes_comptables
-
     WHERE exercice = v_year AND periode = v_month;
 
-
-
     IF v_statut = 'fermee' THEN
-
       RAISE EXCEPTION 'Periode comptable %/% est cloturee. Aucune ecriture autorisee.',
-
         LPAD(v_month::text, 2, '0'), v_year
-
         USING ERRCODE = 'P0001';
-
     END IF;
-
   END LOOP;
 
-
-
   IF TG_OP = 'DELETE' THEN
-
     RETURN OLD;
-
   END IF;
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -192,31 +131,18 @@ $$;
 CREATE FUNCTION public.calculer_solde_client(p_tiers_id integer) RETURNS numeric
     LANGUAGE plpgsql
     AS $$
-
 DECLARE v_solde NUMERIC(15,2);
-
 BEGIN
-
   SELECT
-
     COALESCE(SUM(f.total),0)
-
     - COALESCE((SELECT SUM(p.montant) FROM paiements p JOIN factures f2 ON f2.id = p.facture_id WHERE f2.tiers_id = p_tiers_id AND f2.deleted_at IS NULL),0)
-
     - COALESCE((SELECT SUM(fa.total) FROM factures_avoir fa WHERE fa.tiers_id = p_tiers_id AND fa.statut IN ('valide','utilise') AND fa.deleted_at IS NULL),0)
-
     - COALESCE((SELECT SUM(ac.montant) FROM acomptes_clients ac WHERE ac.tiers_id = p_tiers_id AND ac.statut IN ('disponible','utilise')),0)
-
   INTO v_solde
-
   FROM factures f
-
   WHERE f.tiers_id = p_tiers_id AND f.statut != 'annulee' AND f.deleted_at IS NULL;
-
   RETURN COALESCE(v_solde, 0);
-
 END;
-
 $$;
 
 
@@ -227,57 +153,31 @@ $$;
 CREATE FUNCTION public.calculer_solde_fournisseur(p_tiers_id integer) RETURNS numeric
     LANGUAGE plpgsql
     AS $$
-
 DECLARE v_solde NUMERIC(15,2);
-
 BEGIN
-
   SELECT
-
     COALESCE(SUM(ff.total), 0)
-
     - COALESCE((
-
         SELECT SUM(pf.montant)
-
         FROM paiements_fournisseur pf
-
         JOIN factures_fournisseur ff2 ON ff2.id = pf.facture_id
-
         WHERE ff2.tiers_id = p_tiers_id
-
           AND pf.deleted_at IS NULL
-
       ), 0)
-
     - COALESCE((
-
         SELECT SUM(af.montant_restant)
-
         FROM acomptes_fournisseur af
-
         WHERE af.tiers_id = p_tiers_id
-
           AND af.statut IN ('disponible', 'partiellement_utilise')
-
           AND af.deleted_at IS NULL
-
       ), 0)
-
   INTO v_solde
-
   FROM factures_fournisseur ff
-
   WHERE ff.tiers_id = p_tiers_id
-
     AND ff.statut != 'annulee';
 
-
-
   RETURN COALESCE(v_solde, 0);
-
 END;
-
 $$;
 
 
@@ -288,453 +188,10 @@ $$;
 CREATE FUNCTION public.calculer_solde_net(p_tiers_id integer) RETURNS numeric
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
   RETURN calculer_solde_client(p_tiers_id) - calculer_solde_fournisseur(p_tiers_id);
-
 END;
-
 $$;
-
-
---
--- Name: convert_bl_to_facture(integer, integer); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.convert_bl_to_facture(p_bl_id integer, p_user_id integer) RETURNS integer
-    LANGUAGE plpgsql
-    AS $_$
-
-      DECLARE
-
-        v_bl RECORD;
-
-        v_facture_id INTEGER;
-
-        v_numero_facture VARCHAR(50);
-
-        v_next_val INTEGER;
-
-        v_ligne RECORD;
-
-      BEGIN
-
-        SELECT * INTO v_bl FROM bons_livraison WHERE id = p_bl_id;
-
-        IF NOT FOUND THEN
-
-          RAISE EXCEPTION 'Bon de livraison % not found', p_bl_id;
-
-        END IF;
-
-
-
-        IF v_bl.facture_id IS NOT NULL THEN
-
-          RETURN v_bl.facture_id;
-
-        END IF;
-
-
-
-        SELECT COALESCE(MAX(CAST(SUBSTRING(numero_facture FROM 4) AS INTEGER)), 0) + 1
-
-        INTO v_next_val
-
-        FROM factures
-
-        WHERE numero_facture ~ '^FAC-[0-9]{4}-[0-9]+$';
-
-
-
-        v_numero_facture := 'FAC-' || EXTRACT(YEAR FROM CURRENT_DATE) || '-' || LPAD(v_next_val::TEXT, 5, '0');
-
-
-
-        INSERT INTO factures (
-
-          numero_facture, tiers_id, bl_id, devis_id,
-
-          date_facture, sous_total, tva, total,
-
-          montant_paye, remaining_due, statut, notes, location_id,
-
-          delai_paiement, hors_taxe
-
-        ) VALUES (
-
-          v_numero_facture, v_bl.tiers_id, p_bl_id, v_bl.devis_id,
-
-          CURRENT_TIMESTAMP, v_bl.sous_total, v_bl.tva, v_bl.total,
-
-          0, v_bl.total, 'en_attente', v_bl.notes, v_bl.location_id,
-
-          'net_30', false
-
-        ) RETURNING id INTO v_facture_id;
-
-
-
-        FOR v_ligne IN
-
-          SELECT * FROM document_lignes
-
-          WHERE document_type = 'bl' AND document_id = p_bl_id
-
-        LOOP
-
-          INSERT INTO document_lignes (
-
-            document_type, document_id, produit_id, description,
-
-            quantite, prix_unitaire, total_ligne, parent_ligne_id
-
-          ) VALUES (
-
-            'facture', v_facture_id, v_ligne.produit_id, v_ligne.description,
-
-            v_ligne.quantite, v_ligne.prix_unitaire, v_ligne.total_ligne, v_ligne.id
-
-          );
-
-        END LOOP;
-
-
-
-        UPDATE bons_livraison SET statut = 'facture', facture_id = v_facture_id WHERE id = p_bl_id;
-
-
-
-        RETURN v_facture_id;
-
-      END;
-
-      $_$;
-
-
---
--- Name: convert_devis_to_bl(integer, integer); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.convert_devis_to_bl(p_devis_id integer, p_user_id integer) RETURNS integer
-    LANGUAGE plpgsql
-    AS $$
-
-DECLARE
-
-    v_devis RECORD;
-
-    v_bl_id INTEGER;
-
-    v_numero_bl VARCHAR(50);
-
-    v_next_val INTEGER;
-
-    v_ligne RECORD;
-
-BEGIN
-
-    SELECT * INTO v_devis FROM devis WHERE id = p_devis_id;
-
-    IF NOT FOUND THEN
-
-        RAISE EXCEPTION 'Devis % not found', p_devis_id;
-
-    END IF;
-
-
-
-    SELECT COALESCE(MAX(CAST(SUBSTRING(numero_bl FROM 4) AS INTEGER)), 0) + 1
-
-    INTO v_next_val
-
-    FROM bons_livraison WHERE numero_bl LIKE 'BL-%';
-
-
-
-    v_numero_bl := 'BL-' || LPAD(v_next_val::TEXT, 6, '0');
-
-
-
-    INSERT INTO bons_livraison (
-
-        numero_bl,
-
-        client_id,
-
-        devis_id,
-
-        date_bl,
-
-        sous_total,
-
-        tva,
-
-        total,
-
-        notes,
-
-        location_id,
-
-        cree_par
-
-    ) VALUES (
-
-        v_numero_bl,
-
-        v_devis.client_id,
-
-        p_devis_id,
-
-        CURRENT_DATE,
-
-        v_devis.sous_total,
-
-        v_devis.tva,
-
-        v_devis.total,
-
-        v_devis.notes,
-
-        v_devis.location_id,
-
-        p_user_id
-
-    ) RETURNING id INTO v_bl_id;
-
-
-
-    FOR v_ligne IN
-
-        SELECT * FROM document_lignes
-
-        WHERE document_type = 'devis' AND document_id = p_devis_id
-
-    LOOP
-
-        INSERT INTO document_lignes (
-
-            document_type,
-
-            document_id,
-
-            produit_id,
-
-            description,
-
-            quantite,
-
-            quantite_livree,
-
-            prix_unitaire,
-
-            total_ligne,
-
-            parent_ligne_id
-
-        ) VALUES (
-
-            'bl',
-
-            v_bl_id,
-
-            v_ligne.produit_id,
-
-            v_ligne.description,
-
-            v_ligne.quantite,
-
-            v_ligne.quantite,
-
-            v_ligne.prix_unitaire,
-
-            v_ligne.total_ligne,
-
-            v_ligne.id
-
-        );
-
-    END LOOP;
-
-
-
-    UPDATE devis SET statut = 'accepte' WHERE id = p_devis_id;
-
-
-
-    RETURN v_bl_id;
-
-END;
-
-$$;
-
-
---
--- Name: convert_devis_to_facture(integer, integer); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.convert_devis_to_facture(p_devis_id integer, p_user_id integer) RETURNS integer
-    LANGUAGE plpgsql
-    AS $_$
-
-DECLARE
-
-    v_devis RECORD;
-
-    v_facture_id INTEGER;
-
-    v_numero_facture VARCHAR(50);
-
-    v_next_val INTEGER;
-
-    v_ligne RECORD;
-
-BEGIN
-
-    SELECT * INTO v_devis FROM devis WHERE id = p_devis_id;
-
-    IF NOT FOUND THEN
-
-        RAISE EXCEPTION 'Devis % not found', p_devis_id;
-
-    END IF;
-
-
-
-    IF v_devis.facture_id IS NOT NULL THEN
-
-        RETURN v_devis.facture_id;
-
-    END IF;
-
-
-
-    SELECT COALESCE(MAX(CAST(SUBSTRING(numero_facture FROM 4) AS INTEGER)), 0) + 1
-
-    INTO v_next_val
-
-    FROM factures
-
-    WHERE numero_facture ~ '^FAC-[0-9]{4}-[0-9]+$';
-
-
-
-    v_numero_facture := 'FAC-' || EXTRACT(YEAR FROM CURRENT_DATE) || '-' || LPAD(v_next_val::TEXT, 5, '0');
-
-
-
-    INSERT INTO factures (
-
-        numero_facture,
-
-        client_id,
-
-        devis_id,
-
-        date_facture,
-
-        sous_total,
-
-        tva,
-
-        total,
-
-        notes,
-
-        location_id,
-
-        delai_paiement,
-
-        hors_taxe
-
-    ) VALUES (
-
-        v_numero_facture,
-
-        v_devis.client_id,
-
-        p_devis_id,
-
-        CURRENT_TIMESTAMP,
-
-        v_devis.sous_total,
-
-        v_devis.tva,
-
-        v_devis.total,
-
-        v_devis.notes,
-
-        v_devis.location_id,
-
-        'net_30',
-
-        false
-
-    ) RETURNING id INTO v_facture_id;
-
-
-
-    FOR v_ligne IN
-
-        SELECT * FROM document_lignes
-
-        WHERE document_type = 'devis' AND document_id = p_devis_id
-
-    LOOP
-
-        INSERT INTO document_lignes (
-
-            document_type,
-
-            document_id,
-
-            produit_id,
-
-            description,
-
-            quantite,
-
-            prix_unitaire,
-
-            total_ligne,
-
-            parent_ligne_id
-
-        ) VALUES (
-
-            'facture',
-
-            v_facture_id,
-
-            v_ligne.produit_id,
-
-            v_ligne.description,
-
-            v_ligne.quantite,
-
-            v_ligne.prix_unitaire,
-
-            v_ligne.total_ligne,
-
-            v_ligne.id
-
-        );
-
-    END LOOP;
-
-
-
-    UPDATE devis SET statut = 'converti', facture_id = v_facture_id WHERE id = p_devis_id;
-
-
-
-    RETURN v_facture_id;
-
-END;
-
-$_$;
 
 
 --
@@ -744,9 +201,7 @@ $_$;
 CREATE FUNCTION public.create_avoir_from_retour(p_retour_id integer, p_user_id integer) RETURNS integer
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_retour      RECORD;
   v_avoir_id    INTEGER;
   v_numero      VARCHAR(50);
@@ -756,10 +211,8 @@ DECLARE
   v_facture_id  INTEGER;
   v_location_id INTEGER;
 BEGIN
-
   SELECT * INTO v_retour FROM retours WHERE id = p_retour_id FOR UPDATE;
   IF NOT FOUND THEN
-
     RAISE EXCEPTION 'Retour introuvable.' USING ERRCODE = 'HK404';
   END IF;
 
@@ -779,8 +232,6 @@ BEGIN
       USING ERRCODE = 'HK409';
   END IF;
 
-
-
   SELECT COALESCE(SUM(total_ligne), 0), COUNT(DISTINCT facture_id), MIN(facture_id)
     INTO v_total, v_nb_factures, v_facture_id
     FROM retour_lignes
@@ -791,8 +242,6 @@ BEGIN
       USING ERRCODE = 'HK422';
   END IF;
 
-
-
   -- Facture d'origine : seulement quand le retour n'en concerne qu'une.
   IF v_nb_factures <> 1 THEN
     v_facture_id := NULL;
@@ -800,32 +249,24 @@ BEGIN
     SELECT location_id INTO v_location_id FROM factures WHERE id = v_facture_id;
   END IF;
 
-
   -- Même séquence et même format que NumberingService ('avoir').
   v_numero := 'AVOIR-' || EXTRACT(YEAR FROM CURRENT_DATE)::int || '-'
               || LPAD(nextval('avoir_seq')::text, 5, '0');
 
-
   INSERT INTO factures_avoir (
-
     numero_avoir, tiers_id, facture_origine_id, retour_id, date_avoir,
     sous_total, tva, total, total_ht, total_ttc,
     statut, avoir_type, notes, location_id, cree_par
   ) VALUES (
-
     v_numero, v_retour.tiers_id, v_facture_id, p_retour_id, CURRENT_DATE,
     v_total, 0, v_total, v_total, v_total,          -- pas de TVA (027)
     'valide', 'retour', 'Avoir du retour ' || v_retour.numero_retour, v_location_id, p_user_id
   ) RETURNING id INTO v_avoir_id;
 
-
-
   INSERT INTO document_lignes (document_type, document_id, produit_id, description, quantite, prix_unitaire, total_ligne)
   SELECT 'avoir', v_avoir_id, rl.produit_id, p.nom, rl.quantite, rl.prix_unitaire, rl.total_ligne
     FROM retour_lignes rl
-
     LEFT JOIN produits p ON p.id = rl.produit_id
-
    WHERE rl.retour_id = p_retour_id
    ORDER BY rl.id;
 
@@ -837,11 +278,8 @@ BEGIN
     0, v_total, 'Avoir ' || v_numero || ' du retour ' || v_retour.numero_retour, p_user_id
   );
 
-
   RETURN v_avoir_id;
-
 END;
-
 $$;
 
 
@@ -852,51 +290,28 @@ $$;
 CREATE FUNCTION public.create_ecritures_facture_client() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
       DECLARE
-
         compte_vente_id INTEGER;
-
         compte_tva_id INTEGER;
-
         compte_client_id INTEGER;
-
       BEGIN
-
         compte_vente_id := ensure_plan_compte('701', 'Ventes de marchandises', 'produit', 'classe7');
-
         compte_tva_id := ensure_plan_compte('4457', 'TVA collectee', 'passif', 'classe4');
-
         compte_client_id := ensure_plan_compte('411', 'Clients', 'actif', 'classe4');
 
-
-
         INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-
         VALUES (NEW.numero_facture, NEW.date_facture, 'VENTES', NEW.id, 'facture', 1, compte_client_id, NEW.total, 0, 'Vente client - ' || NEW.numero_facture);
 
-
-
         INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-
         VALUES (NEW.numero_facture, NEW.date_facture, 'VENTES', NEW.id, 'facture', 2, compte_vente_id, 0, NEW.sous_total, 'Chiffre d''affaires - ' || NEW.numero_facture);
 
-
-
         IF NEW.tva > 0 THEN
-
           INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-
           VALUES (NEW.numero_facture, NEW.date_facture, 'VENTES', NEW.id, 'facture', 3, compte_tva_id, 0, NEW.tva, 'TVA collectee - ' || NEW.numero_facture);
-
         END IF;
 
-
-
         RETURN NEW;
-
       END;
-
       $$;
 
 
@@ -907,51 +322,28 @@ CREATE FUNCTION public.create_ecritures_facture_client() RETURNS trigger
 CREATE FUNCTION public.create_ecritures_facture_fournisseur() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
       DECLARE
-
         compte_achat_id INTEGER;
-
         compte_tva_id INTEGER;
-
         compte_fournisseur_id INTEGER;
-
       BEGIN
-
         compte_achat_id := ensure_plan_compte('601', 'Achats de marchandises', 'charge', 'classe6');
-
         compte_tva_id := ensure_plan_compte('4456', 'TVA déductible', 'actif', 'classe4');
-
         compte_fournisseur_id := ensure_plan_compte('401', 'Fournisseurs', 'passif', 'classe4');
 
-
-
         INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-
         VALUES (NEW.numero_facture_interne, NEW.date_facture, 'ACHATS', NEW.id, 'facture_fournisseur', 1, compte_achat_id, NEW.sous_total, 0, 'Achat marchandises - ' || NEW.numero_facture_fournisseur);
 
-
-
         IF NEW.tva > 0 THEN
-
           INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-
           VALUES (NEW.numero_facture_interne, NEW.date_facture, 'ACHATS', NEW.id, 'facture_fournisseur', 2, compte_tva_id, NEW.tva, 0, 'TVA deductible - ' || NEW.numero_facture_fournisseur);
-
         END IF;
 
-
-
         INSERT INTO ecritures_comptables (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero, compte_id, debit, credit, libelle)
-
         VALUES (NEW.numero_facture_interne, NEW.date_facture, 'ACHATS', NEW.id, 'facture_fournisseur', 3, compte_fournisseur_id, 0, NEW.total, 'Dette fournisseur - ' || NEW.numero_facture_fournisseur);
 
-
-
         RETURN NEW;
-
       END;
-
       $$;
 
 
@@ -962,37 +354,21 @@ CREATE FUNCTION public.create_ecritures_facture_fournisseur() RETURNS trigger
 CREATE FUNCTION public.enforce_acompte_application_cap() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_total_applied NUMERIC(15,2);
-
   v_montant_acompte NUMERIC(15,2);
-
   v_rembourse NUMERIC(15,2);
-
 BEGIN
-
   SELECT COALESCE(SUM(montant),0) INTO v_total_applied
-
     FROM acompte_applications WHERE acompte_id = NEW.acompte_id;
-
   SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant_acompte, v_rembourse
-
     FROM acomptes_clients WHERE id = NEW.acompte_id;
-
   IF v_total_applied > v_montant_acompte - v_rembourse THEN
-
     RAISE EXCEPTION 'Application dépasse le montant disponible de l''acompte (%/% dont % remboursé)',
-
       v_total_applied, v_montant_acompte, v_rembourse;
-
   END IF;
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -1003,41 +379,23 @@ $$;
 CREATE FUNCTION public.enforce_acompte_fournisseur_application_cap() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_total_applied   NUMERIC(15,2);
-
   v_montant_acompte NUMERIC(15,2);
-
   v_rembourse       NUMERIC(15,2);
-
 BEGIN
-
   SELECT COALESCE(SUM(montant),0) INTO v_total_applied
-
     FROM acompte_applications_fournisseur WHERE acompte_id = NEW.acompte_id;
-
   SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant_acompte, v_rembourse
-
     FROM acomptes_fournisseur WHERE id = NEW.acompte_id;
 
-
-
   IF v_total_applied > v_montant_acompte - v_rembourse + 0.005 THEN
-
     RAISE EXCEPTION
-
       'Σ(applications)=%, dépasse le disponible de l''acompte_fournisseur #% (montant=%, remboursé=%)',
-
       v_total_applied, NEW.acompte_id, v_montant_acompte, v_rembourse;
-
   END IF;
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -1048,69 +406,40 @@ $$;
 CREATE FUNCTION public.enforce_mouvement_append_only() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_statut VARCHAR(20);
-
 BEGIN
-
   IF TG_OP = 'DELETE' THEN
-
     RAISE EXCEPTION 'Un mouvement de caisse ne se supprime pas (mouvement n° %) : enregistrez un mouvement inverse.', OLD.id;
   END IF;
 
-
-
   IF TG_OP = 'UPDATE' THEN
-
     -- Seuls le lien d'annulation (reversed_by_mouvement_id) et les dates de
     -- mise à jour peuvent changer ; jamais le montant ni l'origine.
     IF NEW.montant IS DISTINCT FROM OLD.montant
-
       OR NEW.type IS DISTINCT FROM OLD.type
-
       OR NEW.categorie IS DISTINCT FROM OLD.categorie
-
       OR NEW.reference_type IS DISTINCT FROM OLD.reference_type
-
       OR NEW.reference_id IS DISTINCT FROM OLD.reference_id
-
       OR NEW.methode_paiement IS DISTINCT FROM OLD.methode_paiement
-
       OR NEW.session_caisse_id IS DISTINCT FROM OLD.session_caisse_id
-
     THEN
-
       RAISE EXCEPTION 'Le mouvement de caisse n° % ne peut plus être modifié : enregistrez un mouvement inverse.', OLD.id;
     END IF;
-
   END IF;
-
-
 
   IF TG_OP = 'INSERT' THEN
-
     SELECT statut INTO v_statut FROM sessions_caisse WHERE id = NEW.session_caisse_id;
-
     IF v_statut IS NULL THEN
-
       RAISE EXCEPTION 'Session de caisse n° % introuvable.', NEW.session_caisse_id;
     END IF;
-
     IF v_statut <> 'ouverte' THEN
-
       RAISE EXCEPTION 'La session de caisse n° % est clôturée : impossible d’ajouter un mouvement.', NEW.session_caisse_id;
     END IF;
-
   END IF;
 
-
-
   RETURN COALESCE(NEW, OLD);
-
 END;
-
 $$;
 
 
@@ -1121,49 +450,27 @@ $$;
 CREATE FUNCTION public.enforce_mouvement_magasin_coherence() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_session_magasin INTEGER;
-
 BEGIN
-
   IF NEW.magasin_id IS NULL THEN
-
     -- Auto-fill from session
-
     SELECT magasin_id INTO NEW.magasin_id
-
       FROM sessions_caisse WHERE id = NEW.session_caisse_id;
-
     RETURN NEW;
-
   END IF;
-
-
 
   SELECT magasin_id INTO v_session_magasin
-
     FROM sessions_caisse WHERE id = NEW.session_caisse_id;
 
-
-
   IF v_session_magasin IS NOT NULL AND v_session_magasin <> NEW.magasin_id THEN
-
     RAISE EXCEPTION
-
       'mouvements_caisse.magasin_id (%) ne correspond pas à sessions_caisse.magasin_id (%) pour session %',
-
       NEW.magasin_id, v_session_magasin, NEW.session_caisse_id;
-
   END IF;
 
-
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -1174,61 +481,33 @@ $$;
 CREATE FUNCTION public.enforce_paiement_espece_mouvement() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_methode TEXT;
-
   v_source  TEXT;
-
   v_mvt     INTEGER;
-
   v_deleted TIMESTAMP;
-
 BEGIN
-
   -- Re-fetch current row state at commit time (deferred trigger captures
-
   -- NEW from the queueing event; need fresh state to see later UPDATEs).
-
   SELECT methode_paiement, source, mouvement_caisse_id, deleted_at
-
     INTO v_methode, v_source, v_mvt, v_deleted
-
   FROM paiements WHERE id = NEW.id;
 
-
-
   -- Row deleted within tx? skip.
-
   IF NOT FOUND OR v_deleted IS NOT NULL THEN
-
     RETURN NEW;
-
   END IF;
-
-
 
   IF v_methode = 'espece'
-
      AND v_source = 'direct'
-
      AND v_mvt IS NULL
-
   THEN
-
     RAISE EXCEPTION
-
       'paiement % (espece/direct) sans mouvement_caisse_id à la fin de la transaction',
-
       NEW.id;
-
   END IF;
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -1246,15 +525,10 @@ COMMENT ON FUNCTION public.enforce_paiement_espece_mouvement() IS 'Deferred chec
 CREATE FUNCTION public.enforce_stock_valeur_invariant() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
   NEW.valeur_stock := ROUND(COALESCE(NEW.quantite, 0) * COALESCE(NEW.cmp, 0), 2);
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -1326,45 +600,25 @@ COMMENT ON FUNCTION public.enregistrer_commission_vente() IS 'Enregistre la comm
 CREATE FUNCTION public.ensure_plan_compte(p_numero character varying, p_intitule character varying, p_type_compte character varying, p_categorie character varying) RETURNS integer
     LANGUAGE plpgsql
     AS $$
-
       DECLARE
-
         v_compte_id INTEGER;
-
       BEGIN
-
         SELECT id INTO v_compte_id
-
         FROM plan_comptable
-
         WHERE numero = p_numero;
 
-
-
         IF v_compte_id IS NULL THEN
-
           INSERT INTO plan_comptable (numero, intitule, type_compte, categorie)
-
           VALUES (p_numero, p_intitule, p_type_compte, p_categorie)
-
           ON CONFLICT (numero) DO UPDATE
-
             SET intitule = EXCLUDED.intitule,
-
                 type_compte = EXCLUDED.type_compte,
-
                 categorie = EXCLUDED.categorie
-
           RETURNING id INTO v_compte_id;
-
         END IF;
 
-
-
         RETURN v_compte_id;
-
       END;
-
       $$;
 
 
@@ -1375,27 +629,16 @@ CREATE FUNCTION public.ensure_plan_compte(p_numero character varying, p_intitule
 CREATE FUNCTION public.generate_demande_numero() RETURNS character varying
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
     v_year INTEGER;
-
     v_seq INTEGER;
-
     v_numero VARCHAR(50);
-
 BEGIN
-
     v_year := EXTRACT(YEAR FROM CURRENT_DATE);
-
     SELECT nextval('demande_reappro_numero_seq') INTO v_seq;
-
     v_numero := 'DEM-' || v_year || '-' || LPAD(v_seq::TEXT, 5, '0');
-
     RETURN v_numero;
-
 END;
-
 $$;
 
 
@@ -1413,19 +656,12 @@ COMMENT ON FUNCTION public.generate_demande_numero() IS 'Generates atomic demand
 CREATE FUNCTION public.generate_tiers_code() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
   IF NEW.code IS NULL OR NEW.code = '' THEN
-
     NEW.code := 'TI-' || LPAD(NEW.id::text, 5, '0');
-
   END IF;
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -1436,43 +672,24 @@ $$;
 CREATE FUNCTION public.get_stock_at_location(p_produit_id integer, p_location_id integer DEFAULT NULL::integer) RETURNS integer
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_stock INTEGER;
-
 BEGIN
-
   IF p_location_id IS NULL THEN
-
     -- Get total across all active locations
-
     SELECT COALESCE(SUM(spl.quantite), 0) INTO v_stock
-
     FROM stock_par_location spl
-
     JOIN stock_locations sl ON spl.location_id = sl.id
-
     WHERE spl.produit_id = p_produit_id AND sl.actif = true;
-
   ELSE
-
     -- Get stock at specific location
-
     SELECT COALESCE(quantite, 0) INTO v_stock
-
     FROM stock_par_location
-
     WHERE produit_id = p_produit_id AND location_id = p_location_id;
-
   END IF;
-
   
-
   RETURN v_stock;
-
 END;
-
 $$;
 
 
@@ -1483,29 +700,17 @@ $$;
 CREATE FUNCTION public.get_user_default_location_id(p_user_id integer) RETURNS integer
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
     v_location_id INTEGER;
-
 BEGIN
-
     SELECT location_id INTO v_location_id FROM user_location_roles
-
     WHERE utilisateur_id = p_user_id AND est_defaut = true LIMIT 1;
-
     IF v_location_id IS NULL THEN
-
         SELECT location_id INTO v_location_id FROM user_location_roles
-
         WHERE utilisateur_id = p_user_id LIMIT 1;
-
     END IF;
-
     RETURN v_location_id;
-
 END;
-
 $$;
 
 
@@ -1516,45 +721,25 @@ $$;
 CREATE FUNCTION public.get_user_location_role(p_user_id integer, p_location_id integer) RETURNS character varying
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
     v_role VARCHAR(20);
-
     v_global_role VARCHAR(20);
-
 BEGIN
-
     SELECT role::text INTO v_global_role FROM utilisateurs WHERE id = p_user_id;
-
     IF v_global_role = 'admin' THEN RETURN 'admin'; END IF;
-
     SELECT role_at_location INTO v_role FROM user_location_roles
-
     WHERE utilisateur_id = p_user_id AND location_id = p_location_id;
-
     IF v_role IS NULL THEN
-
         IF v_global_role = 'depot_staff' THEN
-
             SELECT CASE WHEN location_type = 'depot' THEN 'depot_staff' ELSE NULL END INTO v_role
-
             FROM stock_locations WHERE id = p_location_id;
-
         ELSIF v_global_role = 'magasin_staff' THEN
-
             SELECT CASE WHEN location_type = 'magasin' THEN 'magasin_staff' ELSE NULL END INTO v_role
-
             FROM stock_locations WHERE id = p_location_id;
-
         END IF;
-
     END IF;
-
     RETURN COALESCE(v_role, 'none');
-
 END;
-
 $$;
 
 
@@ -1565,11 +750,9 @@ $$;
 CREATE FUNCTION public.log_demande_state_change() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
   v_acteur INTEGER;
 BEGIN
-
   -- Only log if status actually changed
   IF OLD.statut IS DISTINCT FROM NEW.statut THEN
     BEGIN
@@ -1590,7 +773,6 @@ BEGIN
         ELSE NULL
       END;
     END IF;
-
 
     INSERT INTO demandes_reapprovisionnement_history (
       demande_id,
@@ -1615,7 +797,6 @@ BEGIN
 
   RETURN NEW;
 END;
-
 $$;
 
 
@@ -1626,71 +807,38 @@ $$;
 CREATE FUNCTION public.sync_acompte_after_application() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_acompte_id INTEGER;
-
   v_total_applied NUMERIC(15,2);
-
   v_montant NUMERIC(15,2);
-
   v_rembourse NUMERIC(15,2);
-
   v_new_restant NUMERIC(15,2);
-
   v_new_statut VARCHAR(30);
-
 BEGIN
-
   v_acompte_id := COALESCE(NEW.acompte_id, OLD.acompte_id);
-
   SELECT COALESCE(SUM(montant),0) INTO v_total_applied
-
     FROM acompte_applications WHERE acompte_id = v_acompte_id;
-
   SELECT montant, COALESCE(montant_rembourse, 0) INTO v_montant, v_rembourse
-
     FROM acomptes_clients WHERE id = v_acompte_id;
 
-
-
   v_new_restant := GREATEST(v_montant - v_total_applied - v_rembourse, 0);
-
   IF v_new_restant <= 0.005 THEN
-
     v_new_statut := 'utilise';
-
     v_new_restant := 0;
-
   ELSIF v_total_applied <= 0.005 THEN
-
     v_new_statut := 'disponible';
-
   ELSE
-
     v_new_statut := 'partiellement_utilise';
-
   END IF;
 
-
-
   UPDATE acomptes_clients
-
     SET montant_restant = v_new_restant,
-
         statut = CASE WHEN statut = 'rembourse' THEN 'rembourse' ELSE v_new_statut END,
-
         updated_at = CURRENT_TIMESTAMP
-
     WHERE id = v_acompte_id;
 
-
-
   RETURN COALESCE(NEW, OLD);
-
 END;
-
 $$;
 
 
@@ -1701,83 +849,44 @@ $$;
 CREATE FUNCTION public.sync_acompte_fournisseur_state() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_acompte_id      INTEGER;
-
   v_total_applied   NUMERIC(15,2);
-
   v_montant_total   NUMERIC(15,2);
-
   v_rembourse       NUMERIC(15,2);
-
   v_montant_restant NUMERIC(15,2);
-
   v_statut          VARCHAR(30);
-
   v_deja_rembourse  BOOLEAN;
-
 BEGIN
-
   v_acompte_id := COALESCE(NEW.acompte_id, OLD.acompte_id);
 
-
-
   SELECT COALESCE(SUM(montant),0) INTO v_total_applied
-
     FROM acompte_applications_fournisseur WHERE acompte_id = v_acompte_id;
 
-
-
   SELECT montant, COALESCE(montant_rembourse, 0), statut = 'rembourse'
-
     INTO v_montant_total, v_rembourse, v_deja_rembourse
-
     FROM acomptes_fournisseur WHERE id = v_acompte_id;
-
-
 
   v_montant_restant := GREATEST(v_montant_total - v_total_applied - v_rembourse, 0);
 
-
-
   IF v_deja_rembourse THEN
-
     v_statut := 'rembourse';
-
   ELSIF v_montant_restant <= 0.005 THEN
-
     v_statut := 'utilise';
-
   ELSIF v_total_applied <= 0.005 THEN
-
     v_statut := 'disponible';
-
   ELSE
-
     v_statut := 'partiellement_utilise';
-
   END IF;
 
-
-
   UPDATE acomptes_fournisseur
-
   SET montant_restant = v_montant_restant,
-
       statut = v_statut,
-
       updated_at = CURRENT_TIMESTAMP
-
   WHERE id = v_acompte_id;
 
-
-
   RETURN COALESCE(NEW, OLD);
-
 END;
-
 $$;
 
 
@@ -1788,21 +897,13 @@ $$;
 CREATE FUNCTION public.sync_cmp_to_produit() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
   UPDATE produits
-
   SET prix_achat = NEW.cmp
-
   WHERE id = NEW.produit_id
-
     AND (prix_achat IS NULL OR prix_achat = 0 OR prix_achat != NEW.cmp);
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -1813,33 +914,19 @@ $$;
 CREATE FUNCTION public.sync_demande_on_transfer_change() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
     IF NEW.statut::text = 'livre' AND OLD.statut::text != 'livre' AND NEW.demande_id IS NOT NULL THEN
-
         UPDATE demandes_reapprovisionnement
-
         SET statut = 'livree', date_livraison = CURRENT_TIMESTAMP
-
         WHERE id = NEW.demande_id AND statut = 'en_cours';
-
     END IF;
-
     IF NEW.demande_id IS NOT NULL AND TG_OP = 'INSERT' THEN
-
         UPDATE demandes_reapprovisionnement
-
         SET statut = 'en_cours', transfert_id = NEW.id, date_execution = CURRENT_TIMESTAMP
-
         WHERE id = NEW.demande_id AND statut IN ('approuvee', 'partiellement_approuvee');
-
     END IF;
-
     RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -1850,15 +937,10 @@ $$;
 CREATE FUNCTION public.update_crm_timestamp() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
   NEW.updated_at = NOW();
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -1869,51 +951,28 @@ $$;
 CREATE FUNCTION public.update_facture_fournisseur_payment_status() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_facture_id INTEGER;
-
   total_due    NUMERIC(15,2);
-
   total_paid   NUMERIC(15,2);
-
 BEGIN
-
   v_facture_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.facture_id ELSE NEW.facture_id END;
-
   SELECT total INTO total_due FROM factures_fournisseur WHERE id = v_facture_id;
-
   SELECT COALESCE(SUM(montant), 0) INTO total_paid
-
   FROM paiements_fournisseur
-
   WHERE facture_id = v_facture_id
-
     AND deleted_at IS NULL;
-
   UPDATE factures_fournisseur SET
-
     montant_paye = total_paid,
-
     reste_due    = total_due - total_paid,
-
     statut = CASE
-
       WHEN total_paid = 0         THEN 'en_attente'
-
       WHEN total_paid < total_due THEN 'partiellement_payee'
-
       ELSE 'payee'
-
     END
-
   WHERE id = v_facture_id;
-
   RETURN COALESCE(NEW, OLD);
-
 END;
-
 $$;
 
 
@@ -1924,17 +983,11 @@ $$;
 CREATE FUNCTION public.update_facture_ht_ttc() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
   NEW.total_ht  := NEW.sous_total;
-
   NEW.total_ttc := NEW.total;
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -1945,59 +998,32 @@ $$;
 CREATE FUNCTION public.update_facture_on_payment_delete() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
       DECLARE
-
         total_due NUMERIC(10, 2);
-
         total_paid NUMERIC(10, 2);
-
       BEGIN
-
         -- Get invoice total
-
         SELECT total INTO total_due FROM factures WHERE id = OLD.facture_id;
-
         
-
         -- Calculate total payments (excluding deleted one)
-
         SELECT COALESCE(SUM(montant), 0) INTO total_paid 
-
         FROM paiements 
-
         WHERE facture_id = OLD.facture_id;
-
         
-
         -- Update invoice status, montant_paye and remaining_due
-
         UPDATE factures 
-
         SET 
-
           montant_paye = total_paid,
-
           remaining_due = total_due - total_paid,
-
           statut = CASE
-
             WHEN total_paid = 0 THEN 'en_attente'
-
             WHEN total_paid < total_due THEN 'partielle'
-
             WHEN total_paid >= total_due THEN 'payee'
-
           END
-
         WHERE id = OLD.facture_id;
-
         
-
         RETURN OLD;
-
       END;
-
       $$;
 
 
@@ -2008,47 +1034,26 @@ CREATE FUNCTION public.update_facture_on_payment_delete() RETURNS trigger
 CREATE FUNCTION public.update_facture_payment_status() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   v_facture_id  INTEGER;
-
   total_due     NUMERIC(15,2);
-
   total_paid    NUMERIC(15,2);
-
 BEGIN
-
   v_facture_id := COALESCE(NEW.facture_id, OLD.facture_id);
-
   SELECT total INTO total_due FROM factures WHERE id = v_facture_id;
-
   SELECT COALESCE(SUM(montant), 0) INTO total_paid
-
   FROM paiements WHERE facture_id = v_facture_id;
-
   UPDATE factures SET
-
     montant_paye = total_paid,
-
     remaining_due = total_due - total_paid,
-
     statut = CASE
-
       WHEN total_paid = 0          THEN 'en_attente'
-
       WHEN total_paid < total_due  THEN 'partielle'
-
       ELSE 'payee'
-
     END
-
   WHERE id = v_facture_id;
-
   RETURN COALESCE(NEW, OLD);
-
 END;
-
 $$;
 
 
@@ -2059,41 +1064,23 @@ $$;
 CREATE FUNCTION public.update_produits_stock_from_locations() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 DECLARE
-
   total_stock INTEGER;
-
 BEGIN
-
   -- Calculate total stock across all active locations
-
   SELECT COALESCE(SUM(quantite), 0) INTO total_stock
-
   FROM stock_par_location spl
-
   JOIN stock_locations sl ON spl.location_id = sl.id
-
   WHERE spl.produit_id = COALESCE(NEW.produit_id, OLD.produit_id)
-
     AND sl.actif = true;
-
   
-
   -- Update the cache column
-
   UPDATE produits 
-
   SET stock = total_stock
-
   WHERE id = COALESCE(NEW.produit_id, OLD.produit_id);
-
   
-
   RETURN COALESCE(NEW, OLD);
-
 END;
-
 $$;
 
 
@@ -2104,15 +1091,10 @@ $$;
 CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-
 BEGIN
-
   NEW.updated_at = CURRENT_TIMESTAMP;
-
   RETURN NEW;
-
 END;
-
 $$;
 
 
@@ -2579,6 +1561,25 @@ ALTER SEQUENCE public.categories_depenses_id_seq OWNED BY public.categories_depe
 
 
 --
+-- Name: code_barre_interne_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.code_barre_interne_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: SEQUENCE code_barre_interne_seq; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON SEQUENCE public.code_barre_interne_seq IS 'Numéros des EAN-13 internes (préfixe 20) attribués aux produits sans code-barres.';
+
+
+--
 -- Name: commande_lignes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2679,7 +1680,7 @@ CREATE TABLE public.commissions_ventes (
     date_vente date NOT NULL,
     statut character varying(20) DEFAULT 'en_attente'::character varying,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT commissions_ventes_statut_check CHECK (((statut)::text = ANY (ARRAY[('en_attente'::character varying)::text, ('validee'::character varying)::text, ('payee'::character varying)::text])))
+    CONSTRAINT commissions_ventes_statut_check CHECK (((statut)::text = ANY ((ARRAY['en_attente'::character varying, 'validee'::character varying, 'payee'::character varying])::text[])))
 );
 
 
@@ -2709,11 +1710,11 @@ ALTER SEQUENCE public.commissions_ventes_id_seq OWNED BY public.commissions_vent
 
 CREATE TABLE public.company_settings (
     id integer DEFAULT 1 NOT NULL,
-    nom character varying(100) DEFAULT 'Hitek-CI'::character varying NOT NULL,
-    adresse text DEFAULT 'Abidjan, Côte d''Ivoire'::text,
-    telephone character varying(50) DEFAULT '+225 07 00 00 00'::character varying,
-    email character varying(100) DEFAULT 'contact@hitek-ci.com'::character varying,
-    site_web character varying(100) DEFAULT 'www.hitek-ci.com'::character varying,
+    nom character varying(100) DEFAULT 'Mon entreprise'::character varying NOT NULL,
+    adresse text DEFAULT ''::text,
+    telephone character varying(50) DEFAULT ''::character varying,
+    email character varying(100) DEFAULT ''::character varying,
+    site_web character varying(100) DEFAULT ''::character varying,
     nif character varying(50) DEFAULT ''::character varying,
     rc character varying(50) DEFAULT ''::character varying,
     ai character varying(50) DEFAULT ''::character varying,
@@ -2736,6 +1737,20 @@ CREATE TABLE public.company_settings (
 --
 
 COMMENT ON COLUMN public.company_settings.modules_desactives IS 'Clés des modules masqués dans l''interface (liste d''exclusion). [] = tout actif.';
+
+
+--
+-- Name: COLUMN company_settings.type_activite; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.company_settings.type_activite IS 'Métier du client : general, informatique, habillement, libre_service. Préréglage des modules et écran de vente.';
+
+
+--
+-- Name: COLUMN company_settings.ticket_message; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.company_settings.ticket_message IS 'Message imprimé en bas du ticket de caisse 80 mm. NULL = aucun.';
 
 
 --
@@ -3160,7 +2175,7 @@ CREATE TABLE public.depenses (
     mouvement_caisse_id integer,
     beneficiaire_libre character varying(255),
     deleted_at timestamp without time zone,
-    CONSTRAINT depenses_methode_paiement_check CHECK (((methode_paiement)::text = ANY (ARRAY[('espece'::character varying)::text, ('carte'::character varying)::text, ('cheque'::character varying)::text, ('virement'::character varying)::text, ('mobile_money'::character varying)::text, ('orange_money'::character varying)::text, ('mtn_money'::character varying)::text, ('wave'::character varying)::text]))),
+    CONSTRAINT depenses_methode_paiement_check CHECK (((methode_paiement)::text = ANY ((ARRAY['espece'::character varying, 'carte'::character varying, 'cheque'::character varying, 'virement'::character varying, 'mobile_money'::character varying, 'orange_money'::character varying, 'mtn_money'::character varying, 'wave'::character varying])::text[]))),
     CONSTRAINT depenses_montant_check CHECK ((montant > (0)::numeric))
 );
 
@@ -3403,6 +2418,8 @@ CREATE TABLE public.ecritures_comptables (
     reference_id integer,
     cree_par integer,
     date_saisie timestamp with time zone DEFAULT now(),
+    a_lettrer boolean DEFAULT false,
+    lettrage character varying(50),
     CONSTRAINT chk_ecritures_single_side CHECK ((NOT ((debit > (0)::numeric) AND (credit > (0)::numeric)))),
     CONSTRAINT ecritures_comptables_credit_check CHECK ((credit >= (0)::numeric)),
     CONSTRAINT ecritures_comptables_debit_check CHECK ((debit >= (0)::numeric)),
@@ -3552,18 +2569,6 @@ ALTER SEQUENCE public.facture_fournisseur_lignes_id_seq OWNED BY public.facture_
 --
 
 CREATE SEQUENCE public.facture_fournisseur_numero_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: code_barre_interne_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.code_barre_interne_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -3751,6 +2756,119 @@ CREATE SEQUENCE public.internal_request_numero_seq
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
+
+
+--
+-- Name: inventaire_lignes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.inventaire_lignes (
+    id integer NOT NULL,
+    inventaire_id integer NOT NULL,
+    produit_id integer NOT NULL,
+    quantite_theorique integer DEFAULT 0 NOT NULL,
+    quantite_comptee integer,
+    cmp numeric(15,2) DEFAULT 0 NOT NULL,
+    compte_par integer,
+    compte_le timestamp without time zone,
+    ecart_applique integer,
+    mouvement_id integer,
+    CONSTRAINT inventaire_lignes_quantite_comptee_check CHECK (((quantite_comptee IS NULL) OR (quantite_comptee >= 0)))
+);
+
+
+--
+-- Name: COLUMN inventaire_lignes.quantite_theorique; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.inventaire_lignes.quantite_theorique IS 'Stock du système au moment du comptage de la ligne (à l''ouverture tant qu''elle n''est pas comptée).';
+
+
+--
+-- Name: COLUMN inventaire_lignes.ecart_applique; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.inventaire_lignes.ecart_applique IS 'Delta réellement passé en mouvement de stock à la validation (NULL : ligne non ajustée).';
+
+
+--
+-- Name: inventaire_lignes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.inventaire_lignes_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: inventaire_lignes_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.inventaire_lignes_id_seq OWNED BY public.inventaire_lignes.id;
+
+
+--
+-- Name: inventaire_numero_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.inventaire_numero_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: inventaires; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.inventaires (
+    id integer NOT NULL,
+    numero character varying(30) NOT NULL,
+    location_id integer NOT NULL,
+    statut character varying(20) DEFAULT 'en_cours'::character varying NOT NULL,
+    categorie character varying(100),
+    comptage_aveugle boolean DEFAULT true NOT NULL,
+    notes text,
+    cree_par integer,
+    valide_par integer,
+    date_validation timestamp without time zone,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT inventaires_statut_check CHECK (((statut)::text = ANY ((ARRAY['en_cours'::character varying, 'valide'::character varying, 'annule'::character varying])::text[])))
+);
+
+
+--
+-- Name: TABLE inventaires; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.inventaires IS 'Sessions d''inventaire physique : un comptage par emplacement, ajusté en une transaction à la validation.';
+
+
+--
+-- Name: inventaires_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.inventaires_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: inventaires_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.inventaires_id_seq OWNED BY public.inventaires.id;
 
 
 --
@@ -4012,7 +3130,7 @@ CREATE TABLE public.paiements_fournisseur (
     deleted_at timestamp without time zone,
     CONSTRAINT chk_paiements_fournisseur_montant_pos CHECK ((montant > (0)::numeric)),
     CONSTRAINT chk_pf_source CHECK (((source)::text = ANY (ARRAY[('direct'::character varying)::text, ('acompte_application'::character varying)::text, ('reversal'::character varying)::text]))),
-    CONSTRAINT paiements_fournisseur_methode_paiement_check CHECK (((methode_paiement)::text = ANY (ARRAY[('espece'::character varying)::text, ('carte'::character varying)::text, ('cheque'::character varying)::text, ('virement'::character varying)::text, ('mobile_money'::character varying)::text, ('orange_money'::character varying)::text, ('mtn_money'::character varying)::text, ('wave'::character varying)::text, ('compensation'::character varying)::text])))
+    CONSTRAINT paiements_fournisseur_methode_paiement_check CHECK (((methode_paiement)::text = ANY ((ARRAY['espece'::character varying, 'carte'::character varying, 'cheque'::character varying, 'virement'::character varying, 'mobile_money'::character varying, 'orange_money'::character varying, 'mtn_money'::character varying, 'wave'::character varying, 'compensation'::character varying])::text[])))
 );
 
 
@@ -4172,7 +3290,7 @@ CREATE TABLE public.payroll_runs (
     total_cnps numeric(15,2) DEFAULT 0 NOT NULL,
     total_its numeric(15,2) DEFAULT 0 NOT NULL,
     total_charges_patronales numeric(15,2) DEFAULT 0 NOT NULL,
-    CONSTRAINT payroll_runs_statut_check CHECK (((statut)::text = ANY (ARRAY[('brouillon'::character varying)::text, ('valide'::character varying)::text, ('paye'::character varying)::text, ('annule'::character varying)::text])))
+    CONSTRAINT payroll_runs_statut_check CHECK (((statut)::text = ANY ((ARRAY['brouillon'::character varying, 'valide'::character varying, 'paye'::character varying, 'annule'::character varying])::text[])))
 );
 
 
@@ -4219,7 +3337,7 @@ CREATE TABLE public.payslips (
     retenue_cnps numeric(15,2) DEFAULT 0 NOT NULL,
     retenue_its numeric(15,2) DEFAULT 0 NOT NULL,
     cotisations_patronales numeric(15,2) DEFAULT 0 NOT NULL,
-    CONSTRAINT payslips_statut_check CHECK (((statut)::text = ANY (ARRAY[('en_attente'::character varying)::text, ('paye'::character varying)::text])))
+    CONSTRAINT payslips_statut_check CHECK (((statut)::text = ANY ((ARRAY['en_attente'::character varying, 'paye'::character varying])::text[])))
 );
 
 
@@ -4307,8 +3425,7 @@ CREATE TABLE public.plan_comptable (
     classe integer DEFAULT 1,
     niveau integer DEFAULT 1,
     compte_parent character varying(8),
-    CONSTRAINT plan_comptable_classe_check CHECK (((classe >= 1) AND (classe <= 9))),
-    CONSTRAINT plan_comptable_type_compte_check CHECK (((type_compte)::text = ANY (ARRAY[('actif'::character varying)::text, ('passif'::character varying)::text, ('capitaux_propres'::character varying)::text, ('charge'::character varying)::text, ('produit'::character varying)::text])))
+    CONSTRAINT plan_comptable_classe_check CHECK (((classe >= 1) AND (classe <= 9)))
 );
 
 
@@ -5647,6 +4764,20 @@ ALTER TABLE ONLY public.factures_fournisseur ALTER COLUMN id SET DEFAULT nextval
 
 
 --
+-- Name: inventaire_lignes id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaire_lignes ALTER COLUMN id SET DEFAULT nextval('public.inventaire_lignes_id_seq'::regclass);
+
+
+--
+-- Name: inventaires id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaires ALTER COLUMN id SET DEFAULT nextval('public.inventaires_id_seq'::regclass);
+
+
+--
 -- Name: magasins id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -6223,6 +5354,38 @@ ALTER TABLE ONLY public.factures
 
 ALTER TABLE ONLY public.factures
     ADD CONSTRAINT factures_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: inventaire_lignes inventaire_lignes_inventaire_produit_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaire_lignes
+    ADD CONSTRAINT inventaire_lignes_inventaire_produit_key UNIQUE (inventaire_id, produit_id);
+
+
+--
+-- Name: inventaire_lignes inventaire_lignes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaire_lignes
+    ADD CONSTRAINT inventaire_lignes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: inventaires inventaires_numero_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaires
+    ADD CONSTRAINT inventaires_numero_key UNIQUE (numero);
+
+
+--
+-- Name: inventaires inventaires_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaires
+    ADD CONSTRAINT inventaires_pkey PRIMARY KEY (id);
 
 
 --
@@ -7390,6 +6553,20 @@ CREATE INDEX idx_ff_tiers ON public.factures_fournisseur USING btree (tiers_id);
 
 
 --
+-- Name: idx_inventaire_lignes_produit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_inventaire_lignes_produit ON public.inventaire_lignes USING btree (produit_id);
+
+
+--
+-- Name: idx_inventaires_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_inventaires_created_at ON public.inventaires USING btree (created_at DESC);
+
+
+--
 -- Name: idx_magasins_code; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7957,6 +7134,13 @@ CREATE UNIQUE INDEX uq_acomptes_idempotency ON public.acomptes_clients USING btr
 
 
 --
+-- Name: uq_inventaires_en_cours_par_emplacement; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_inventaires_en_cours_par_emplacement ON public.inventaires USING btree (location_id) WHERE ((statut)::text = 'en_cours'::text);
+
+
+--
 -- Name: uq_mouvements_idempotency; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -8185,6 +7369,13 @@ CREATE TRIGGER update_factures_avoir_updated_at BEFORE UPDATE ON public.factures
 --
 
 CREATE TRIGGER update_factures_fournisseur_updated_at BEFORE UPDATE ON public.factures_fournisseur FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+--
+-- Name: inventaires update_inventaires_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER update_inventaires_updated_at BEFORE UPDATE ON public.inventaires FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
 --
@@ -9060,6 +8251,62 @@ ALTER TABLE ONLY public.paiements_fournisseur
 
 
 --
+-- Name: inventaire_lignes inventaire_lignes_compte_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaire_lignes
+    ADD CONSTRAINT inventaire_lignes_compte_par_fkey FOREIGN KEY (compte_par) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: inventaire_lignes inventaire_lignes_inventaire_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaire_lignes
+    ADD CONSTRAINT inventaire_lignes_inventaire_id_fkey FOREIGN KEY (inventaire_id) REFERENCES public.inventaires(id) ON DELETE CASCADE;
+
+
+--
+-- Name: inventaire_lignes inventaire_lignes_mouvement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaire_lignes
+    ADD CONSTRAINT inventaire_lignes_mouvement_id_fkey FOREIGN KEY (mouvement_id) REFERENCES public.mouvements_stock(id) ON DELETE SET NULL;
+
+
+--
+-- Name: inventaire_lignes inventaire_lignes_produit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaire_lignes
+    ADD CONSTRAINT inventaire_lignes_produit_id_fkey FOREIGN KEY (produit_id) REFERENCES public.produits(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: inventaires inventaires_cree_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaires
+    ADD CONSTRAINT inventaires_cree_par_fkey FOREIGN KEY (cree_par) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
+
+
+--
+-- Name: inventaires inventaires_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaires
+    ADD CONSTRAINT inventaires_location_id_fkey FOREIGN KEY (location_id) REFERENCES public.stock_locations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: inventaires inventaires_valide_par_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inventaires
+    ADD CONSTRAINT inventaires_valide_par_fkey FOREIGN KEY (valide_par) REFERENCES public.utilisateurs(id) ON DELETE SET NULL;
+
+
+--
 -- Name: magasins magasins_location_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9484,67 +8731,8 @@ ALTER TABLE ONLY public.utilisateurs
 
 
 --
--- Inventaire physique (migration 111) — bloc ajouté à la main, en fin de
--- fichier pour que toutes les tables référencées aient déjà leur clé primaire.
---
-
-CREATE SEQUENCE public.inventaire_numero_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-CREATE TABLE public.inventaires (
-    id serial PRIMARY KEY,
-    numero character varying(30) NOT NULL,
-    location_id integer NOT NULL REFERENCES public.stock_locations(id) ON DELETE RESTRICT,
-    statut character varying(20) DEFAULT 'en_cours'::character varying NOT NULL,
-    categorie character varying(100),
-    comptage_aveugle boolean DEFAULT true NOT NULL,
-    notes text,
-    cree_par integer REFERENCES public.utilisateurs(id) ON DELETE SET NULL,
-    valide_par integer REFERENCES public.utilisateurs(id) ON DELETE SET NULL,
-    date_validation timestamp without time zone,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT inventaires_numero_key UNIQUE (numero),
-    CONSTRAINT inventaires_statut_check CHECK (((statut)::text = ANY (ARRAY[('en_cours'::character varying)::text, ('valide'::character varying)::text, ('annule'::character varying)::text])))
-);
-
-COMMENT ON TABLE public.inventaires IS 'Sessions d''inventaire physique : un comptage par emplacement, ajusté en une transaction à la validation.';
-
-CREATE TABLE public.inventaire_lignes (
-    id serial PRIMARY KEY,
-    inventaire_id integer NOT NULL REFERENCES public.inventaires(id) ON DELETE CASCADE,
-    produit_id integer NOT NULL REFERENCES public.produits(id) ON DELETE RESTRICT,
-    quantite_theorique integer DEFAULT 0 NOT NULL,
-    quantite_comptee integer,
-    cmp numeric(15,2) DEFAULT 0 NOT NULL,
-    compte_par integer REFERENCES public.utilisateurs(id) ON DELETE SET NULL,
-    compte_le timestamp without time zone,
-    ecart_applique integer,
-    mouvement_id integer REFERENCES public.mouvements_stock(id) ON DELETE SET NULL,
-    CONSTRAINT inventaire_lignes_inventaire_produit_key UNIQUE (inventaire_id, produit_id),
-    CONSTRAINT inventaire_lignes_quantite_comptee_check CHECK (((quantite_comptee IS NULL) OR (quantite_comptee >= 0)))
-);
-
-COMMENT ON COLUMN public.inventaire_lignes.quantite_theorique IS 'Stock du système au moment du comptage de la ligne (à l''ouverture tant qu''elle n''est pas comptée).';
-
-COMMENT ON COLUMN public.inventaire_lignes.ecart_applique IS 'Delta réellement passé en mouvement de stock à la validation (NULL : ligne non ajustée).';
-
-CREATE UNIQUE INDEX uq_inventaires_en_cours_par_emplacement ON public.inventaires USING btree (location_id) WHERE ((statut)::text = 'en_cours'::text);
-
-CREATE INDEX idx_inventaires_created_at ON public.inventaires USING btree (created_at DESC);
-
-CREATE INDEX idx_inventaire_lignes_produit ON public.inventaire_lignes USING btree (produit_id);
-
-CREATE TRIGGER update_inventaires_updated_at BEFORE UPDATE ON public.inventaires FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
-
-
---
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Af6qdksytSHBk8jxbogkGxX531PbftGX6obqHvbWnNess7Ke0dG8pNFqxND1eTp
+\unrestrict 32QMuwd3Eiz42CTsrmBHOioeAIafYgnOc7eepkuRQKXhQhqtisRdK3N4pk9IcAj
 

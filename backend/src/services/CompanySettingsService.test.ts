@@ -11,7 +11,7 @@ describe('CompanySettingsService', () => {
     const settings = await companySettingsService.getSettings();
     expect(settings).toBeDefined();
     expect(settings.id).toBe(1);
-    expect(settings.nom).toBe('Hitek-CI');
+    expect(settings.nom).toBe('Mon entreprise');
     expect(settings.devise).toBe('FCFA');
   });
 
