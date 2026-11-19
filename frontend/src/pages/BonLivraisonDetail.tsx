@@ -1,191 +1,364 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { formatFCFA as formatXOF } from '../utils/format';
-import { getErrorMessage } from '@/utils/errors';
-import { AlertCircle, ArrowLeft, FileCheck, Truck, Printer, Download, RefreshCw } from 'lucide-react';
+import { Download, FileCheck, FileText, Printer, Truck } from 'lucide-react';
 import { bonLivraisonService } from '@/services/api';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { formatCurrency, formatDate, formatNumber, toNumber } from '@/utils/format';
+import { getErrorMessage } from '@/utils/errors';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import StatusBadge from '@/components/StatusBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
+import { PageShell } from '@/components/ui/page-shell';
+import { QueryErrorState } from '@/components/ui/query-state';
+import { EmptyState } from '@/components/ui/empty-state';
+import { DocumentTotals } from '@/components/ui/document-totals';
+import { DocumentCode } from '@/components/ui/document-code';
+import { Money } from '@/components/ui/money';
 import { DocumentPrint } from '@/components/ui/print-layout';
 import { PrintPreview, usePrintFormat } from '@/components/ui/print-preview';
 import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
 import { PageLoading } from '@/components/ui/loading';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { useRouteAccess } from '@/hooks/useRouteAccess';
+
+interface BonLigne {
+  id?: number;
+  produit_id?: number | null;
+  produit_nom?: string | null;
+  produit_reference?: string | null;
+  description?: string | null;
+  /** Quantité commandée : colonne `quantite` de `document_lignes`. */
+  quantite?: number | string | null;
+  /** Ancien alias, absent des lignes actuelles. */
+  quantite_commandee?: number | string | null;
+  quantite_livree?: number | string | null;
+  prix_unitaire: number | string;
+  total_ligne?: number | string | null;
+}
+
+interface BonDetailData {
+  id: number;
+  numero_bl?: string | null;
+  statut: string;
+  tiers_id?: number | null;
+  client_nom?: string | null;
+  client_prenom?: string | null;
+  date_bl?: string | null;
+  date_livraison_prevue?: string | null;
+  date_livraison?: string | null;
+  location_nom?: string | null;
+  devis_id?: number | null;
+  devis_numero?: string | null;
+  facture_id?: number | null;
+  facture_numero?: string | null;
+  avoir_id?: number | null;
+  numero_avoir?: string | null;
+  notes?: string | null;
+  total?: number | string | null;
+  cree_par_nom?: string | null;
+  lignes?: BonLigne[];
+}
+
+interface ConversionResult {
+  facture_id?: number;
+  numero_facture?: string;
+  data?: { facture_id?: number; numero_facture?: string };
+}
+
+/** Séparateur de la ligne d'en-tête : l'insécable garde « · » avec ce qui le précède, la ligne ne coupe qu'après. */
+const SEP = '\u00A0· ';
+/** Lien dans la ligne d'en-tête : souligné en permanence, le bleu seul se distingue mal du gris qui l'entoure (1,6:1). */
+const HEADER_LINK_CLASS =
+  'rounded-sm text-primary underline decoration-primary/40 underline-offset-4 transition-colors hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+/** U-46 : la quantité commandée vient de `quantite` (« 0 » s'affichait sur chaque ligne). */
+const qteCommandee = (l: BonLigne) => toNumber(l.quantite_commandee) ?? toNumber(l.quantite) ?? 0;
+const qteLivree = (l: BonLigne) => toNumber(l.quantite_livree) ?? 0;
+/** Ce qui sort du stock à la livraison : la quantité livrée, à défaut la quantité commandée (BonLivraisonService). */
+const qteSortie = (l: BonLigne) => qteLivree(l) || qteCommandee(l);
+const totalLigne = (l: BonLigne) => toNumber(l.total_ligne) ?? qteSortie(l) * (toNumber(l.prix_unitaire) ?? 0);
 
 export default function BonLivraisonDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const confirm = useConfirm();
+  const canOpen = useRouteAccess();
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [actionLoading, setActionLoading] = useState(false);
-  const [bon, setBon] = useState<any>(null);
+  const [bon, setBon] = useState<BonDetailData | null>(null);
   const [showPrint, setShowPrint] = useState(false);
-  const [showDeliverDialog, setShowDeliverDialog] = useState(false);
-  const [showConvertDialog, setShowConvertDialog] = useState(false);
   const [printFormat, setPrintFormat] = usePrintFormat();
+
+  const fetchBon = useCallback(async (): Promise<BonDetailData | null> => {
+    const data = (await bonLivraisonService.getById(Number(id))) as BonDetailData | { data?: BonDetailData } | null;
+    if (data && 'data' in data && data.data) return data.data;
+    return (data as BonDetailData | null) ?? null;
+  }, [id]);
 
   const load = useCallback(async () => {
     if (!id) return;
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-      const data = await bonLivraisonService.getById(Number(id));
-      setBon(data?.data || data);
+      setBon(await fetchBon());
     } catch (err) {
       setBon(null);
       setError(err);
-      toast.error(getErrorMessage(err, 'Impossible de charger ce bon de livraison'));
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, fetchBon]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
-  const canMarkDelivered = bon?.statut === 'valide' || bon?.statut === 'brouillon';
-  const canConvert = bon?.statut === 'livre';
-  const downloadPDF = () => {
-    setShowPrint(true);
-    setTimeout(() => window.print(), 300);
-  };
+  const numero = bon?.numero_bl || (bon ? `n° ${bon.id}` : '');
+  const clientNom = bon ? `${bon.client_nom ?? ''} ${bon.client_prenom ?? ''}`.trim() || '—' : '—';
+  const lignes = Array.isArray(bon?.lignes) ? bon.lignes : [];
 
   const handleMarkDelivered = async () => {
-    if (!bon?.id) return;
-
+    if (!bon) return;
+    const unites = lignes.reduce((sum, l) => sum + (l.produit_id ? qteSortie(l) : 0), 0);
+    const emplacement = bon.location_nom ? `du stock de ${bon.location_nom}` : 'du stock du magasin';
+    const ok = await confirm({
+      title: `Marquer le bon de livraison ${numero} comme livré ?`,
+      description: `${formatNumber(unites)} ${unites > 1 ? 'unités sortiront' : 'unité sortira'} ${emplacement}. Faites-le une fois la marchandise remise au client.`,
+      confirmLabel: 'Marquer comme livré',
+    });
+    if (!ok) return;
+    setActionLoading(true);
     try {
-      setActionLoading(true);
-      await bonLivraisonService.updateStatut(Number(bon.id), 'livre');
-      toast.success('Bon de livraison marqué comme livré');
-      setShowDeliverDialog(false);
-      const refreshed = await bonLivraisonService.getById(Number(bon.id));
-      setBon(refreshed?.data || refreshed);
+      await bonLivraisonService.updateStatut(bon.id, 'livre');
+      toast.success(`Bon de livraison ${numero} livré : stock mis à jour`);
+      const refreshed = await fetchBon().catch(() => null);
+      if (refreshed) setBon(refreshed);
+      else await load();
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur lors de la mise à jour du statut'));
+      toast.error(getErrorMessage(err, 'Impossible de marquer le bon de livraison comme livré. Réessayez.'));
     } finally {
       setActionLoading(false);
     }
   };
 
   const handleConvert = async () => {
-    if (!bon?.id) return;
-
+    if (!bon) return;
+    const ok = await confirm({
+      title: `Facturer le bon de livraison ${numero} ?`,
+      description: `Une facture de ${formatCurrency(bon.total)} sera créée pour ${clientNom}. Ce montant deviendra dû.`,
+      confirmLabel: 'Créer la facture',
+    });
+    if (!ok) return;
+    setActionLoading(true);
     try {
-      setActionLoading(true);
-      const result = await bonLivraisonService.convertToFacture(Number(bon.id));
-      const factureId = result?.facture_id || result?.data?.facture_id;
-      toast.success(`Facture ${result?.numero_facture || ''} créée`.trim());
-      setShowConvertDialog(false);
+      const result = (await bonLivraisonService.convertToFacture(bon.id)) as ConversionResult | null;
+      const factureId = result?.facture_id ?? result?.data?.facture_id;
+      const numeroFacture = result?.numero_facture ?? result?.data?.numero_facture;
+      toast.success(numeroFacture ? `Facture ${numeroFacture} créée` : 'Facture créée');
       if (factureId) {
         navigate(`/factures/${factureId}`);
         return;
       }
-      const refreshed = await bonLivraisonService.getById(Number(bon.id));
-      setBon(refreshed?.data || refreshed);
+      const refreshed = await fetchBon().catch(() => null);
+      if (refreshed) setBon(refreshed);
+      else await load();
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur lors de la conversion en facture'));
+      toast.error(getErrorMessage(err, 'Impossible de créer la facture. Réessayez.'));
     } finally {
       setActionLoading(false);
     }
   };
 
-  if (loading) {
-    return <PageLoading message="Chargement du bon de livraison…" />;
+  if (loading && !bon) {
+    return (
+      <PageShell title="Bon de livraison" backTo="/bons-livraison" width="wide">
+        <PageLoading message="Chargement du bon de livraison…" />
+      </PageShell>
+    );
   }
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 text-center" role="alert">
-        <AlertCircle className="h-12 w-12 text-destructive opacity-80" />
-        <div className="space-y-1">
-          <h2 className="text-xl font-bold">Échec du chargement</h2>
-          <p className="text-muted-foreground">{getErrorMessage(error, 'Impossible de charger ce bon de livraison')}</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => navigate('/bons-livraison')}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Retour aux bons de livraison
-          </Button>
-          <Button onClick={load} className="gap-2">
-            <RefreshCw className="h-4 w-4" />
-            Réessayer
-          </Button>
-        </div>
-      </div>
+      <PageShell title="Bon de livraison" backTo="/bons-livraison" width="wide">
+        <Card>
+          <QueryErrorState error={error} title="Impossible de charger le bon de livraison" onRetry={() => void load()} />
+        </Card>
+      </PageShell>
     );
   }
 
   if (!bon) {
     return (
-      <div className="p-6 space-y-4">
-        <Button variant="outline" onClick={() => navigate('/bons-livraison')}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Retour aux bons de livraison
-        </Button>
+      <PageShell title="Bon de livraison introuvable" backTo="/bons-livraison" width="wide">
         <Card>
-          <CardContent className="pt-6">Bon de livraison introuvable</CardContent>
+          <EmptyState
+            icon={FileCheck}
+            title="Bon de livraison introuvable"
+            description="Il a peut-être été supprimé"
+            action={
+              <Link to="/bons-livraison" className={buttonVariants({ variant: 'outline' })}>
+                Retour aux bons de livraison
+              </Link>
+            }
+          />
         </Card>
-      </div>
+      </PageShell>
     );
   }
 
-  return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="outline" onClick={() => navigate('/bons-livraison')}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Retour
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold">{bon.numero_bl || `BL #${bon.id}`}</h1>
-          <p className="text-muted-foreground">Client: {bon.client_nom || bon.tiers_id || '-'}</p>
-        </div>
-        <div className="ml-auto flex gap-2">
-          <Button variant="outline" onClick={() => setShowPrint(true)}>
-            <Printer className="h-4 w-4 mr-2" />
-            Imprimer
-          </Button>
-          <Button variant="outline" onClick={downloadPDF}>
-            <Download className="h-4 w-4 mr-2" />
-            Télécharger PDF
-          </Button>
-          {canMarkDelivered && (
-            <Button onClick={() => setShowDeliverDialog(true)} disabled={actionLoading}>
-              <Truck className="h-4 w-4 mr-2" />
-              Marquer livré
-            </Button>
-          )}
-          {canConvert && (
-            <Button onClick={() => setShowConvertDialog(true)} disabled={actionLoading}>
-              <FileCheck className="h-4 w-4 mr-2" />
-              Créer facture
-            </Button>
-          )}
-        </div>
-      </div>
+  const canMarkDelivered = bon.statut === 'valide' || bon.statut === 'brouillon';
+  const canConvert = bon.statut === 'livre';
 
+  // Client, date, livraison prévue et emplacement tiennent sur la ligne
+  // d'en-tête : plus de carte « Informations » qui la répétait.
+  const headerLine = (
+    <>
+      {bon.tiers_id && canOpen(`/tiers/${bon.tiers_id}`) ? (
+        <Link to={`/tiers/${bon.tiers_id}`} className={HEADER_LINK_CLASS}>
+          {clientNom}
+        </Link>
+      ) : (
+        clientNom
+      )}
+      {SEP}
+      <span className="whitespace-nowrap">{formatDate(bon.date_bl)}</span>
+      {bon.date_livraison_prevue && (
+        <>
+          {SEP}
+          <span className="whitespace-nowrap">livraison prévue le {formatDate(bon.date_livraison_prevue)}</span>
+        </>
+      )}
+      {bon.location_nom && (
+        <>
+          {SEP}
+          <span className="sr-only">Emplacement{'\u00A0'}: </span>
+          {bon.location_nom}
+        </>
+      )}
+    </>
+  );
+
+  let primaryAction: ReactNode = undefined;
+  if (canMarkDelivered) {
+    primaryAction = (
+      <Button size="touch" onClick={() => void handleMarkDelivered()} disabled={actionLoading} className="gap-2">
+        <Truck className="h-4 w-4" aria-hidden="true" />
+        Marquer comme livré
+      </Button>
+    );
+  } else if (canConvert) {
+    primaryAction = (
+      <Button size="touch" onClick={() => void handleConvert()} disabled={actionLoading} className="gap-2">
+        <FileCheck className="h-4 w-4" aria-hidden="true" />
+        Créer la facture
+      </Button>
+    );
+  } else if (bon.facture_id && canOpen(`/factures/${bon.facture_id}`)) {
+    // Bon facturé : plus rien à faire ici, le lien vers la facture n'est pas
+    // une action à mettre en avant (bouton encadré, pas l'aplat bleu).
+    primaryAction = (
+      <Link
+        to={`/factures/${bon.facture_id}`}
+        className={buttonVariants({ variant: 'outline', size: 'touch', className: 'gap-2' })}
+      >
+        <FileText className="h-4 w-4" aria-hidden="true" />
+        Ouvrir la facture
+      </Link>
+    );
+  }
+
+  const table = (
+    <Table aria-label={`Produits du bon de livraison ${numero}`}>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Produit</TableHead>
+          <TableHead numeric>Qté commandée</TableHead>
+          <TableHead numeric>Qté livrée</TableHead>
+          <TableHead numeric>Prix unitaire</TableHead>
+          <TableHead numeric>Total</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {lignes.map((ligne, idx) => (
+          <TableRow key={ligne.id ?? idx}>
+            <TableCell className="font-medium">
+              {ligne.produit_nom || ligne.description || `Produit n° ${ligne.produit_id ?? '—'}`}
+              {ligne.produit_reference && (
+                <DocumentCode className="block text-xs font-normal text-muted-foreground">
+                  {ligne.produit_reference}
+                </DocumentCode>
+              )}
+            </TableCell>
+            <TableCell numeric>{formatNumber(qteCommandee(ligne))}</TableCell>
+            <TableCell numeric>{formatNumber(qteLivree(ligne))}</TableCell>
+            <TableCell numeric>
+              <Money value={ligne.prix_unitaire} />
+            </TableCell>
+            <TableCell numeric className="font-medium">
+              <Money value={totalLigne(ligne)} />
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+
+  const cards = lignes.map((ligne, idx) => (
+    <DataCard
+      key={ligne.id ?? idx}
+      title={ligne.produit_nom || ligne.description || `Produit n° ${ligne.produit_id ?? '—'}`}
+      wrapTitle
+      titleAs="h3"
+    >
+      {ligne.produit_reference && (
+        <DataCardRow label="Référence" value={<DocumentCode>{ligne.produit_reference}</DocumentCode>} />
+      )}
+      <DataCardRow label="Qté commandée" value={formatNumber(qteCommandee(ligne))} numeric />
+      <DataCardRow label="Qté livrée" value={formatNumber(qteLivree(ligne))} numeric />
+      <DataCardRow label="Prix unitaire" value={<Money value={ligne.prix_unitaire} />} numeric />
+      <DataCardRow label="Total" value={<Money value={totalLigne(ligne)} className="font-medium" />} numeric />
+    </DataCard>
+  ));
+
+  const downloadPdf = async () => {
+    try {
+      await bonLivraisonService.downloadPdf(bon.id, bon.numero_bl || undefined);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Impossible de télécharger le PDF du bon de livraison. Réessayez.'));
+    }
+  };
+
+  return (
+    <PageShell
+      title={`Bon de livraison ${numero}`}
+      backTo="/bons-livraison"
+      width="wide"
+      meta={<StatusBadge type="bl" statut={bon.statut} size="md" />}
+      description={headerLine}
+      actions={
+        <Button variant="outline" size="touch" onClick={() => setShowPrint(true)} className="gap-2">
+          <Printer className="h-4 w-4" aria-hidden="true" />
+          Imprimer
+        </Button>
+      }
+      primaryAction={primaryAction}
+      moreActions={[{ label: 'Télécharger le PDF', icon: Download, onSelect: () => void downloadPdf() }]}
+    >
       <DocumentLifecycle
         steps={[
           {
             label: 'Devis',
-            numero: bon.devis_numero,
+            numero: bon.devis_numero ?? null,
             to: bon.devis_id ? `/devis/${bon.devis_id}` : null,
           },
-          { label: 'Bon de livraison', numero: bon.numero_bl || `BL #${bon.id}`, current: true },
+          { label: 'Bon de livraison', numero, current: true },
           {
             label: 'Facture',
-            numero: bon.facture_numero,
+            numero: bon.facture_numero ?? null,
             to: bon.facture_id ? `/factures/${bon.facture_id}` : null,
           },
           {
@@ -198,125 +371,55 @@ export default function BonLivraisonDetail() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Détails</CardTitle>
-        </CardHeader>
-        <CardContent className="grid sm:grid-cols-2 gap-4 text-sm">
-          <p><strong>Date:</strong> {bon.date_bl ? new Date(bon.date_bl).toLocaleDateString('fr-FR') : '-'}</p>
-          <p className="flex items-center gap-2"><strong>Statut:</strong> {bon.statut ? <StatusBadge type="bl" statut={bon.statut} /> : '-'}</p>
-          <p><strong>Devis:</strong> {bon.devis_numero || bon.devis_id || '-'}</p>
-          <p><strong>Total:</strong> <span className="tabular-nums font-semibold">{formatXOF(bon.total)}</span></p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Lignes du bon de livraison</CardTitle>
+          <CardTitle>Produits</CardTitle>
+          <CardDescription>
+            {lignes.length} {lignes.length > 1 ? 'produits' : 'produit'}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {Array.isArray(bon.lignes) && bon.lignes.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Produit</TableHead>
-                  <TableHead>Qté commandée</TableHead>
-                  <TableHead>Qté livrée</TableHead>
-                  <TableHead>Prix unitaire</TableHead>
-                  <TableHead>Total</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {bon.lignes.map((ligne: any, idx: number) => {
-                  const qteLivree = Number(ligne.quantite_livree || 0);
-                  const pu = Number(ligne.prix_unitaire || 0);
-                  const totalLigne = Number(ligne.total_ligne || qteLivree * pu);
-                  return (
-                    <TableRow key={idx}>
-                      <TableCell>{ligne.produit_nom || ligne.description || ligne.produit_id}</TableCell>
-                      <TableCell>{Number(ligne.quantite_commandee || 0)}</TableCell>
-                      <TableCell>{qteLivree}</TableCell>
-                      <TableCell>{formatXOF(pu)}</TableCell>
-                      <TableCell>{formatXOF(totalLigne)}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+          {lignes.length === 0 ? (
+            <EmptyState compact icon={FileCheck} title="Ce bon de livraison ne contient aucun produit" />
           ) : (
-            <p className="text-sm text-muted-foreground">Aucune ligne à afficher</p>
+            <ResponsiveTable table={table} cards={cards} />
           )}
+          <DocumentTotals
+            aria-label="Total du bon de livraison"
+            total={{ label: 'Total', value: bon.total }}
+          />
         </CardContent>
       </Card>
 
-      <PrintPreview
-        open={showPrint}
-        onOpenChange={setShowPrint}
-        format={printFormat}
-        onFormatChange={setPrintFormat}
-      >
+      {bon.notes && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Notes</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="whitespace-pre-wrap text-sm text-muted-foreground">{bon.notes}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      <PrintPreview open={showPrint} onOpenChange={setShowPrint} format={printFormat} onFormatChange={setPrintFormat}>
         <DocumentPrint
           format={printFormat}
           docType="bl"
           numero={bon.numero_bl || `BL${String(bon.id).padStart(5, '0')}`}
           dateDoc={bon.date_bl}
           dateEcheance={bon.date_livraison_prevue || bon.date_livraison}
-          vendeur={bon.cree_par_nom || 'Administrator'}
-          clientNom={bon.client_nom}
-          lignes={Array.isArray(bon.lignes) ? bon.lignes : []}
-          hideTotals={false}
+          vendeur={bon.cree_par_nom ?? undefined}
+          clientNom={bon.client_nom ?? undefined}
+          clientPrenom={bon.client_prenom ?? undefined}
+          lignes={lignes.map((l) => ({
+            produit_nom: l.produit_nom ?? undefined,
+            produit_reference: l.produit_reference ?? undefined,
+            description: l.description ?? undefined,
+            quantite: qteCommandee(l),
+            quantite_livree: l.quantite_livree ?? undefined,
+            prix_unitaire: l.prix_unitaire,
+          }))}
         />
       </PrintPreview>
-
-      {/* Mark delivered Dialog */}
-      <Dialog
-        open={showDeliverDialog}
-        onOpenChange={(open) => {
-          if (!actionLoading) setShowDeliverDialog(open);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Marquer comme livré</DialogTitle>
-            <DialogDescription>
-              Marquer ce bon de livraison comme livré ?
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeliverDialog(false)} disabled={actionLoading}>
-              Annuler
-            </Button>
-            <Button onClick={handleMarkDelivered} disabled={actionLoading}>
-              <Truck className="h-4 w-4 mr-2" />
-              {actionLoading ? 'En cours…' : 'Marquer livré'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Convert to facture Dialog */}
-      <Dialog
-        open={showConvertDialog}
-        onOpenChange={(open) => {
-          if (!actionLoading) setShowConvertDialog(open);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Créer la facture</DialogTitle>
-            <DialogDescription>
-              Créer la facture depuis ce bon de livraison ?
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowConvertDialog(false)} disabled={actionLoading}>
-              Annuler
-            </Button>
-            <Button onClick={handleConvert} disabled={actionLoading}>
-              <FileCheck className="h-4 w-4 mr-2" />
-              {actionLoading ? 'En cours…' : 'Créer facture'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+    </PageShell>
   );
 }

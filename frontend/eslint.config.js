@@ -31,6 +31,31 @@ export default tseslint.config(
       'no-empty': 'warn',
     },
   },
+  // Couleur de statut employée comme TEXTE sans palier (`text-success`,
+  // `hover:text-destructive`, `text-warning/80`…) : le DEFAULT est une couleur
+  // d'accent, pas une couleur de texte garantie — `text-success` tombait à
+  // 3,84:1. Écrire le palier explicite : `text-success-700`, `text-warning-700`,
+  // `text-danger-700` (ou `-600`), `text-info-700`. Avertissement (et non
+  // erreur) tant que les pages existantes n'ont pas migré.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'warn',
+        {
+          selector: 'Literal[value=/(^|[\\s:])text-(success|warning|danger|info|destructive)(?![\\w-])/]',
+          message:
+            'Couleur de statut en texte sans palier : écrire text-success-700 / text-warning-700 / text-danger-700 / text-info-700 (contraste ≥ 4,5:1 dans les deux thèmes).',
+        },
+        {
+          selector: 'TemplateElement[value.raw=/(^|[\\s:])text-(success|warning|danger|info|destructive)(?![\\w-])/]',
+          message:
+            'Couleur de statut en texte sans palier : écrire text-success-700 / text-warning-700 / text-danger-700 / text-info-700 (contraste ≥ 4,5:1 dans les deux thèmes).',
+        },
+      ],
+    },
+  },
   // Test files: allow node/vitest globals.
   {
     files: ['**/*.test.{ts,tsx}', 'src/test/**'],

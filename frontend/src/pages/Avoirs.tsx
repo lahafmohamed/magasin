@@ -1,5 +1,6 @@
-import { Link, useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
+import { Link } from 'react-router-dom';
+import { FileMinus, Plus } from 'lucide-react';
+import { buttonVariants } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -7,21 +8,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  FilePlus,
-  Eye,
-  Download,
-  Wallet,
-  CheckCircle2,
-  FileEdit,
-  Hourglass,
-  Receipt,
-} from 'lucide-react';
-import StatusBadge from '@/components/StatusBadge';
-import { Badge } from '@/components/ui/badge';
-import { formatCurrency } from '@/utils/format';
-import { AVOIR_TYPE_LABELS } from '@/utils/avoirTypes';
+import StatusBadge, { getStatusLabel, getStatusOptions } from '@/components/StatusBadge';
+import { Money } from '@/components/ui/money';
+import { DocumentCode } from '@/components/ui/document-code';
+import { Tag } from '@/components/ui/tag';
+import { DataCard, DataCardRow } from '@/components/ui/responsive-table';
+import { type StatTile } from '@/components/ui/stats-bar';
+import { AVOIR_TYPE_OPTIONS, avoirTypeHue, formatAvoirType } from '@/utils/avoirTypes';
 import { creditNoteService } from '@/services/api';
+import { useRouteAccess } from '@/hooks/useRouteAccess';
+import { cn } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDateNumeric, formatNumber, toNumber } from '@/utils/format';
 import {
   DocumentListPage,
   useDocumentList,
@@ -36,8 +33,8 @@ interface Avoir {
   client_nom: string;
   client_prenom?: string | null;
   date_avoir: string;
-  statut: 'brouillon' | 'valide' | 'utilise' | 'annule' | string;
-  total: number;
+  statut: string;
+  total: number | string;
   avoir_type: string | null;
   notes: string | null;
   facture_origine_id?: number;
@@ -55,38 +52,29 @@ interface AvoirStats {
   moisTotal: number;
 }
 
-const TYPE_LABEL = AVOIR_TYPE_LABELS;
+const STATUS_CHIPS = [{ value: 'all', label: 'Tous' }, ...getStatusOptions('avoir', { exclude: ['en_attente'] })];
+const CSV_HEADERS = ['N° d’avoir', 'Client', 'Date', 'Type', 'Statut', 'Facture d’origine', 'Montant'];
 
-const TYPE_VARIANT: Record<string, 'warning' | 'info' | 'success' | 'secondary'> = {
-  erreur: 'warning',
-  retour: 'info',
-  echange: 'secondary',
-  remise_commerciale: 'success',
-};
-
-const STATUS_CHIPS = [
-  { value: 'all', label: 'Tous' },
-  { value: 'brouillon', label: 'Brouillons' },
-  { value: 'valide', label: 'Validés' },
-  { value: 'utilise', label: 'Utilisés' },
-  { value: 'annule', label: 'Annulés' },
-] as const;
-
-const formatClient = (a: Avoir) =>
-  a.client_prenom ? `${a.client_nom} ${a.client_prenom}` : a.client_nom;
+const clientOf = (a: Avoir) => `${a.client_nom || ''} ${a.client_prenom || ''}`.trim();
+const avoirsLabel = (n: number) => `${formatNumber(n)} ${n > 1 ? 'avoirs' : 'avoir'}`;
 
 const csvRow = (a: Avoir) => [
   a.numero_avoir,
-  formatClient(a),
-  new Date(a.date_avoir).toLocaleDateString('fr-FR'),
-  TYPE_LABEL[a.avoir_type || ''] || a.avoir_type || '',
-  a.statut,
+  clientOf(a),
+  formatDateNumeric(a.date_avoir),
+  a.avoir_type ? formatAvoirType(a.avoir_type) : '',
+  getStatusLabel('avoir', a.statut),
   a.facture_origine_numero || '',
-  String(a.total || 0),
+  toNumber(a.total) ?? 0,
 ];
 
+function TypeTag({ type }: { type: string | null }) {
+  if (!type) return <span className="text-muted-foreground">—</span>;
+  return <Tag hue={avoirTypeHue(type)}>{formatAvoirType(type)}</Tag>;
+}
+
 export default function Avoirs() {
-  const navigate = useNavigate();
+  const canOpen = useRouteAccess();
 
   const list = useDocumentList<Avoir, AvoirStats>({
     defaultSortKey: 'date_avoir',
@@ -102,147 +90,142 @@ export default function Avoirs() {
         extra.type === 'tous' ? undefined : extra.type
       ),
     fetchStats: () => creditNoteService.getStats(),
-    loadErrorMessage: 'Erreur lors du chargement des avoirs',
+    loadErrorMessage: 'Impossible de charger les avoirs.',
   });
+
+  const clientCell = (a: Avoir) => {
+    const id = a.client_id ?? a.tiers_id;
+    const nom = clientOf(a) || '—';
+    return id && canOpen(`/tiers/${id}`) ? (
+      <Link to={`/tiers/${id}`} className="underline-offset-4 hover:underline">
+        {nom}
+      </Link>
+    ) : (
+      nom
+    );
+  };
+
+  // Identifiant dans une liste : couleur du texte, souligné au survol (le bleu
+  // reste aux actions), en mono comme tout numéro de pièce.
+  const factureCell = (a: Avoir) =>
+    a.facture_origine_numero && a.facture_origine_id ? (
+      <Link to={`/factures/${a.facture_origine_id}`} className="underline-offset-4 hover:underline">
+        <DocumentCode>{a.facture_origine_numero}</DocumentCode>
+      </Link>
+    ) : (
+      <span className="text-muted-foreground">—</span>
+    );
 
   const columns: ReadonlyArray<DocumentColumn<Avoir>> = [
     {
-      header: 'Numéro',
+      // Mono, poids normal : rendu par DocumentListPage (colonne principale).
+      header: 'N° d’avoir',
       sortKey: 'numero_avoir',
-      cellClassName: 'font-medium num',
+      primary: true,
       render: (a) => a.numero_avoir,
     },
     {
       header: 'Client',
       sortKey: 'client_nom',
       stopPropagation: true,
-      render: (a) =>
-        a.client_id ? (
-          <Link to={`/tiers/${a.client_id}`} className="hover:underline">
-            {formatClient(a)}
-          </Link>
-        ) : (
-          formatClient(a)
-        ),
+      render: clientCell,
     },
     {
       header: 'Date',
       sortKey: 'date_avoir',
-      cellClassName: 'num',
-      render: (a) => new Date(a.date_avoir).toLocaleDateString('fr-FR'),
+      cellClassName: 'whitespace-nowrap',
+      render: (a) => formatDate(a.date_avoir),
     },
     {
       header: 'Type',
       sortKey: 'avoir_type',
-      render: (a) =>
-        a.avoir_type ? (
-          <Badge variant={TYPE_VARIANT[a.avoir_type] ?? 'secondary'}>
-            {TYPE_LABEL[a.avoir_type] || a.avoir_type}
-          </Badge>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        ),
+      render: (a) => <TypeTag type={a.avoir_type} />,
     },
     {
-      header: 'Facture origine',
+      header: 'Facture d’origine',
       stopPropagation: true,
-      render: (a) =>
-        a.facture_origine_numero && a.facture_origine_id ? (
-          <Link
-            to={`/factures/${a.facture_origine_id}`}
-            className="num text-primary hover:underline"
-          >
-            {a.facture_origine_numero}
-          </Link>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        ),
+      render: factureCell,
     },
     {
       header: 'Statut',
       sortKey: 'statut',
+      card: 'badge',
       render: (a) => <StatusBadge type="avoir" statut={a.statut} />,
     },
     {
       header: 'Montant',
       sortKey: 'total',
       align: 'right',
-      headClassName: 'text-right',
-      cellClassName: 'text-right font-medium num',
-      render: (a) => formatCurrency(a.total),
-    },
-    {
-      header: '',
-      headClassName: 'text-right w-12',
-      cellClassName: 'text-right',
-      stopPropagation: true,
-      render: (a) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0"
-          onClick={() => navigate(`/avoirs/${a.id}`)}
-          aria-label={`Voir l'avoir ${a.numero_avoir}`}
-        >
-          <Eye className="h-4 w-4" aria-hidden="true" />
-        </Button>
-      ),
+      numeric: true,
+      render: (a) => <Money value={a.total} />,
     },
   ];
+
+  const renderCard = (a: Avoir) => (
+    <DataCard
+      key={a.id}
+      href={`/avoirs/${a.id}`}
+      title={<DocumentCode className="font-normal">{a.numero_avoir}</DocumentCode>}
+      badge={<StatusBadge type="avoir" statut={a.statut} />}
+    >
+      <DataCardRow label="Client" value={clientOf(a) || '—'} />
+      <DataCardRow label="Date" value={formatDate(a.date_avoir)} />
+      <DataCardRow label="Type" value={<TypeTag type={a.avoir_type} />} />
+      <DataCardRow label="Facture d’origine" value={factureCell(a)} />
+      <DataCardRow label="Montant" value={<Money value={a.total} />} numeric />
+    </DataCard>
+  );
+
+  // Pas de couleur sur les montants des tuiles : le libellé dit ce qu'ils sont.
+  const statTiles = (stats: AvoirStats | null): StatTile[] => [
+    {
+      label: 'Validés, non utilisés',
+      value: stats ? formatCurrency(stats.valideTotal) : '—',
+      hint: stats ? avoirsLabel(stats.valideCount) : undefined,
+    },
+    {
+      label: 'Utilisés ce mois-ci',
+      value: stats ? formatCurrency(stats.utiliseMoisTotal) : '—',
+      hint: stats ? avoirsLabel(stats.utiliseMoisCount) : undefined,
+    },
+    {
+      label: 'Brouillons',
+      value: stats ? formatNumber(stats.brouillonCount) : '—',
+      hint: stats && stats.brouillonTotal ? formatCurrency(stats.brouillonTotal) : undefined,
+    },
+    {
+      label: 'Émis ce mois-ci',
+      value: stats ? formatCurrency(stats.moisTotal) : '—',
+      hint: stats ? avoirsLabel(stats.moisCount) : undefined,
+    },
+  ];
+
+  const createLinkClass = cn(buttonVariants({ size: 'touch' }), 'gap-2');
 
   return (
     <DocumentListPage<Avoir, AvoirStats>
       list={list}
-      layoutClassName="container mx-auto p-6 space-y-6"
       title="Avoirs"
-      titleIcon={Receipt}
-      subtitle="Notes de crédit clients — retours, erreurs et remises commerciales"
+      subtitle="Crédits accordés à vos clients : retours, erreurs de facturation et remises"
       createButton={
-        <Button onClick={() => navigate('/avoirs/nouveau')} className="gap-1.5">
-          <FilePlus className="h-4 w-4" aria-hidden="true" /> Nouvel avoir
-        </Button>
+        <Link to="/avoirs/nouveau" className={createLinkClass}>
+          <Plus className="h-4 w-4" aria-hidden="true" /> Nouvel avoir
+        </Link>
       }
-      statTiles={(stats) => [
-        {
-          label: 'Validés non utilisés',
-          value: formatCurrency(stats?.valideTotal ?? 0),
-          hint: `${stats?.valideCount ?? 0} avoirs`,
-          icon: Wallet,
-          tone: 'text-warning-700',
-        },
-        {
-          label: 'Utilisés ce mois',
-          value: formatCurrency(stats?.utiliseMoisTotal ?? 0),
-          hint: `${stats?.utiliseMoisCount ?? 0} avoirs`,
-          icon: CheckCircle2,
-          tone: 'text-success-700',
-        },
-        {
-          label: 'Brouillons',
-          value: stats?.brouillonCount ?? 0,
-          hint: stats?.brouillonTotal ? formatCurrency(stats.brouillonTotal) : '—',
-          icon: FileEdit,
-        },
-        {
-          label: 'Total ce mois',
-          value: formatCurrency(stats?.moisTotal ?? 0),
-          hint: `${stats?.moisCount ?? 0} avoirs`,
-          icon: Hourglass,
-          tone: 'text-primary',
-        },
-      ]}
-      searchPlaceholder="Rechercher par numéro ou client  ( / )"
+      statTiles={statTiles}
+      searchPlaceholder="Numéro ou client"
+      searchLabel="Rechercher un avoir par numéro ou client"
       statusChips={STATUS_CHIPS}
       extraFilters={
         <Select value={list.extra.type} onValueChange={(v) => list.setExtra('type', v)}>
-          <SelectTrigger className="h-9 w-auto" aria-label="Filtrer par type">
+          <SelectTrigger className="w-full sm:w-52" aria-label="Filtrer par type d’avoir">
             <SelectValue placeholder="Tous les types" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="tous">Tous les types</SelectItem>
-            {Object.entries(TYPE_LABEL).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
+            {AVOIR_TYPE_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
               </SelectItem>
             ))}
           </SelectContent>
@@ -251,46 +234,31 @@ export default function Avoirs() {
       shortcuts={{ newRoute: '/avoirs/nouveau', newDescription: 'Nouvel avoir' }}
       csv={{
         filenamePrefix: 'avoirs',
-        headers: ['Numéro', 'Client', 'Date', 'Type', 'Statut', 'Facture origine', 'Montant'],
+        headers: CSV_HEADERS,
         row: csvRow,
         fetchAll: async (search, statut) => {
-          const res = await creditNoteService.getAll(search, statut, 1, 200);
+          const type = list.extra.type === 'tous' ? undefined : list.extra.type;
+          const res = await creditNoteService.getAll(search, statut, 1, 200, undefined, undefined, type);
           return res?.data ?? [];
         },
       }}
-      bulkActions={
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1"
-          onClick={() => {
-            const rows = list.selectedRows.map(csvRow);
-            import('@/utils/csv').then(({ downloadCsv }) =>
-              downloadCsv(
-                `avoirs_selection_${new Date().toISOString().slice(0, 10)}.csv`,
-                ['Numéro', 'Client', 'Date', 'Type', 'Statut', 'Facture origine', 'Montant'],
-                rows
-              )
-            );
-          }}
-        >
-          <Download className="h-4 w-4" aria-hidden="true" /> Exporter la sélection
-        </Button>
-      }
       columns={columns}
       detailPath={(a) => `/avoirs/${a.id}`}
-      rowAriaLabel={(a) => `Sélectionner ${a.numero_avoir}`}
+      selectable={false}
+      itemNoun={{ one: 'avoir', many: 'avoirs' }}
       emptyState={{
-        icon: FilePlus,
-        title: 'Aucun avoir enregistré',
-        filteredTitle: 'Aucun avoir ne correspond aux filtres',
+        icon: FileMinus,
+        title: 'Aucun avoir pour le moment',
+        description: 'Un avoir crédite un client après un retour, une erreur de facturation ou une remise',
+        filteredTitle: 'Aucun avoir ne correspond à ces filtres',
+        filteredDescription: 'Vérifiez le numéro ou le nom du client, ou changez de statut ou de type',
         createAction: (
-          <Button size="sm" onClick={() => navigate('/avoirs/nouveau')}>
-            Créer le premier avoir
-          </Button>
+          <Link to="/avoirs/nouveau" className={createLinkClass}>
+            <Plus className="h-4 w-4" aria-hidden="true" /> Créer un avoir
+          </Link>
         ),
       }}
-      totalFooterLabel="avoir(s) au total"
+      renderCard={renderCard}
     />
   );
 }

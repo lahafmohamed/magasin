@@ -1,30 +1,31 @@
 import * as React from 'react';
+import { Tag, type TagHue } from '@/components/ui/tag';
 import { cn } from '@/lib/utils';
 
 export type TiersRole = 'client' | 'fournisseur' | 'mixte';
 
 /**
- * Pastille de rôle d'un tiers. Le même badge était recopié à 12 endroits
- * (Tiers, TiersDetail, TiersPicker) en primitives Tailwind brutes — bleu/orange
- * avec leurs variantes `dark:` faites à la main — et rendu à trois tailles
- * différentes. Il passe désormais par les rampes sémantiques, qui s'inversent
- * seules en thème sombre.
+ * Rôle d'un contact (client, fournisseur). C'est une CATÉGORIE, pas un statut :
+ * étiquette `Tag` (texte neutre + pastille de couleur), et non plus les rampes
+ * info / alerte qui faisaient lire un fournisseur comme un avertissement.
+ *
+ * Teintes : client = chart-1, fournisseur = chart-6 (contact mixte = chart-4
+ * quand un seul libellé est imposé via `children`). Un contact à la fois client
+ * et fournisseur affiche les deux étiquettes « Client » + « Fournisseur »
+ * (glossaire : plus de « Mixte » ni de « Fourn. »).
  */
-const ROLE: Record<TiersRole, { label: string; className: string }> = {
-  client: {
-    label: 'Client',
-    className: 'border-info-200 bg-info-50 text-info-700',
-  },
-  fournisseur: {
-    label: 'Fourn.',
-    className: 'border-warning-200 bg-warning-50 text-warning-700',
-  },
-  // Tiers à la fois client et fournisseur : ni l'un ni l'autre des deux rôles,
-  // donc une teinte catégorielle plutôt qu'une rampe de statut.
-  mixte: {
-    label: 'Mixte',
-    className: 'border-chart-4/30 bg-chart-4/15 text-chart-4',
-  },
+// Pas la teinte 1 : c'est le bleu de l'accent (« on peut agir »), et la liste
+// des contacts alignait un point bleu par client.
+export const TIERS_ROLE_HUE: Record<TiersRole, TagHue> = {
+  client: 3,
+  fournisseur: 6,
+  mixte: 4,
+};
+
+export const TIERS_ROLE_LABEL: Record<TiersRole, string> = {
+  client: 'Client',
+  fournisseur: 'Fournisseur',
+  mixte: 'Client et fournisseur',
 };
 
 export function TiersRoleBadge({
@@ -34,19 +35,20 @@ export function TiersRoleBadge({
 }: {
   role: TiersRole;
   className?: string;
-  /** Remplace le libellé par défaut (ex. « Fournisseur » en entier, ou avec une icône). */
+  /** Remplace le libellé par défaut (ex. avec une icône). */
   children?: React.ReactNode;
 }) {
-  const { label, className: roleClassName } = ROLE[role];
+  if (role === 'mixte' && children === undefined) {
+    return (
+      <span className={cn('inline-flex flex-wrap items-center gap-1', className)}>
+        <Tag hue={TIERS_ROLE_HUE.client}>{TIERS_ROLE_LABEL.client}</Tag>
+        <Tag hue={TIERS_ROLE_HUE.fournisseur}>{TIERS_ROLE_LABEL.fournisseur}</Tag>
+      </span>
+    );
+  }
   return (
-    <span
-      className={cn(
-        'inline-flex items-center whitespace-nowrap rounded border px-1.5 py-0.5 text-xs font-medium',
-        roleClassName,
-        className
-      )}
-    >
-      {children ?? label}
-    </span>
+    <Tag hue={TIERS_ROLE_HUE[role]} className={className}>
+      {children ?? TIERS_ROLE_LABEL[role]}
+    </Tag>
   );
 }

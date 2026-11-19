@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { businessError } from '../utils/errors';
 import { assertPositiveSalePrices, calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { resolveSalesLocationId } from './StockMagasinService';
@@ -533,11 +534,11 @@ export class DevisService {
       );
 
       if (existingRows.length === 0) {
-        throw new Error('Devis non trouvé');
+        throw businessError(404, 'Devis introuvable.');
       }
 
       if (['accepte', 'converti', 'refuse'].includes(existingRows[0].statut)) {
-        throw new Error('Cannot modify a quote that has been accepted, converted, or refused');
+        throw businessError(409, 'Impossible de modifier un devis confirmé, facturé ou refusé.');
       }
 
       const upd_tiers_id = input.tiers_id ?? input.client_id;
@@ -657,8 +658,11 @@ export class DevisService {
   async updateStatut(id: number, statut: string, req?: any): Promise<void> {
     const normalizedStatut = this.normalizeStatutInput(statut);
     const validStatuts = ['brouillon', 'envoye', 'accepte', 'refuse', 'annule'];
+    if (normalizedStatut === 'converti') {
+      throw businessError(400, 'Le statut « Facturé » est attribué automatiquement lors de la conversion en facture.');
+    }
     if (!validStatuts.includes(normalizedStatut)) {
-      throw new Error('Invalid statut');
+      throw businessError(400, 'Statut de devis inconnu.');
     }
 
     const client = await pool.connect();
@@ -673,27 +677,45 @@ export class DevisService {
       );
 
       if (devisRows.length === 0) {
-        throw new Error('Devis non trouvé');
+        throw businessError(404, 'Devis introuvable.');
       }
 
       const currentStatut = devisRows[0].statut;
 
       if (currentStatut === 'converti' && normalizedStatut !== 'converti') {
-        throw new Error('Ce devis est déjà converti en facture');
+        throw businessError(409, 'Ce devis est déjà facturé.');
       }
 
+      // A delivered (or invoiced) BL took goods out of the stock: cancelling the
+      // devis must not silently void it — the raw update below used to flip a
+      // 'livre' BL to 'annule' without putting anything back in stock.
       if (normalizedStatut === 'annule') {
-        const { rows: invoicedBLRows } = await client.query(
-          `SELECT id
-           FROM bons_livraison
-           WHERE devis_id = $1
-             AND statut = 'facture'
+        const { rows: shippedBLRows } = await client.query(
+          `SELECT bl.numero_bl, bl.statut, f.numero_facture
+           FROM bons_livraison bl
+           LEFT JOIN factures f ON f.id = bl.facture_id
+           WHERE bl.devis_id = $1
+             AND bl.deleted_at IS NULL
+             AND bl.statut IN ('livre', 'facture')
+           ORDER BY (bl.statut = 'facture') DESC, bl.id
            LIMIT 1`,
           [id]
         );
 
-        if (invoicedBLRows.length > 0) {
-          throw new Error('Impossible d\'annuler ce devis: un bon de livraison est déjà facturé');
+        const shipped = shippedBLRows[0];
+        if (shipped?.statut === 'facture') {
+          throw businessError(
+            409,
+            `Impossible d’annuler ce devis : son bon de livraison ${shipped.numero_bl} est déjà facturé${shipped.numero_facture ? ` (${shipped.numero_facture})` : ''}. Pour reprendre la marchandise, enregistrez un retour client.`,
+            'DEVIS_BL_FACTURE'
+          );
+        }
+        if (shipped) {
+          throw businessError(
+            409,
+            `Impossible d’annuler ce devis : son bon de livraison ${shipped.numero_bl} est déjà livré. Si la marchandise revient, annulez d’abord ce bon de livraison : ses articles seront remis en stock.`,
+            'DEVIS_BL_LIVRE'
+          );
         }
       }
 
@@ -706,12 +728,13 @@ export class DevisService {
         generatedBL = await this.createBonLivraisonFromDevis(client, id, req?.user?.id);
       }
 
+      // Only BLs that moved no stock follow the devis.
       if (normalizedStatut === 'annule') {
         await client.query(
           `UPDATE bons_livraison
            SET statut = 'annule', updated_at = CURRENT_TIMESTAMP
            WHERE devis_id = $1
-             AND statut <> 'facture'`,
+             AND statut IN ('brouillon', 'valide')`,
           [id]
         );
       }

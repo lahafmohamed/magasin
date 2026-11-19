@@ -71,7 +71,7 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
               <DialogTitle className="flex items-center gap-2">
                 {pending.destructive && (
                   <AlertTriangle
-                    className="h-5 w-5 text-destructive shrink-0"
+                    className="h-5 w-5 shrink-0 text-danger-600"
                     aria-hidden="true"
                   />
                 )}
@@ -81,14 +81,23 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
                 <DialogDescription>{pending.description}</DialogDescription>
               )}
             </DialogHeader>
+            {/* Focus initial : sur « Annuler » quand l'action est destructive —
+                un Entrée répété ne doit pas supprimer une facture. Boutons de
+                44 px sur téléphone (`touch`). */}
             <DialogFooter className="gap-2 sm:gap-2">
-              <Button variant="outline" onClick={() => close(false)}>
+              <Button
+                variant="outline"
+                size="touch"
+                onClick={() => close(false)}
+                autoFocus={!!pending.destructive}
+              >
                 {pending.cancelLabel ?? 'Annuler'}
               </Button>
               <Button
                 variant={pending.destructive ? 'destructive' : 'default'}
+                size="touch"
                 onClick={() => close(true)}
-                autoFocus
+                autoFocus={!pending.destructive}
               >
                 {pending.confirmLabel}
               </Button>

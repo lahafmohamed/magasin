@@ -26,6 +26,22 @@ export const PAYMENT_METHODS_WITH_COMPENSATION = [
 
 export type PaymentMethodWithCompensation = (typeof PAYMENT_METHODS_WITH_COMPENSATION)[number];
 
+/** Complément de phrase pour un message : « … enregistré en espèces / par carte ». */
+const PAYMENT_METHOD_PHRASES: Record<PaymentMethod, string> = {
+  espece: 'en espèces',
+  carte: 'par carte',
+  cheque: 'par chèque',
+  virement: 'par virement',
+  mobile_money: 'par Mobile Money',
+  orange_money: 'par Orange Money',
+  mtn_money: 'par MTN Money',
+  wave: 'par Wave',
+};
+
+export function paymentMethodPhrase(method: PaymentMethod): string {
+  return PAYMENT_METHOD_PHRASES[method] ?? 'par un autre mode de paiement';
+}
+
 export function isPaymentMethod(value: unknown): value is PaymentMethod {
   return typeof value === 'string' && (PAYMENT_METHODS as readonly string[]).includes(value);
 }

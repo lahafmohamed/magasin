@@ -6,7 +6,7 @@ function Skeleton({
 }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn("animate-pulse rounded-md bg-muted", className)}
+      className={cn("animate-pulse rounded-md bg-muted-foreground/10", className)}
       {...props}
     />
   )
@@ -15,6 +15,8 @@ function Skeleton({
 /**
  * Enveloppe commune aux squelettes : annonce le chargement aux lecteurs d'écran
  * (les barres elles-mêmes n'ont aucun texte, elles ne sont donc pas restituées).
+ * `role="status"` SANS `aria-busy` : posé sur la région vivante elle-même,
+ * `aria-busy` la rendait muette (même règle que `ui/loading`).
  */
 function SkeletonRegion({
   className,
@@ -22,7 +24,7 @@ function SkeletonRegion({
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div role="status" aria-busy="true" aria-label="Chargement…" className={className} {...props}>
+    <div role="status" aria-label="Chargement…" className={className} {...props}>
       {children}
     </div>
   )

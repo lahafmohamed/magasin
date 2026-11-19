@@ -82,6 +82,29 @@ export class PayrollController {
     }
   }
 
+  /** POST /payroll/config/cotisations — admin (U-11). */
+  static async createCotisation(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const data = await payrollService.createCotisation(
+        {
+          code: req.body.code,
+          libelle: req.body.libelle,
+          taux_salarial: req.body.taux_salarial,
+          taux_patronal: req.body.taux_patronal,
+          plafond: req.body.plafond,
+          actif: req.body.actif,
+        },
+        req.user?.id,
+        req
+      );
+      res.status(201).json({ success: true, data, message: `Cotisation ${data.code} ajoutée` });
+    } catch (e: any) {
+      const status = businessStatusOf(e);
+      if (!status) console.error('PayrollController:', e);
+      res.status(status ?? 500).json({ success: false, error: status ? e.message : 'Erreur serveur' });
+    }
+  }
+
   static async updateCotisation(req: AuthRequest, res: Response): Promise<void> {
     try {
       const id = parseInt(req.params.id);

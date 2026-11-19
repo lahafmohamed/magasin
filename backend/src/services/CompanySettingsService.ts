@@ -21,7 +21,14 @@ export interface CompanySettings {
    * absent de cette liste est actif). Voir migration 098.
    */
   modules_desactives: string[];
+  /** Métier du client (migration 109) : préréglage des modules, écran de vente. */
+  type_activite: TypeActivite;
+  /** Message imprimé en bas du ticket de caisse 80 mm (migration 109). */
+  ticket_message: string | null;
 }
+
+export const TYPES_ACTIVITE = ['general', 'informatique', 'habillement', 'libre_service'] as const;
+export type TypeActivite = (typeof TYPES_ACTIVITE)[number];
 
 export class CompanySettingsService {
   private cachedSettings: CompanySettings | null = null;
@@ -50,6 +57,8 @@ export class CompanySettingsService {
           logo_url TEXT DEFAULT '/logo.png',
           taux_conversion NUMERIC(10,4) DEFAULT 1.0000,
           modules_desactives JSONB NOT NULL DEFAULT '[]'::jsonb,
+          type_activite VARCHAR(30) NOT NULL DEFAULT 'general',
+          ticket_message TEXT,
           CONSTRAINT one_row CHECK (id = 1)
         );
       `);
@@ -58,7 +67,9 @@ export class CompanySettingsService {
       // est sauté. Sans cet ALTER, `modules_desactives` resterait absente.
       await pool.query(`
         ALTER TABLE company_settings
-          ADD COLUMN IF NOT EXISTS modules_desactives JSONB NOT NULL DEFAULT '[]'::jsonb;
+          ADD COLUMN IF NOT EXISTS modules_desactives JSONB NOT NULL DEFAULT '[]'::jsonb,
+          ADD COLUMN IF NOT EXISTS type_activite VARCHAR(30) NOT NULL DEFAULT 'general',
+          ADD COLUMN IF NOT EXISTS ticket_message TEXT;
       `);
 
       await pool.query(`
@@ -106,8 +117,15 @@ export class CompanySettingsService {
       devise = oldSettings.devise || 'FCFA',
       logo_url = oldSettings.logo_url ?? '/logo.png',
       taux_conversion = oldSettings.taux_conversion ?? 1,
-      modules_desactives = oldSettings.modules_desactives ?? []
+      modules_desactives = oldSettings.modules_desactives ?? [],
+      type_activite = oldSettings.type_activite ?? 'general',
+      ticket_message = oldSettings.ticket_message ?? null
     } = settings;
+
+    // Un message vide n'imprime rien : NULL plutôt qu'une chaîne blanche.
+    const ticketMessage = typeof ticket_message === 'string' && ticket_message.trim()
+      ? ticket_message.trim()
+      : null;
 
     // Dédoublonnage : la liste sert de test d'appartenance, un doublon n'a pas
     // de sens et gonflerait le JSON à chaque enregistrement.
@@ -117,10 +135,11 @@ export class CompanySettingsService {
       `UPDATE company_settings
        SET nom = $1, adresse = $2, telephone = $3, email = $4, site_web = $5,
            nif = $6, rc = $7, ai = $8, cb = $9, devise = $10, logo_url = $11,
-           taux_conversion = $12, modules_desactives = $13::jsonb
+           taux_conversion = $12, modules_desactives = $13::jsonb,
+           type_activite = $14, ticket_message = $15
        WHERE id = 1
        RETURNING *`,
-      [nom, adresse, telephone, email, site_web, nif, rc, ai, cb, devise, logo_url, taux_conversion, JSON.stringify(modules)]
+      [nom, adresse, telephone, email, site_web, nif, rc, ai, cb, devise, logo_url, taux_conversion, JSON.stringify(modules), type_activite, ticketMessage]
     );
 
     this.cachedSettings = rows[0];

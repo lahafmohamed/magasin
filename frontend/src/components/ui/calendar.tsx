@@ -20,7 +20,8 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
         nav: 'space-x-1 flex items-center',
         nav_button: cn(
           buttonVariants({ variant: 'outline' }),
-          'h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100',
+          // Pas d'opacité : flèches de mois lisibles (le gris à 50 % tombait sous 3:1).
+          'h-7 w-7 bg-transparent p-0 text-muted-foreground hover:text-foreground',
         ),
         nav_button_previous: 'absolute left-1',
         nav_button_next: 'absolute right-1',
@@ -33,7 +34,9 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
         day_range_end: 'day-range-end',
         day_selected: 'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground',
         day_today: 'bg-accent text-accent-foreground font-semibold',
-        day_outside: 'day-outside text-muted-foreground opacity-50 aria-selected:bg-accent/50 aria-selected:text-muted-foreground aria-selected:opacity-30',
+        // Jours du mois voisin : cliquables, donc lisibles (≥ 4,5:1) — distingués par
+        // la couleur estompée, sans opacité supplémentaire.
+        day_outside: 'day-outside text-muted-foreground aria-selected:bg-accent/50 aria-selected:text-muted-foreground',
         day_disabled: 'text-muted-foreground opacity-50',
         day_range_middle: 'aria-selected:bg-accent aria-selected:text-accent-foreground',
         day_hidden: 'invisible',

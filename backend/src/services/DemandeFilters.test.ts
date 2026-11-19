@@ -155,6 +155,35 @@ describe('DemandeService.getAll — filtres et cohérence du total', () => {
     expect(total).toBe(3);        // total complet
   });
 
+  it('recherche par magasin, créateur ou numéro, total compris', async () => {
+    const { rows: [a] } = await pool.query('SELECT nom FROM stock_locations WHERE id = $1', [magasinA]);
+
+    const byMagasin = await demandeService.getAll(scoped({ search: a.nom }));
+    expect(byMagasin.data).toHaveLength(3);
+    expect(byMagasin.total).toBe(3);
+    expect(byMagasin.data.every((d: any) => d.magasin_id === magasinA)).toBe(true);
+
+    // « Test Demande User » a créé les 3 demandes du magasin A.
+    const byCreator = await demandeService.getAll(scoped({ search: 'demande user', limit: 2 }));
+    expect(byCreator.data).toHaveLength(2);
+    expect(byCreator.total).toBe(3);
+
+    const one = byMagasin.data[0];
+    const byNumero = await demandeService.getAll(scoped({ search: one.numero }));
+    expect(byNumero.data.map((d: any) => d.id)).toEqual([one.id]);
+    expect(byNumero.total).toBe(1);
+
+    const none = await demandeService.getAll(scoped({ search: 'aucune-demande-zzz' }));
+    expect(none).toEqual({ data: [], total: 0 });
+  });
+
+  it('exclut des statuts (brouillons invisibles au dépôt)', async () => {
+    const { data, total } = await demandeService.getAll(scoped({ exclude_statuts: ['brouillon'] }));
+    expect(data).toHaveLength(4);
+    expect(total).toBe(4);
+    expect(data.some((d: any) => d.statut === 'brouillon')).toBe(false);
+  });
+
   it('combine plusieurs filtres sans désaccorder le total', async () => {
     const from = new Date();
     from.setDate(from.getDate() - 30);

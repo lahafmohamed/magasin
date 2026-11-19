@@ -4,6 +4,8 @@ import { logger } from '../utils/logger';
 import { businessError } from '../utils/errors';
 import { checkPeriodIsOpen } from './PeriodService';
 import { PaymentMethod } from '../utils/paymentMethods';
+import { formatMontantFcfa } from '../utils/money';
+import { mouvementCaisseLibelleParDefaut, tiersNomSql } from '../utils/caisseLibelle';
 
 export const CASH_SESSION_MAX_AGE_HOURS = 24;
 
@@ -50,15 +52,85 @@ export interface CreateMouvementInput {
   idempotency_key?: string;
 }
 
+export interface SessionMethodTotal {
+  methode_paiement: string;
+  total_encaissements: number;
+  total_decaissements: number;
+  nb: number;
+}
+
+export interface SessionCashTotals {
+  par_methode: SessionMethodTotal[];
+  total_encaissements: number;
+  total_decaissements: number;
+  especes_encaissees: number;
+  especes_decaissees: number;
+  /** fond + espèces encaissées − espèces décaissées: what the drawer should hold. */
+  expected_cash: number;
+  hors_especes_encaissees: number;
+  hors_especes_decaissees: number;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Per-method totals of a session and the cash the drawer should hold.
+ * Card, cheque, transfer and mobile money never enter the drawer, so only
+ * `espece` movements count towards `expected_cash` — the same rule as the
+ * closing count (U-03).
+ */
+export async function computeSessionCashTotals(
+  q: { query: (text: string, params?: any[]) => Promise<{ rows: any[] }> },
+  sessionId: number,
+  fondInitial: number
+): Promise<SessionCashTotals> {
+  const { rows } = await q.query(
+    `SELECT methode_paiement,
+            COALESCE(SUM(CASE WHEN type = 'encaissement' THEN montant ELSE 0 END), 0) AS total_encaissements,
+            COALESCE(SUM(CASE WHEN type = 'decaissement' THEN montant ELSE 0 END), 0) AS total_decaissements,
+            COUNT(*) AS nb
+     FROM mouvements_caisse
+     WHERE session_caisse_id = $1
+     GROUP BY methode_paiement
+     ORDER BY methode_paiement`,
+    [sessionId]
+  );
+  const parMethode: SessionMethodTotal[] = rows.map((r: any) => ({
+    methode_paiement: r.methode_paiement,
+    total_encaissements: parseFloat(r.total_encaissements),
+    total_decaissements: parseFloat(r.total_decaissements),
+    nb: parseInt(r.nb, 10),
+  }));
+  const cash = parMethode.find((r) => r.methode_paiement === 'espece');
+  const totalEnc = round2(parMethode.reduce((s, r) => s + r.total_encaissements, 0));
+  const totalDec = round2(parMethode.reduce((s, r) => s + r.total_decaissements, 0));
+  const cashEnc = cash?.total_encaissements ?? 0;
+  const cashDec = cash?.total_decaissements ?? 0;
+  return {
+    par_methode: parMethode,
+    total_encaissements: totalEnc,
+    total_decaissements: totalDec,
+    especes_encaissees: cashEnc,
+    especes_decaissees: cashDec,
+    expected_cash: round2(fondInitial + cashEnc - cashDec),
+    hors_especes_encaissees: round2(totalEnc - cashEnc),
+    hors_especes_decaissees: round2(totalDec - cashDec),
+  };
+}
+
 export class CaisseMagasinService {
   /**
-   * Get current open session for a magasin
+   * Get current open session for a magasin, with its totals: the legacy
+   * all-methods `solde_theorique` plus `expected_cash` (cash only — what the
+   * drawer should hold), the non-cash takings apart, and `par_methode`.
    */
   async getSessionActive(magasinId: number): Promise<any | null> {
     const { rows } = await pool.query(
       `SELECT s.*, 
               m.nom as magasin_nom, m.code as magasin_code,
               ouv.username as ouvert_par_username,
+              COALESCE(NULLIF(TRIM(ouv.nom_complet), ''), ouv.username) AS ouvert_par_nom,
+              COALESCE(NULLIF(TRIM(fer.nom_complet), ''), fer.username) AS cloture_par_nom,
               fer.username as cloture_par_username
        FROM sessions_caisse s
        JOIN magasins m ON s.magasin_id = m.id
@@ -70,29 +142,19 @@ export class CaisseMagasinService {
     );
 
     if (rows.length === 0) return null;
-    
-    // Calculate current balance
-    const session = rows[0];
-    const { rows: mouvements } = await pool.query(
-      `SELECT COALESCE(SUM(CASE WHEN type = 'encaissement' THEN montant ELSE 0 END), 0) as total_encaissements,
-              COALESCE(SUM(CASE WHEN type = 'decaissement' THEN montant ELSE 0 END), 0) as total_decaissements
-       FROM mouvements_caisse
-       WHERE session_caisse_id = $1`,
-      [session.id]
-    );
 
+    const session = rows[0];
     const fondInitial = parseFloat(session.fond_initial) || 0;
-    const encaissements = parseFloat(mouvements[0].total_encaissements) || 0;
-    const decaissements = parseFloat(mouvements[0].total_decaissements) || 0;
-    const soldeTheorique = fondInitial + encaissements - decaissements;
+    const totals = await computeSessionCashTotals(pool, session.id, fondInitial);
     const sessionAgeHours = getCashSessionAgeHours(session.date_ouverture);
 
     return {
       ...session,
       fond_initial: fondInitial,
-      total_encaissements: encaissements,
-      total_decaissements: decaissements,
-      solde_theorique: soldeTheorique,
+      ...totals,
+      // Legacy: every method, card and mobile money included — not what the
+      // drawer holds. Prefer expected_cash for any till check (U-03).
+      solde_theorique: round2(fondInitial + totals.total_encaissements - totals.total_decaissements),
       session_age_hours: sessionAgeHours,
       requires_manager_action:
         sessionAgeHours >= CASH_SESSION_MAX_AGE_HOURS,
@@ -160,7 +222,7 @@ export class CaisseMagasinService {
       // Check if user can access this magasin
       const userRole = await this.getUserMagasinRole(input.user_id, input.magasin_id);
       if (userRole === 'none') {
-        throw businessError(403, 'Accès refusé - vous ne pouvez pas ouvrir la caisse de ce magasin');
+        throw businessError(403, 'Accès refusé : vous n’êtes pas affecté à ce magasin, vous ne pouvez pas ouvrir sa caisse.');
       }
 
       // Check if a session is already open for this magasin
@@ -222,18 +284,6 @@ export class CaisseMagasinService {
     if (sessRows.length === 0) throw businessError(404, 'Session introuvable');
     const session = sessRows[0];
 
-    // Per-method breakdown
-    const { rows: byMethod } = await pool.query(
-      `SELECT methode_paiement,
-              COALESCE(SUM(CASE WHEN type = 'encaissement' THEN montant ELSE 0 END), 0) AS total_encaissements,
-              COALESCE(SUM(CASE WHEN type = 'decaissement' THEN montant ELSE 0 END), 0) AS total_decaissements,
-              COUNT(*) AS nb
-       FROM mouvements_caisse
-       WHERE session_caisse_id = $1
-       GROUP BY methode_paiement`,
-      [sessionId]
-    );
-
     // Orphans: lines without source link AND not in divers categories
     const { rows: orphans } = await pool.query(
       `SELECT id, type, categorie, montant, libelle, date_mouvement
@@ -245,14 +295,12 @@ export class CaisseMagasinService {
     );
 
     const fondInitial = parseFloat(session.fond_initial) || 0;
-    const cashRow = byMethod.find((r: any) => r.methode_paiement === 'espece');
-    const cashEnc = cashRow ? parseFloat(cashRow.total_encaissements) : 0;
-    const cashDec = cashRow ? parseFloat(cashRow.total_decaissements) : 0;
-    const expectedCash = fondInitial + cashEnc - cashDec;
+    const totals = await computeSessionCashTotals(pool, sessionId, fondInitial);
+    const expectedCash = totals.expected_cash;
 
     let ecart: number | null = null;
     if (fondFinalCompte !== undefined && fondFinalCompte !== null) {
-      ecart = fondFinalCompte - expectedCash;
+      ecart = round2(fondFinalCompte - expectedCash);
     }
 
     return {
@@ -260,15 +308,10 @@ export class CaisseMagasinService {
       magasin_id: session.magasin_id,
       statut: session.statut,
       fond_initial: fondInitial,
+      ...totals,
       expected_cash: expectedCash,
       fond_final_compte: fondFinalCompte ?? null,
       ecart,
-      par_methode: byMethod.map((r: any) => ({
-        methode_paiement: r.methode_paiement,
-        total_encaissements: parseFloat(r.total_encaissements),
-        total_decaissements: parseFloat(r.total_decaissements),
-        nb: parseInt(r.nb),
-      })),
       orphan_mouvements: orphans,
       can_close: orphans.length === 0,
     };
@@ -297,7 +340,7 @@ export class CaisseMagasinService {
 
       const userRole = await this.getUserMagasinRole(input.user_id, session.magasin_id);
       if (userRole === 'none') {
-        throw businessError(403, 'Accès refusé - vous ne pouvez pas clôturer cette caisse');
+        throw businessError(403, 'Accès refusé : vous n’êtes pas affecté à ce magasin, vous ne pouvez pas clôturer sa caisse.');
       }
 
       // Refuse if orphan lines exist
@@ -309,7 +352,9 @@ export class CaisseMagasinService {
         [input.session_id]
       );
       if (orphans.length > 0) {
-        throw businessError(409, `Clôture impossible: ${orphans.length} mouvement(s) sans source. Régularisez avant clôture.`);
+        // CP-CAI-02: no screen can attach or cancel such a movement yet (U-27),
+        // so the message must not prescribe an action the user cannot take.
+        throw businessError(409, `Clôture impossible : ${orphans.length} mouvement(s) de caisse sans document d’origine. Signalez-les à votre administrateur.`);
       }
 
       // Per-method totals
@@ -341,7 +386,7 @@ export class CaisseMagasinService {
       const ecart = Number((input.fond_final_compte - expectedCash).toFixed(2));
 
       if (ecart !== 0 && (!input.commentaire_cloture || input.commentaire_cloture.trim() === '')) {
-        throw businessError(422, `Écart de ${ecart.toFixed(0)} FCFA détecté. Un commentaire est obligatoire pour expliquer l'écart.`, 'ECART_COMMENT_REQUIRED');
+        throw businessError(422, `Écart de ${formatMontantFcfa(ecart)} sur les espèces : expliquez-le dans le commentaire de clôture.`, 'ECART_COMMENT_REQUIRED');
       }
 
       const { rows } = await client.query(
@@ -388,8 +433,10 @@ export class CaisseMagasinService {
         expected_cash: expectedCash,
         par_methode: totauxParMethode,
         message: ecart === 0
-          ? 'Session clôturée - Caisse conforme'
-          : `Session clôturée - Écart espèces: ${ecart.toFixed(0)} FCFA`,
+          ? 'Caisse clôturée : les espèces comptées correspondent.'
+          : ecart < 0
+            ? `Caisse clôturée : il manque ${formatMontantFcfa(-ecart)} en espèces.`
+            : `Caisse clôturée : ${formatMontantFcfa(ecart)} d’espèces en trop.`,
       };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -408,10 +455,10 @@ export class CaisseMagasinService {
     input: CreateMouvementInput
   ): Promise<any> {
     if (!input.montant || input.montant <= 0) {
-      throw businessError(400, 'Montant doit être > 0');
+      throw businessError(400, 'Le montant doit être supérieur à 0.');
     }
     if (!input.methode_paiement) {
-      throw businessError(400, 'methode_paiement obligatoire');
+      throw businessError(400, 'Choisissez un mode de paiement.');
     }
 
     // Idempotency short-circuit
@@ -455,7 +502,7 @@ export class CaisseMagasinService {
     const dversCategories = ['apport', 'retrait_banque', 'autre_entree', 'autre_sortie'];
     if (input.reference_type == null || input.reference_id == null) {
       if (!dversCategories.includes(input.categorie)) {
-        throw businessError(400, `Mouvement caisse sans source: categorie '${input.categorie}' exige reference_type+reference_id`);
+        throw businessError(400, 'Ce mouvement de caisse doit être rattaché à son document d’origine (paiement, dépense…).');
       }
     }
 
@@ -556,7 +603,7 @@ export class CaisseMagasinService {
     }
     const { rows: seqRows } = await client.query("SELECT nextval('piece_comptable_seq') as num");
     const numeroPiece = `PC-${new Date().getFullYear()}-${String(seqRows[0].num).padStart(5, '0')}`;
-    const libelle = input.libelle || `Mouvement caisse ${input.categorie}`;
+    const libelle = input.libelle || mouvementCaisseLibelleParDefaut(input.categorie);
 
     // tiers_id is left null: reference_id here is the source document id (paiement/
     // depense/…), not a tiers id. reference_type/reference_id capture the link.
@@ -583,13 +630,32 @@ export class CaisseMagasinService {
    * Get all movements for a session
    */
   async getMouvementsSession(sessionId: number): Promise<any[]> {
+    // P-M4: every row says whose money it is and which document it settles,
+    // old rows included (their libellé still reads « Paiement facture #113 »,
+    // « Acompte client #17 » — database ids). The source document is resolved
+    // from reference_type/reference_id; facture_id/numero_facture are the
+    // CLIENT invoice only, avoir_id/numero_avoir a credit-note refund.
     const { rows } = await pool.query(
       `SELECT m.*,
-              u.username as cree_par_username
+              u.username AS cree_par_username,
+              f.id AS facture_id,
+              f.numero_facture,
+              av.id AS avoir_id,
+              av.numero_avoir,
+              t.id AS tiers_id,
+              ${tiersNomSql('t')} AS tiers_nom
        FROM mouvements_caisse m
        LEFT JOIN utilisateurs u ON m.cree_par = u.id
+       LEFT JOIN paiements p ON m.reference_type = 'paiement' AND p.id = m.reference_id
+       LEFT JOIN factures f ON f.id = COALESCE(p.facture_id, m.facture_id)
+       LEFT JOIN acomptes_clients ac ON m.reference_type = 'acompte' AND ac.id = m.reference_id
+       LEFT JOIN acomptes_fournisseur af ON m.reference_type = 'acompte_fournisseur' AND af.id = m.reference_id
+       LEFT JOIN factures_avoir av ON m.reference_type = 'avoir' AND av.id = m.reference_id
+       LEFT JOIN paiements_fournisseur pf ON m.reference_type = 'paiement_fournisseur' AND pf.id = m.reference_id
+       LEFT JOIN factures_fournisseur ff ON ff.id = pf.facture_id
+       LEFT JOIN tiers t ON t.id = COALESCE(f.tiers_id, ac.tiers_id, af.tiers_id, av.tiers_id, ff.tiers_id)
        WHERE m.session_caisse_id = $1
-       ORDER BY m.date_mouvement ASC`,
+       ORDER BY m.date_mouvement ASC, m.id ASC`,
       [sessionId]
     );
     return rows;
@@ -604,6 +670,8 @@ export class CaisseMagasinService {
       `SELECT s.*, 
               m.nom as magasin_nom, m.code as magasin_code,
               ouv.username as ouvert_par_username,
+              COALESCE(NULLIF(TRIM(ouv.nom_complet), ''), ouv.username) AS ouvert_par_nom,
+              COALESCE(NULLIF(TRIM(fer.nom_complet), ''), fer.username) AS cloture_par_nom,
               fer.username as cloture_par_username
        FROM sessions_caisse s
        JOIN magasins m ON s.magasin_id = m.id
@@ -720,13 +788,16 @@ export class CaisseMagasinService {
       params.push(magasinId);
     }
 
+    // « Du … au … » are whole days. date_ouverture is a timestamp: comparing it
+    // with `<= 'YYYY-MM-DD'` meant « before midnight that morning », so every
+    // session opened on the « au » day disappeared from the history.
     if (dateDebut) {
-      whereClause += ` AND s.date_ouverture >= $${paramIndex++}`;
+      whereClause += ` AND s.date_ouverture >= $${paramIndex++}::date`;
       params.push(dateDebut);
     }
 
     if (dateFin) {
-      whereClause += ` AND s.date_ouverture <= $${paramIndex++}`;
+      whereClause += ` AND s.date_ouverture < ($${paramIndex++}::date + INTERVAL '1 day')`;
       params.push(dateFin);
     }
 
@@ -734,6 +805,8 @@ export class CaisseMagasinService {
       SELECT s.*, 
              m.nom as magasin_nom, m.code as magasin_code,
              ouv.username as ouvert_par_username,
+              COALESCE(NULLIF(TRIM(ouv.nom_complet), ''), ouv.username) AS ouvert_par_nom,
+              COALESCE(NULLIF(TRIM(fer.nom_complet), ''), fer.username) AS cloture_par_nom,
              fer.username as cloture_par_username
       FROM sessions_caisse s
       JOIN magasins m ON s.magasin_id = m.id

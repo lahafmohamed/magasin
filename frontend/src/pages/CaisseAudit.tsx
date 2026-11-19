@@ -1,27 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { AlertTriangle, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { caisseService } from '@/services/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageShell } from '@/components/ui/page-shell';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Tag } from '@/components/ui/tag';
+import { Money } from '@/components/ui/money';
+import { StatGrid, StatTile } from '@/components/ui/stat-tile';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { DataCard, DataCardRow, ResponsiveTable } from '@/components/ui/responsive-table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertTriangle, CheckCircle2, RefreshCw, Filter, ShieldCheck } from 'lucide-react';
-import { formatFCFA, formatDateShort } from '@/utils/format';
-import { formatPaymentMethod } from '@/utils/paymentMethod';
-import { toast } from 'sonner';
-import { getErrorMessage } from '@/utils/errors';
-import { PageHeader } from '@/components/ui/page-header';
 import { QueryState } from '@/components/ui/query-state';
 import { TableSkeleton } from '@/components/ui/skeleton';
+import { useRouteAccess } from '@/hooks/useRouteAccess';
+import { readDateParam, useSearchParamsPatch } from '@/hooks/useUrlState';
+import { formatDate, formatNumber, toNumber } from '@/utils/format';
+import { formatPaymentMethod, paymentMethodHue } from '@/utils/paymentMethod';
+
+/** Plafond de lignes renvoyées par `/caisse/audit` (le serveur ne pagine pas). */
+const AUDIT_LIMIT = 500;
 
 const SOURCE_KINDS = [
-  { value: '', label: 'Tous' },
+  { value: '', label: 'Tous les types' },
   { value: 'paiement', label: 'Paiements' },
-  { value: 'acompte_client', label: 'Acomptes client' },
-  { value: 'acompte_fournisseur', label: 'Acomptes fournisseur' },
+  { value: 'acompte_client', label: 'Acomptes clients' },
+  { value: 'acompte_fournisseur', label: 'Acomptes fournisseurs' },
 ];
 
 const KIND_LABELS: Record<string, string> = {
@@ -30,19 +38,22 @@ const KIND_LABELS: Record<string, string> = {
   acompte_fournisseur: 'Acompte fournisseur',
 };
 
-// Palette catégorielle (voir tailwind.config.js) — pas de valeur de statut ici,
-// et les tokens `chart-*` s'adaptent seuls au thème sombre.
-const KIND_BADGE: Record<string, string> = {
-  paiement: 'bg-chart-7/15 text-chart-7',
-  acompte_client: 'bg-chart-1/15 text-chart-1',
-  acompte_fournisseur: 'bg-chart-6/15 text-chart-6',
+/** Libellés des tuiles (pluriel). */
+const KIND_TILE_LABELS: Record<string, string> = {
+  paiement: 'Paiements',
+  acompte_client: 'Acomptes clients',
+  acompte_fournisseur: 'Acomptes fournisseurs',
 };
+
+const kindLabel = (kind: string) => KIND_LABELS[kind] ?? kind.replace(/_/g, ' ');
 
 interface AuditItem {
   source_kind: string;
   source_id: number;
   source_date: string | null;
   tiers_id: number | null;
+  /** Nom du client ou du fournisseur (P-M4 / B-02) ; absent sur un ancien serveur. */
+  tiers_nom?: string | null;
   methode_paiement: string;
   montant: number | string;
   session_caisse_id: number | null;
@@ -57,18 +68,55 @@ interface AuditSummary {
   orphans: number | string;
 }
 
+const plural = (n: number, one: string, many: string) => (n > 1 ? many : one);
+
+/**
+ * Paiement en espèces sans mouvement : « Hors caisse ». Avec un mouvement :
+ * « Rapproché ». Carte, virement, mobile money sans mouvement : rien à
+ * rapprocher, ils n'entrent jamais dans le tiroir — le cas courant, dit en
+ * texte estompé plutôt qu'en pastille.
+ */
+function StatutBadge({ item }: { item: AuditItem }) {
+  if (item.is_orphan) {
+    return (
+      <Badge variant="destructive" icon={AlertTriangle}>
+        Hors caisse
+      </Badge>
+    );
+  }
+  if (item.mouvement_caisse_id) {
+    return (
+      <Badge variant="success" icon={CheckCircle2}>
+        Rapproché
+      </Badge>
+    );
+  }
+  return <span className="whitespace-nowrap text-sm text-muted-foreground">Hors espèces</span>;
+}
+
 export default function CaisseAudit() {
+  const canOpen = useRouteAccess();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [items, setItems] = useState<AuditItem[]>([]);
   const [summary, setSummary] = useState<AuditSummary[]>([]);
-  const [orphansTotal, setOrphansTotal] = useState(0);
-  const [orphansOnly, setOrphansOnly] = useState(false);
-  const [sourceKind, setSourceKind] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  // Monotonic request id: les changements rapides de filtres ne laissent
-  // jamais une réponse obsolète écraser la plus récente.
+  /** `null` tant que le décompte n'est pas chargé : jamais « 0 » par défaut. */
+  const [orphansTotal, setOrphansTotal] = useState<number | null>(null);
+  // Filtres portés par l'adresse : le tableau de bord ouvre
+  // `/caisse/audit?orphans_only=true` (« paiements en espèces hors caisse »).
+  const [params] = useSearchParams();
+  const patchParams = useSearchParamsPatch();
+  const orphansOnly = params.get('orphans_only') === 'true';
+  const kindParam = params.get('source_kind') ?? '';
+  const sourceKind = SOURCE_KINDS.some((k) => k.value === kindParam) ? kindParam : '';
+  const dateFrom = readDateParam(params, 'date_from');
+  const dateTo = readDateParam(params, 'date_to');
+  const setOrphansOnly = (on: boolean) => patchParams({ orphans_only: on ? 'true' : null });
+  const setSourceKind = (kind: string) => patchParams({ source_kind: kind });
+  const setDateFrom = (date: string) => patchParams({ date_from: date });
+  const setDateTo = (date: string) => patchParams({ date_to: date });
+  // Identifiant de requête : un changement rapide de filtres ne laisse jamais
+  // une réponse obsolète écraser la plus récente.
   const reqIdRef = useRef(0);
 
   const load = useCallback(async () => {
@@ -77,175 +125,269 @@ export default function CaisseAudit() {
     setError(null);
     try {
       const body = await caisseService.getAudit({
-        limit: 500,
+        limit: AUDIT_LIMIT,
         orphans_only: orphansOnly || undefined,
         source_kind: sourceKind || undefined,
         date_from: dateFrom || undefined,
         date_to: dateTo || undefined,
       });
-      if (reqId !== reqIdRef.current) return; // réponse obsolète
+      if (reqId !== reqIdRef.current) return;
       setItems(body.data as AuditItem[]);
       setSummary(body.summary as AuditSummary[]);
       setOrphansTotal(body.orphans_total);
-    } catch (err: any) {
-      if (reqId !== reqIdRef.current) return; // réponse obsolète
-      if (err?.response?.status === 401) {
-        // Session expirée — même comportement que l'intercepteur partagé
-        localStorage.removeItem('auth_user');
-        window.location.href = '/login';
-        return;
-      }
+    } catch (err) {
+      if (reqId !== reqIdRef.current) return;
       setError(err);
-      toast.error(getErrorMessage(err, "Erreur lors du chargement de l'audit de caisse"));
+      setItems([]);
+      setSummary([]);
+      setOrphansTotal(null);
     } finally {
       if (reqId === reqIdRef.current) setLoading(false);
     }
   }, [orphansOnly, sourceKind, dateFrom, dateTo]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const hasFilters = !!(dateFrom || dateTo || sourceKind || orphansOnly);
+  const clearFilters = () => patchParams({ date_from: null, date_to: null, source_kind: null, orphans_only: null });
+
+  const summaryUnavailable = !loading && !!error;
+  const canOpenContact = canOpen('/tiers');
+
+  const tiersCell = (it: AuditItem) => {
+    if (!it.tiers_id) return <span className="text-muted-foreground">—</span>;
+    const label = it.tiers_nom?.trim() || `Contact n° ${it.tiers_id}`;
+    return canOpenContact ? (
+      <Link
+        to={`/tiers/${it.tiers_id}`}
+        className="inline-flex min-h-6 items-center rounded-sm text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {label}
+      </Link>
+    ) : (
+      label
+    );
+  };
+
+  const refCell = (id: number | null) =>
+    id ? <span className="whitespace-nowrap">n° {id}</span> : <span className="text-muted-foreground">—</span>;
+
+  /**
+   * GV-50 : session et mouvement dans une seule cellule « Caisse », sur deux
+   * lignes courtes — deux colonnes faisaient sortir « Statut » du cadre à
+   * 1 366 et 1 440 px.
+   */
+  const caisseCell = (it: AuditItem) => {
+    if (!it.session_caisse_id && !it.mouvement_caisse_id) return <span className="text-muted-foreground">—</span>;
+    return (
+      <>
+        {it.session_caisse_id && <span className="block whitespace-nowrap">Session n° {it.session_caisse_id}</span>}
+        {it.mouvement_caisse_id && (
+          <span className="block whitespace-nowrap text-xs text-muted-foreground">Mouvement n° {it.mouvement_caisse_id}</span>
+        )}
+      </>
+    );
+  };
+
+  const orphanCount = orphansTotal ?? 0;
+  const kinds = Array.from(new Set([...Object.keys(KIND_TILE_LABELS), ...summary.map((s) => s.source_kind)]));
 
   return (
-    <div className="container mx-auto px-4 py-6 max-w-7xl space-y-6">
-      <PageHeader
-        title="Audit caisse"
-        icon={ShieldCheck}
-        description="Rapprochement des encaissements espèces avec les mouvements de caisse"
-        actions={
-          <Button onClick={load} variant="outline" size="sm" className="gap-1" disabled={loading}>
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Actualiser
-          </Button>
-        }
-      />
+    <PageShell
+      title="Audit caisse"
+      description={'Chaque paiement en espèces doit avoir son mouvement de caisse : ceux qui n’en ont pas sont «\u00A0hors caisse\u00A0»'}
+    >
+      <section aria-labelledby="audit-kpis" className="space-y-2">
+        <h2 id="audit-kpis" className="sr-only">
+          Indicateurs
+        </h2>
+        <StatGrid>
+          <StatTile
+            label="Paiements en espèces hors caisse"
+            value={orphansTotal ?? undefined}
+            tone="danger"
+            loading={loading && orphansTotal === null}
+            unavailable={summaryUnavailable}
+            hint={
+              orphansTotal === null
+                ? undefined
+                : orphanCount > 0
+                  ? 'Sans mouvement de caisse : signalez-les à votre administrateur'
+                  : 'Tous les paiements en espèces sont rapprochés'
+            }
+          />
+          {kinds.map((kind) => {
+            // Un type absent du récapitulatif chargé n'a aucune opération : zéro réel.
+            const s = summary.find((x) => x.source_kind === kind);
+            const total = toNumber(s?.total) ?? 0;
+            const orphans = toNumber(s?.orphans) ?? 0;
+            return (
+              <StatTile
+                key={kind}
+                label={KIND_TILE_LABELS[kind] ?? kindLabel(kind)}
+                format="money"
+                value={s ? (toNumber(s.total_montant) ?? undefined) : 0}
+                loading={loading && orphansTotal === null}
+                unavailable={summaryUnavailable}
+                hint={`${formatNumber(total)} ${plural(total, 'opération', 'opérations')}${
+                  orphans > 0 ? ` · ${formatNumber(orphans)} hors caisse` : ''
+                }`}
+              />
+            );
+          })}
+        </StatGrid>
+        <p className="text-xs text-muted-foreground">
+          Totaux sur l’ensemble des opérations enregistrées, sans tenir compte des filtres
+        </p>
+      </section>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <Card className={orphansTotal > 0 ? 'border-danger-500 border-2' : 'border-success-500 border-2'}>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              {orphansTotal > 0
-                ? <AlertTriangle className="h-5 w-5 text-danger-600" />
-                : <CheckCircle2 className="h-5 w-5 text-success-600" />}
-              <div>
-                <p className="text-xs text-muted-foreground">Orphelins (espèce sans caisse)</p>
-                <p className={`text-2xl font-bold ${orphansTotal > 0 ? 'text-danger-600' : 'text-success-600'}`}>{orphansTotal}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        {summary.map((s) => (
-          <Card key={s.source_kind}>
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground">{KIND_LABELS[s.source_kind] || s.source_kind}</p>
-              <p className="text-xl font-bold">{s.total}</p>
-              <p className="text-xs text-muted-foreground">{formatFCFA(s.total_montant)}</p>
-              {Number(s.orphans) > 0 && (
-                <Badge variant="destructive" className="text-xs mt-1">{s.orphans} orphelins</Badge>
-              )}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Filters */}
       <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-sm flex items-center gap-2"><Filter className="h-4 w-4" /> Filtres</CardTitle>
-        </CardHeader>
-        <CardContent className="p-4 flex flex-wrap gap-3 items-end">
-          <div>
-            <Label className="text-xs">Type</Label>
-            <Select value={sourceKind || '__all'} onValueChange={v => setSourceKind(v === '__all' ? '' : v)}>
-              <SelectTrigger className="block w-44 text-sm" aria-label="Filtrer par type">
+        <CardContent inset="standalone" className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="audit-type">Type</Label>
+            <Select value={sourceKind || '__all'} onValueChange={(v) => setSourceKind(v === '__all' ? '' : v)}>
+              <SelectTrigger id="audit-type" className="w-full sm:w-52">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {SOURCE_KINDS.map(k => <SelectItem key={k.value} value={k.value === '' ? '__all' : k.value}>{k.label}</SelectItem>)}
+                {SOURCE_KINDS.map((k) => (
+                  <SelectItem key={k.value || '__all'} value={k.value === '' ? '__all' : k.value}>
+                    {k.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
-          <div>
-            <Label className="text-xs">Du</Label>
-            <DatePicker value={dateFrom} onChange={setDateFrom} className="h-9 w-44 text-sm" aria-label="Du" />
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="audit-du">Du</Label>
+            <DatePicker id="audit-du" value={dateFrom} onChange={setDateFrom} className="w-full sm:w-44" />
           </div>
-          <div>
-            <Label className="text-xs">Au</Label>
-            <DatePicker value={dateTo} onChange={setDateTo} className="h-9 w-44 text-sm" aria-label="Au" />
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="audit-au">Au</Label>
+            <DatePicker id="audit-au" value={dateTo} onChange={setDateTo} className="w-full sm:w-44" />
           </div>
-          <label htmlFor="audit-orphelins" className="flex items-center gap-2 text-sm cursor-pointer">
+          <label htmlFor="audit-hors-caisse" className="flex min-h-9 cursor-pointer items-center gap-2 text-sm">
             <Checkbox
-              id="audit-orphelins"
+              id="audit-hors-caisse"
               checked={orphansOnly}
-              onChange={e => setOrphansOnly(e.target.checked)}
+              onChange={(e) => setOrphansOnly(e.target.checked)}
             />
-            Orphelins uniquement
+            Hors caisse uniquement
           </label>
-          {(dateFrom || dateTo || sourceKind || orphansOnly) && (
-            <Button variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); setSourceKind(''); setOrphansOnly(false); }}>
-              Réinitialiser
+          {hasFilters && (
+            <Button variant="ghost" onClick={clearFilters}>
+              Effacer les filtres
             </Button>
           )}
         </CardContent>
       </Card>
 
-      {/* Items */}
       <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-sm">
-            Mouvements ({items.length}{items.length >= 500 ? ' — limité à 500' : ''})
-          </CardTitle>
+        <CardHeader>
+          <CardTitle>Opérations en espèces et acomptes</CardTitle>
+          <CardDescription>
+            {loading || error
+              ? 'Les plus récentes en premier'
+              : items.length >= AUDIT_LIMIT
+                ? `Les ${formatNumber(AUDIT_LIMIT)} plus récentes : précisez les dates pour voir les autres`
+                : `${formatNumber(items.length)} ${plural(items.length, 'opération', 'opérations')}, les plus récentes en premier`}
+          </CardDescription>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent>
           <QueryState
             loading={loading}
             error={error}
+            errorTitle="Impossible de charger l’audit de caisse"
             isEmpty={items.length === 0}
-            onRetry={load}
-            skeleton={<TableSkeleton rows={8} columns={9} />}
+            onRetry={() => void load()}
+            skeleton={<TableSkeleton rows={8} columns={7} />}
             emptyIcon={ShieldCheck}
-            emptyTitle="Aucun mouvement"
-            emptyDescription="Aucun mouvement ne correspond aux filtres sélectionnés."
+            emptyTitle={hasFilters ? 'Aucun paiement à contrôler' : 'Aucun paiement en espèces à contrôler'}
+            emptyDescription={
+              hasFilters
+                ? 'Aucun paiement ne correspond aux filtres sélectionnés'
+                : 'Les paiements et acomptes enregistrés apparaîtront ici avec leur mouvement de caisse'
+            }
+            emptyAction={
+              hasFilters ? (
+                <Button variant="outline" onClick={clearFilters}>
+                  Effacer les filtres
+                </Button>
+              ) : undefined
+            }
           >
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-xs">Date</TableHead>
-                  <TableHead className="text-xs">Type</TableHead>
-                  <TableHead className="text-xs">ID</TableHead>
-                  <TableHead className="text-xs">Tiers</TableHead>
-                  <TableHead className="text-xs">Méthode</TableHead>
-                  <TableHead className="text-xs text-right">Montant</TableHead>
-                  <TableHead className="text-xs">Session</TableHead>
-                  <TableHead className="text-xs">Mvt caisse</TableHead>
-                  <TableHead className="text-xs">Statut</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((it) => (
-                  <TableRow key={`${it.source_kind}-${it.source_id}`} className={it.is_orphan ? 'bg-danger-50' : ''}>
-                    <TableCell className="text-xs whitespace-nowrap">{it.source_date ? formatDateShort(it.source_date) : '—'}</TableCell>
-                    <TableCell>
-                      <span className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${KIND_BADGE[it.source_kind] || ''}`}>
-                        {KIND_LABELS[it.source_kind] || it.source_kind}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-xs font-mono">#{it.source_id}</TableCell>
-                    <TableCell className="text-xs">{it.tiers_id || '—'}</TableCell>
-                    <TableCell className="text-xs">{formatPaymentMethod(it.methode_paiement)}</TableCell>
-                    <TableCell className="text-right text-xs font-semibold">{formatFCFA(it.montant)}</TableCell>
-                    <TableCell className="text-xs">{it.session_caisse_id || '—'}</TableCell>
-                    <TableCell className="text-xs">{it.mouvement_caisse_id || '—'}</TableCell>
-                    <TableCell>
-                      {it.is_orphan
-                        ? <Badge variant="destructive" className="text-xs">Orphelin</Badge>
-                        : <Badge variant="outline" className="text-xs">OK</Badge>}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <ResponsiveTable
+              table={
+                <Table aria-label="Opérations en espèces et acomptes">
+                  {/*
+                   * GV-50 : le verdict (« Statut ») suit directement le montant, pour
+                   * ne jamais être la colonne coupée ; le numéro passe sous le type,
+                   * session et mouvement partagent la cellule « Caisse », et le nom
+                   * du client passe à la ligne plutôt que d'élargir le tableau.
+                   */}
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Client ou fournisseur</TableHead>
+                      <TableHead>Mode de paiement</TableHead>
+                      <TableHead numeric>Montant</TableHead>
+                      <TableHead>Statut</TableHead>
+                      <TableHead>Caisse</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {items.map((it) => (
+                      <TableRow key={`${it.source_kind}-${it.source_id}`} className={it.is_orphan ? 'bg-danger-50' : undefined}>
+                        <TableCell className="whitespace-nowrap">{formatDate(it.source_date)}</TableCell>
+                        <TableCell>
+                          <span className="block whitespace-nowrap text-sm">{kindLabel(it.source_kind)}</span>
+                          <span className="mt-0.5 block whitespace-nowrap text-xs text-muted-foreground">
+                            n° {it.source_id}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="min-w-[8rem] max-w-[14rem] break-words">{tiersCell(it)}</div>
+                        </TableCell>
+                        <TableCell>
+                          <Tag hue={paymentMethodHue(it.methode_paiement)}>{formatPaymentMethod(it.methode_paiement)}</Tag>
+                        </TableCell>
+                        <TableCell numeric>
+                          <Money value={it.montant} />
+                        </TableCell>
+                        <TableCell>
+                          <StatutBadge item={it} />
+                        </TableCell>
+                        <TableCell>{caisseCell(it)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              }
+              cards={items.map((it) => (
+                <DataCard
+                  key={`${it.source_kind}-${it.source_id}`}
+                  title={`${kindLabel(it.source_kind)} n° ${it.source_id}`}
+                  badge={<StatutBadge item={it} />}
+                  className={it.is_orphan ? 'border-danger-200 bg-danger-50' : undefined}
+                >
+                  <DataCardRow label="Date" value={formatDate(it.source_date)} />
+                  <DataCardRow label="Client ou fournisseur" value={tiersCell(it)} />
+                  <DataCardRow
+                    label="Mode de paiement"
+                    value={<Tag hue={paymentMethodHue(it.methode_paiement)}>{formatPaymentMethod(it.methode_paiement)}</Tag>}
+                  />
+                  <DataCardRow label="Montant" value={<Money value={it.montant} />} numeric />
+                  <DataCardRow label="Session" value={refCell(it.session_caisse_id)} />
+                  <DataCardRow label="Mouvement de caisse" value={refCell(it.mouvement_caisse_id)} />
+                </DataCard>
+              ))}
+            />
           </QueryState>
         </CardContent>
       </Card>
-    </div>
+    </PageShell>
   );
 }

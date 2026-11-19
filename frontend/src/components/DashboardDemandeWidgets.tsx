@@ -1,291 +1,303 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { demandeService } from '../services/api';
+import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowRight, ChevronRight } from 'lucide-react';
+import { demandeService, type Page } from '../services/api';
 import { usePermission, Permissions } from '../hooks/usePermission';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { 
-  ClipboardList, 
-  CheckCircle, 
-  Truck, 
-  Package, 
-  Clock, 
-  ArrowRight,
-  Loader2
-} from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { buttonVariants } from '@/components/ui/button';
+import { CardSkeleton } from '@/components/ui/skeleton';
+import { QueryErrorState } from '@/components/ui/query-state';
+import { DocumentCode } from '@/components/ui/document-code';
+import StatusBadge from '@/components/StatusBadge';
+import { cn } from '@/lib/utils';
+import { formatDate, formatNumber } from '../utils/format';
+
+/** Volume lu pour le résumé ; au-delà, le résumé le dit (voir `truncated`). */
+const FETCH_LIMIT = 100;
+
+interface DemandeRow {
+  id: number;
+  numero: string;
+  statut: string;
+  magasin_nom?: string;
+  depot_nom?: string;
+  date_creation: string;
+}
+
+type StatusKey =
+  | 'brouillon'
+  | 'envoyee'
+  | 'approuvee'
+  | 'partiellement_approuvee'
+  | 'refusee'
+  | 'livree'
+  | 'cloturee';
 
 interface DemandeStats {
   total: number;
-  brouillon: number;
-  envoyee: number;
-  approuvee: number;
-  partiellementApprouvee: number;
-  refusee: number;
-  enCours: number;
-  livree: number;
-  cloturee: number;
-  pendingDecision: number;
-  pendingExecution: number;
-  pendingClosure: number;
+  /** Plus de demandes en base que de lignes lues : les compteurs par statut sont partiels. */
+  truncated: boolean;
+  byStatus: Record<StatusKey, number>;
 }
 
-export function DashboardDemandeWidgets() {
-  const navigate = useNavigate();
+/**
+ * Répartition affichée : libellés au pluriel alignés sur les pastilles de statut
+ * (`StatusBadge`, type « demande »). « En cours de livraison » n'apparaît pas :
+ * l'exécution livre dans la même transaction, ce statut n'est jamais conservé.
+ */
+const SUMMARY: { key: StatusKey; label: string }[] = [
+  { key: 'brouillon', label: 'Brouillons' },
+  { key: 'envoyee', label: 'Envoyées' },
+  { key: 'approuvee', label: 'Approuvées' },
+  { key: 'partiellement_approuvee', label: 'Partiellement approuvées' },
+  { key: 'refusee', label: 'Refusées' },
+  { key: 'livree', label: 'Livrées' },
+  { key: 'cloturee', label: 'Clôturées' },
+];
+
+/** Une ligne « À faire » : un compte, ce qu'il reste à faire, la liste filtrée. */
+interface TodoRow {
+  key: string;
+  n: number;
+  label: string;
+  to: string;
+}
+
+const plural = (n: number, one: string, many: string) => `${formatNumber(n)} ${n > 1 ? many : one}`;
+
+const TITLE = 'Demandes de réapprovisionnement';
+
+export interface DashboardDemandeWidgetsProps {
+  /**
+   * Lien « Tout voir » de l'en-tête « Demandes récentes », fourni par la page
+   * pour qu'il ait le dessin des autres cartes du tableau de bord.
+   */
+  seeAll?: ReactNode;
+}
+
+export function DashboardDemandeWidgets({ seeAll }: DashboardDemandeWidgetsProps = {}) {
   const { hasPermission } = usePermission();
+  const todoId = useId();
+  const byStatusId = useId();
   const [stats, setStats] = useState<DemandeStats | null>(null);
+  const [recentDemandes, setRecentDemandes] = useState<DemandeRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [recentDemandes, setRecentDemandes] = useState<any[]>([]);
+  const [error, setError] = useState<unknown>(null);
 
-  useEffect(() => {
-    loadStats();
-  }, []);
-
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      // Fetch all demandes and calculate stats
-      const response = await demandeService.getAll({ limit: 100 });
-      const demandes = response.data || response || [];
+      const response = (await demandeService.getAll({ limit: FETCH_LIMIT })) as Page<DemandeRow> | DemandeRow[];
+      const demandes: DemandeRow[] = Array.isArray(response) ? response : response?.data ?? [];
+      const total = Array.isArray(response) ? demandes.length : response?.pagination?.total ?? demandes.length;
+      const byStatus = Object.fromEntries(
+        SUMMARY.map(({ key }) => [key, demandes.filter((d) => d.statut === key).length])
+      ) as Record<StatusKey, number>;
 
-      const newStats: DemandeStats = {
-        total: demandes.length,
-        brouillon: demandes.filter((d: any) => d.statut === 'brouillon').length,
-        envoyee: demandes.filter((d: any) => d.statut === 'envoyee').length,
-        approuvee: demandes.filter((d: any) => d.statut === 'approuvee').length,
-        partiellementApprouvee: demandes.filter((d: any) => d.statut === 'partiellement_approuvee').length,
-        refusee: demandes.filter((d: any) => d.statut === 'refusee').length,
-        enCours: demandes.filter((d: any) => d.statut === 'en_cours').length,
-        livree: demandes.filter((d: any) => d.statut === 'livree').length,
-        cloturee: demandes.filter((d: any) => d.statut === 'cloturee').length,
-        pendingDecision: demandes.filter((d: any) => d.statut === 'envoyee').length,
-        pendingExecution: demandes.filter((d: any) => ['approuvee', 'partiellement_approuvee'].includes(d.statut)).length,
-        pendingClosure: demandes.filter((d: any) => d.statut === 'livree').length,
-      };
-
-      setStats(newStats);
-
-      // Get recent demandes (last 5) — copy before sorting to avoid mutating state
-      const recent = [...demandes]
-        .sort((a: any, b: any) => new Date(b.date_creation).getTime() - new Date(a.date_creation).getTime())
-        .slice(0, 5);
-      setRecentDemandes(recent);
-    } catch (error) {
-      // Dashboard widgets are non-critical, but don't fail completely silently.
-      console.error('DashboardDemandeWidgets load failed', error);
+      setStats({ total, truncated: total > demandes.length, byStatus });
+      // Copie avant le tri : ne pas muter l'état
+      setRecentDemandes(
+        [...demandes]
+          .sort((a, b) => new Date(b.date_creation).getTime() - new Date(a.date_creation).getTime())
+          .slice(0, 5)
+      );
+    } catch (err) {
+      // Widget secondaire : l'échec reste dans sa carte, avec un réessai, au lieu
+      // de faire disparaître la section sans un mot.
+      setError(err);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const getStatusBadge = (statut: string) => {
-    const configs: Record<string, { label: string; variant: any }> = {
-      brouillon: { label: 'Brouillon', variant: 'secondary' },
-      envoyee: { label: 'Envoyée', variant: 'warning' },
-      approuvee: { label: 'Approuvée', variant: 'success' },
-      partiellement_approuvee: { label: 'Partielle', variant: 'info' },
-      refusee: { label: 'Refusée', variant: 'destructive' },
-      en_cours: { label: 'En cours', variant: 'warning' },
-      livree: { label: 'Livrée', variant: 'success' },
-      cloturee: { label: 'Clôturée', variant: 'default' },
-    };
-    const config = configs[statut] || { label: statut, variant: 'outline' };
-    return <Badge variant={config.variant} className="text-xs">{config.label}</Badge>;
-  };
+  useEffect(() => {
+    void loadStats();
+  }, [loadStats]);
 
-  if (loading) {
-    return (
-      <Card>
-        <CardContent className="p-6">
-          <div className="flex justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (!stats) return null;
-
-  const canCreate = hasPermission(Permissions.DEMANDE_CREATE);
+  // Créer n'a de sens que si l'on peut aussi envoyer : le caissier ne le peut pas.
+  const canCreate = hasPermission(Permissions.DEMANDE_CREATE) && hasPermission(Permissions.DEMANDE_SEND);
   const canDecide = hasPermission(Permissions.DEMANDE_DECIDE);
   const canExecute = hasPermission(Permissions.DEMANDE_EXECUTE);
   const canClose = hasPermission(Permissions.DEMANDE_CLOSE);
+  const canAct = canCreate || canDecide || canExecute || canClose;
+  const ready = !loading && !error && stats !== null;
+
+  let body: ReactNode;
+  if (loading) {
+    body = (
+      <>
+        <CardSkeleton lines={3} />
+        <span className="sr-only" role="status">
+          Chargement des demandes…
+        </span>
+      </>
+    );
+  } else if (!ready) {
+    body = (
+      <QueryErrorState
+        error={error}
+        title="Impossible de charger les demandes"
+        onRetry={() => void loadStats()}
+        className="py-6"
+      />
+    );
+  } else {
+    const s = stats.byStatus;
+    const pendingExecution = s.approuvee + s.partiellement_approuvee;
+    // Un seul statut en attente : lien filtré exact ; les deux : liste complète.
+    const executeLink =
+      s.partiellement_approuvee === 0
+        ? '/demandes?statut=approuvee'
+        : s.approuvee === 0
+          ? '/demandes?statut=partiellement_approuvee'
+          : '/demandes';
+    // Ce que le rôle peut faire avancer, dans l'ordre de ses files ; une file
+    // vide n'a pas de ligne (le décompte par statut, plus bas, dit ses zéros).
+    const todo = (
+      [
+        canDecide && { key: 'decide', n: s.envoyee, label: 'à décider', to: '/demandes?statut=envoyee' },
+        canExecute && { key: 'execute', n: pendingExecution, label: 'à exécuter', to: executeLink },
+        canClose && { key: 'close', n: s.livree, label: 'à clôturer', to: '/demandes?statut=livree' },
+        canCreate && {
+          key: 'send',
+          n: s.brouillon,
+          label: s.brouillon > 1 ? 'brouillons à envoyer' : 'brouillon à envoyer',
+          to: '/demandes?statut=brouillon',
+        },
+      ] as (TodoRow | false)[]
+    ).filter((row): row is TodoRow => row !== false && row.n > 0);
+
+    body = (
+      <div className="space-y-4">
+        {/* Les files du rôle, en liens discrets : elles ne répètent plus, en
+            cartes et boutons, le bandeau « À traiter » du haut de page. */}
+        {canAct && (
+          // Pas d'écart sous le libellé : la hauteur des lignes (cible tactile)
+          // le donne déjà, au même 8 px que « Par statut » sur ordinateur.
+          <div>
+            <p id={todoId} className="text-xs font-medium text-muted-foreground">
+              À faire
+            </p>
+            {todo.length > 0 ? (
+              <ul aria-labelledby={todoId} className="-mx-2 flex flex-col sm:flex-row sm:flex-wrap sm:gap-x-2">
+                {todo.map((row) => (
+                  <li key={row.key}>
+                    {/* Pas de transition sur le survol d'une ligne de liste (interaction fréquente). */}
+                    <Link
+                      to={row.to}
+                      className="flex min-h-11 items-center gap-1 rounded-md px-2 text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9"
+                    >
+                      <span className="font-medium tabular-nums">{formatNumber(row.n)}</span> {row.label}{' '}
+                      {/* Hors contexte (liste des liens), « 1 à décider » ne dit pas quoi. */}
+                      <span className="sr-only">: demandes</span>
+                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">Aucune demande à faire avancer pour le moment</p>
+            )}
+          </div>
+        )}
+
+        {/* Décompte : une ligne de « statut nombre », chaque entrée ouvre la liste filtrée. */}
+        <div className="space-y-1">
+          <p id={byStatusId} className="text-xs font-medium text-muted-foreground">
+            Par statut
+          </p>
+          <ul aria-labelledby={byStatusId} className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+            {SUMMARY.map(({ key, label }) => (
+              <li key={key}>
+                <Link
+                  to={`/demandes?statut=${key}`}
+                  className="inline-flex min-h-6 items-baseline gap-1.5 rounded-sm py-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {/* Espace explicite : le nom du lien est « Brouillons 1 », pas « Brouillons1 ». */}
+                  {label}{' '}
+                  <span className="tabular-nums text-foreground">{formatNumber(s[key])}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      {/* Quick Action Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {canDecide && stats.pendingDecision > 0 && (
-          <Card className="border-warning/50 bg-warning/5">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-2xl font-bold text-warning">{stats.pendingDecision}</p>
-                  <p className="text-sm text-muted-foreground">À décider</p>
-                </div>
-                <CheckCircle className="h-8 w-8 text-warning/50" />
-              </div>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="w-full mt-2 text-warning"
-                onClick={() => navigate('/demandes')}
-              >
-                Voir les demandes <ArrowRight className="h-4 w-4 ml-1" />
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {canExecute && stats.pendingExecution > 0 && (
-          <Card className="border-info/50 bg-info/5">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-2xl font-bold text-info">{stats.pendingExecution}</p>
-                  <p className="text-sm text-muted-foreground">À exécuter</p>
-                </div>
-                <Truck className="h-8 w-8 text-info/50" />
-              </div>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="w-full mt-2 text-info"
-                onClick={() => navigate('/demandes')}
-              >
-                Exécuter <ArrowRight className="h-4 w-4 ml-1" />
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {canClose && stats.pendingClosure > 0 && (
-          <Card className="border-success/50 bg-success/5">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-2xl font-bold text-success">{stats.pendingClosure}</p>
-                  <p className="text-sm text-muted-foreground">À clôturer</p>
-                </div>
-                <Package className="h-8 w-8 text-success/50" />
-              </div>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="w-full mt-2 text-success"
-                onClick={() => navigate('/demandes')}
-              >
-                Clôturer <ArrowRight className="h-4 w-4 ml-1" />
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {canCreate && (
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-2xl font-bold">{stats.brouillon}</p>
-                  <p className="text-sm text-muted-foreground">Brouillons</p>
-                </div>
-                <ClipboardList className="h-8 w-8 text-muted-foreground/50" />
-              </div>
-              <Button 
-                size="sm" 
-                className="w-full mt-2"
-                onClick={() => navigate('/demandes/nouvelle')}
+      <Card aria-busy={loading || undefined}>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <CardTitle>{TITLE}</CardTitle>
+              {ready && (
+                <CardDescription className="text-pretty">
+                  {stats.truncated
+                    ? `Répartition des ${formatNumber(FETCH_LIMIT)} demandes les plus récentes sur ${plural(stats.total, 'demande', 'demandes')}`
+                    : `${plural(stats.total, 'demande', 'demandes')} au total`}
+                </CardDescription>
+              )}
+            </div>
+            {/* Le bouton plein de la page est « Nouvelle facture » : ici, contour.
+                Créer ne dépend pas du décompte : l'action reste là pendant le
+                chargement et après un échec. */}
+            {canCreate && (
+              <Link
+                to="/demandes/nouvelle"
+                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'shrink-0')}
               >
                 Nouvelle demande
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      {/* Stats Overview */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <ClipboardList className="h-4 w-4" />
-            Résumé des demandes
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-            <StatBox label="Total" value={stats.total} />
-            <StatBox label="Envoyées" value={stats.envoyee} variant="warning" />
-            <StatBox label="Approuvées" value={stats.approuvee} variant="success" />
-            <StatBox label="Partielles" value={stats.partiellementApprouvee} variant="info" />
-            <StatBox label="Refusées" value={stats.refusee} variant="destructive" />
-            <StatBox label="En cours" value={stats.enCours} variant="warning" />
-            <StatBox label="Livrées" value={stats.livree} variant="success" />
-            <StatBox label="Clôturées" value={stats.cloturee} />
+              </Link>
+            )}
           </div>
-        </CardContent>
+        </CardHeader>
+        <CardContent>{body}</CardContent>
       </Card>
 
-      {/* Recent Activity */}
-      {recentDemandes.length > 0 && (
+      {/* Dernières demandes */}
+      {ready && recentDemandes.length > 0 && (
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              Activité récente
-            </CardTitle>
+          <CardHeader>
+            <div className="flex items-start justify-between gap-3">
+              <CardTitle>Demandes récentes</CardTitle>
+              {seeAll}
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
+            <ul className="-mx-2 divide-y">
               {recentDemandes.map((demande) => (
-                <div 
-                  key={demande.id} 
-                  className="flex items-center justify-between p-2 rounded-lg hover:bg-muted cursor-pointer"
-                  onClick={() => navigate(`/demandes/${demande.id}`)}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="font-mono text-sm">{demande.numero}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {demande.magasin_nom} → {demande.depot_nom}
+                <li key={demande.id}>
+                  {/* Pas de transition sur le survol d'une ligne de liste (interaction fréquente). */}
+                  <Link
+                    to={`/demandes/${demande.id}`}
+                    className="flex min-h-11 items-center justify-between gap-3 rounded-md px-2 py-2 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <div className="min-w-0 sm:flex sm:items-center sm:gap-3">
+                      <DocumentCode className="text-sm">{demande.numero}</DocumentCode>
+                      {/* Sens de la marchandise, comme sur Transferts : du dépôt vers le magasin. */}
+                      <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground sm:text-sm">
+                        <span className="truncate">{demande.depot_nom || '—'}</span>
+                        <ArrowRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        <span className="sr-only"> vers </span>
+                        <span className="truncate">{demande.magasin_nom || '—'}</span>
+                      </p>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {getStatusBadge(demande.statut)}
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(demande.date_creation).toLocaleDateString('fr-FR')}
-                    </span>
-                  </div>
-                </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
+                      <StatusBadge type="demande" statut={demande.statut} />
+                      <span className="whitespace-nowrap text-xs text-muted-foreground">
+                        {formatDate(demande.date_creation)}
+                      </span>
+                    </div>
+                  </Link>
+                </li>
               ))}
-            </div>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="w-full mt-3"
-              onClick={() => navigate('/demandes')}
-            >
-              Voir toutes les demandes <ArrowRight className="h-4 w-4 ml-1" />
-            </Button>
+            </ul>
           </CardContent>
         </Card>
       )}
-    </div>
-  );
-}
-
-function StatBox({ label, value, variant }: { label: string; value: number; variant?: 'default' | 'warning' | 'success' | 'info' | 'destructive' }) {
-  const colorClasses = {
-    default: 'bg-muted',
-    warning: 'bg-warning/10 text-warning',
-    success: 'bg-success/10 text-success',
-    info: 'bg-info/10 text-info',
-    destructive: 'bg-destructive/10 text-destructive',
-  };
-
-  return (
-    <div className={`text-center p-2 rounded-lg ${colorClasses[variant || 'default']}`}>
-      <div className="text-xl font-bold">{value}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
     </div>
   );
 }

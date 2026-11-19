@@ -41,7 +41,7 @@ export class AdminUserController {
     try {
       const { username, password, role_id } = req.body;
       if (!username || !password || !role_id) {
-        res.status(400).json({ success: false, error: 'Username, password et role sont requis' });
+        res.status(400).json({ success: false, error: 'Saisissez l’identifiant, le mot de passe et le rôle.' });
         return;
       }
 

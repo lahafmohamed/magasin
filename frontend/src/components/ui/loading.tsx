@@ -1,6 +1,11 @@
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+/*
+ * Régions de chargement : `role="status"` SANS `aria-busy` — posé sur la région
+ * vivante elle-même, `aria-busy` la rendait muette (le message n'était jamais lu).
+ */
+
 /**
  * Écran de chargement plein écran avec un spinner centré.
  * Utilisé notamment comme fallback de Suspense.
@@ -10,7 +15,6 @@ export function LoadingScreen({ message = 'Chargement…' }: { message?: string 
     <div
       className="flex min-h-screen items-center justify-center"
       role="status"
-      aria-busy="true"
     >
       <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden="true" />
       <span className="sr-only">{message}</span>
@@ -56,7 +60,6 @@ export function LoadingState({
         className
       )}
       role="status"
-      aria-busy="true"
     >
       <Spinner size="lg" className="opacity-60" />
       <span className="text-sm">{message}</span>
@@ -74,7 +77,6 @@ export function PageLoading({ message = 'Chargement…' }: { message?: string })
     <div
       className="flex min-h-[50vh] items-center justify-center"
       role="status"
-      aria-busy="true"
     >
       <Spinner size="md" className="text-muted-foreground" />
       <span className="sr-only">{message}</span>

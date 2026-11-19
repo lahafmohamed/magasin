@@ -29,7 +29,17 @@
 
 @layer base {
   :root {
+    /* Contrôles natifs (cases à cocher, sélecteurs de date, barres de défilement)
+       dessinés dans le thème courant : sans cette ligne, le thème sombre gardait
+       des cases blanches sur chaque ligne de liste. */
+    color-scheme: light;
+
     --background: 0 0% 100%;
+    /* Fond de la zone de contenu, un cran sous la carte : les cartes sont des
+       feuilles blanches posées dessus, séparées par un filet — plus d'ombre
+       pour décoller du blanc sur du blanc. Rail, barre du haut, champs et
+       menus restent sur `--background`. Texte secondaire : 5,5:1 dessus. */
+    --canvas: 216 22% 97.2%;
     --foreground: 222.2 84% 4.9%;
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
@@ -40,36 +50,58 @@
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
     --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    /* 42 % (et non 46,9 %) : texte secondaire ≥ 4,5:1 sur blanc, sur `bg-muted`
+       et sur les fonds teintés `-50` (mesures dans le rapport FND-A). */
+    --muted-foreground: 215.4 16.3% 42%;
     --accent: 210 40% 96.1%;
     --accent-foreground: 222.2 47.4% 11.2%;
     --destructive: 0 72% 42%;
     --destructive-foreground: 210 40% 98%;
     --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
+    /* Bord des champs ≠ séparateur : ≥ 3:1 contre le fond (WCAG 1.4.11), sinon
+       le contour d'un champ disparaît au soleil du dépôt. `--border` (cartes,
+       séparateurs) reste discret. */
+    --input: 215 16% 57%;
     --ring: 221 83% 35%;
     --radius: 0.5rem;
 
-    /* Chart categorical palette (HSL triplets) — theme-aware, consumed via hsl(var(--chart-N)).
-       Series/category colors; financial signals reuse --chart-positive / --chart-negative. */
+    /* Palette catégorielle (triplets HSL) — consommée via hsl(var(--chart-N)).
+       Séries / catégories ; les signaux financiers passent par --chart-positive /
+       --chart-negative. Chaque teinte tient ≥ 3:1 contre `--card` (marques
+       graphiques, WCAG 1.4.11) ; chart-2 est en magenta pour ne plus se confondre
+       avec chart-1 (deux bleus côte à côte dans un anneau). */
     --chart-1: 221 83% 45%;
-    --chart-2: 217 91% 60%;
-    --chart-3: 199 89% 48%;
+    --chart-2: 330 81% 45%;
+    --chart-3: 199 89% 40%;
     --chart-4: 262 83% 58%;
     --chart-5: 291 64% 52%;
-    --chart-6: 24 95% 53%;
-    --chart-7: 160 84% 39%;
-    --chart-positive: 160 84% 39%;
+    --chart-6: 24 95% 45%;
+    --chart-7: 160 84% 32%;
+    /* 8e teinte (ocre) : huit modes de paiement à distinguer — Chèque et
+       Orange Money partageaient l'orange, côte à côte dans la barre des
+       encaissements. 3,3:1 contre la carte. */
+    --chart-8: 42 92% 38%;
+    --chart-positive: 160 84% 32%;
     --chart-negative: 0 72% 51%;
+    /* Série au repos : barres et comparaisons en graphite, l'accent (`chart-1`)
+       ne marque que la valeur qui compte — meilleur jour, première catégorie,
+       marge. ≥ 3:1 contre la carte (3,4:1), comme toute marque graphique. */
+    --chart-rest: 215 12% 56%;
     --chart-grid: 214.3 31.8% 88%;
-    --chart-axis: 215.4 16.3% 46.9%;
+    --chart-axis: 215.4 16.3% 42%;
 
     /* Statut / argent — rampes sémantiques (HSL). Consommées via tailwind.config.js
        en hsl(var(--success-500) / <alpha-value>). Le bloc .dark inverse la rampe :
        les teintes claires (50/100) deviennent des fonds sombres et les tons foncés
        (700/800/900) deviennent du texte clair. Écrire `text-success-700` suffit donc
-       dans les deux thèmes — ne pas rajouter de variante `dark:`. */
-    --success: 161 94% 30%;
+       dans les deux thèmes — ne pas rajouter de variante `dark:`.
+
+       DEFAULT (`border-l-warning`, `bg-success/10`…) = le palier 600 du thème
+       courant : accent de bordure ou teinte légère, lisible ≥ 4,5:1 sur carte dans
+       les deux thèmes. Plus aucun aplat « statut + texte blanc » (les pastilles de
+       statut sont des fonds teintés, cf. ui/badge). Le texte de statut s'écrit
+       toujours avec un palier explicite (`text-success-700`) — règle ESLint. */
+    --success: 163 94% 24%;
     --success-50: 152 81% 96%;
     --success-100: 149 80% 90%;
     --success-200: 152 76% 80%;
@@ -81,7 +113,7 @@
     --success-800: 164 86% 16%;
     --success-900: 166 91% 9%;
 
-    --warning: 32 95% 44%;
+    --warning: 26 90% 37%;
     --warning-50: 48 100% 96%;
     --warning-100: 48 96% 89%;
     --warning-200: 48 97% 77%;
@@ -93,7 +125,7 @@
     --warning-800: 22 78% 26%;
     --warning-900: 21 92% 14%;
 
-    --danger: 0 72% 51%;
+    --danger: 0 74% 42%;
     --danger-50: 0 86% 97%;
     --danger-100: 0 93% 94%;
     --danger-200: 0 96% 89%;
@@ -105,17 +137,21 @@
     --danger-800: 0 63% 31%;
     --danger-900: 0 75% 15%;
 
-    --info: 221 83% 53%;
-    --info-50: 214 100% 97%;
-    --info-100: 214 95% 93%;
-    --info-200: 213 97% 87%;
-    --info-300: 212 96% 78%;
-    --info-400: 213 94% 68%;
-    --info-500: 221 83% 53%;
-    --info-600: 224 76% 48%;
-    --info-700: 226 71% 40%;
-    --info-800: 224 64% 33%;
-    --info-900: 226 57% 21%;
+    /* « Info » (en cours, partiellement…) en bleu ciel, à l'écart du bleu de
+       marque : ses paliers 50/100 étaient ceux de `primary`, si bien qu'une
+       pastille « Partiellement payée » se lisait comme un lien ou une puce
+       sélectionnée. Texte 700 sur fond 50 : 7,2:1. */
+    --info: 197 88% 31%;
+    --info-50: 196 80% 96%;
+    --info-100: 196 75% 90%;
+    --info-200: 196 70% 80%;
+    --info-300: 196 65% 66%;
+    --info-400: 196 70% 50%;
+    --info-500: 196 85% 38%;
+    --info-600: 197 88% 31%;
+    --info-700: 198 85% 26%;
+    --info-800: 199 80% 21%;
+    --info-900: 200 75% 14%;
 
     /* Rampe de marque. Les paliers 50/100/200/500/600/700/900 reprennent à
        l'identique les hex qui étaient codés en dur dans tailwind.config.js —
@@ -134,47 +170,64 @@
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 50.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+    color-scheme: dark;
 
-    /* Chart palette — brighter/desaturated for dark surfaces (skill: color-dark-mode) */
+    /* Neutres graphite (≈ 8 % de saturation) : l'ardoise à 84 % rendait page,
+       cartes et menus bleu marine — la couleur doit venir du contenu, pas des
+       surfaces. Contrastes remesurés : texte secondaire 7,3:1 sur carte et
+       6,1:1 sur `muted`, bord de champ 3,5:1, anneau de focus 4,9:1. */
+    --background: 220 8% 7%;
+    /* En sombre la page est déjà un cran sous la carte. */
+    --canvas: 220 8% 7%;
+    --foreground: 220 10% 95%;
+    /* Élévation : carte un cran au-dessus de la page, popover (menus, dialogues)
+       un cran au-dessus de la carte. Avant, page = carte = popover et seule la
+       bordure (1,37:1) séparait les surfaces. */
+    --card: 220 7% 9.5%;
+    --card-foreground: 220 10% 95%;
+    --popover: 220 7% 12.5%;
+    --popover-foreground: 220 10% 95%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222.2 84% 4.9%;
+    --secondary: 220 6% 16%;
+    --secondary-foreground: 220 10% 95%;
+    --muted: 220 6% 16%;
+    --muted-foreground: 220 8% 66%;
+    --accent: 220 6% 16%;
+    --accent-foreground: 220 10% 95%;
+    /* Même logique que `primary` en sombre : aplat clair + texte sombre. Le rouge
+       précédent (50,6 %) tombait à 3,98:1 en texte (`text-destructive`). */
+    --destructive: 0 84% 65%;
+    --destructive-foreground: 222.2 84% 4.9%;
+    --border: 220 6% 18%;
+    --input: 220 5% 44%;
+    /* Anneau de focus ≥ 3:1 contre la page ET contre la carte (2,98:1 avant). */
+    --ring: 217 91% 60%;
+
+    /* Palette graphique — plus claire et un peu désaturée sur fond sombre */
     --chart-1: 217 91% 65%;
-    --chart-2: 213 94% 74%;
+    --chart-2: 330 85% 72%;
     --chart-3: 199 89% 60%;
     --chart-4: 258 90% 72%;
     --chart-5: 291 70% 70%;
     --chart-6: 27 96% 61%;
     --chart-7: 158 64% 52%;
+    --chart-8: 45 90% 60%;
     --chart-positive: 158 64% 52%;
     --chart-negative: 0 84% 65%;
-    --chart-grid: 217.2 32.6% 25%;
-    --chart-axis: 215 20.2% 65.1%;
+    --chart-rest: 220 7% 46%;
+    --chart-grid: 220 6% 22%;
+    --chart-axis: 220 8% 66%;
 
     /* Rampes sémantiques inversées pour surface sombre : 50/100 = fonds teintés
-       sombres, 700/800/900 = texte clair. Les DEFAULT restent identiques au thème
-       clair (aplats pleins `bg-success` + `text-white`, déjà lisibles sur fond sombre). */
-    --success: 161 94% 30%;
-    --success-50: 161 60% 12%;
-    --success-100: 161 55% 16%;
-    --success-200: 160 50% 22%;
-    --success-300: 159 48% 30%;
+       sombres, 700/800/900 = texte clair. DEFAULT = palier 600 sombre (voir :root).
+       Fonds teintés (50…300) peu saturés : à 50–60 % un bandeau d'alerte
+       devenait une dalle brune ou verte. Texte 700 sur fond 50 ≥ 8:1. */
+    --success: 158 68% 60%;
+    --success-50: 161 32% 11%;
+    --success-100: 161 30% 15%;
+    --success-200: 160 28% 21%;
+    --success-300: 159 30% 29%;
     --success-400: 158 55% 42%;
     --success-500: 158 64% 52%;
     --success-600: 158 68% 60%;
@@ -182,11 +235,11 @@
     --success-800: 156 76% 80%;
     --success-900: 155 80% 90%;
 
-    --warning: 32 95% 44%;
-    --warning-50: 32 55% 12%;
-    --warning-100: 32 52% 16%;
-    --warning-200: 33 50% 22%;
-    --warning-300: 35 55% 32%;
+    --warning: 45 95% 64%;
+    --warning-50: 34 32% 11%;
+    --warning-100: 34 30% 15%;
+    --warning-200: 34 30% 22%;
+    --warning-300: 35 35% 31%;
     --warning-400: 38 70% 45%;
     --warning-500: 43 96% 56%;
     --warning-600: 45 95% 64%;
@@ -194,11 +247,11 @@
     --warning-800: 48 97% 82%;
     --warning-900: 48 100% 91%;
 
-    --danger: 0 72% 51%;
-    --danger-50: 0 45% 13%;
-    --danger-100: 0 45% 17%;
-    --danger-200: 0 48% 24%;
-    --danger-300: 0 55% 34%;
+    --danger: 0 88% 72%;
+    --danger-50: 0 30% 13%;
+    --danger-100: 0 30% 17%;
+    --danger-200: 0 32% 24%;
+    --danger-300: 0 38% 33%;
     --danger-400: 0 65% 48%;
     --danger-500: 0 84% 65%;
     --danger-600: 0 88% 72%;
@@ -206,25 +259,25 @@
     --danger-800: 0 94% 86%;
     --danger-900: 0 96% 93%;
 
-    --info: 221 83% 53%;
-    --info-50: 224 50% 14%;
-    --info-100: 224 48% 18%;
-    --info-200: 223 48% 25%;
-    --info-300: 221 52% 35%;
-    --info-400: 218 65% 50%;
-    --info-500: 213 94% 68%;
-    --info-600: 213 94% 74%;
-    --info-700: 212 96% 80%;
-    --info-800: 213 97% 87%;
-    --info-900: 214 100% 93%;
+    --info: 196 80% 60%;
+    --info-50: 196 30% 12%;
+    --info-100: 196 30% 16%;
+    --info-200: 196 32% 23%;
+    --info-300: 196 40% 32%;
+    --info-400: 196 60% 42%;
+    --info-500: 196 75% 52%;
+    --info-600: 196 80% 60%;
+    --info-700: 195 85% 70%;
+    --info-800: 194 85% 80%;
+    --info-900: 193 90% 90%;
 
     /* Rampe de marque inversée : 50/100 = fonds bleutés sombres, 700..900 =
        texte clair. Avant, `bg-primary-100 text-primary-700` gardait ses hex
        clairs en thème sombre (pastille bleu clair sur page sombre). */
-    --primary-50: 224 50% 14%;
-    --primary-100: 224 48% 18%;
-    --primary-200: 223 48% 25%;
-    --primary-300: 221 52% 35%;
+    --primary-50: 222 28% 14%;
+    --primary-100: 222 28% 18%;
+    --primary-200: 222 30% 25%;
+    --primary-300: 221 35% 35%;
     --primary-400: 218 65% 50%;
     --primary-500: 217 91% 65%;
     --primary-600: 213 94% 72%;
@@ -241,6 +294,19 @@
   html {
     /* Source unique : la pile est définie par le token `fontFamily.sans`. */
     @apply font-sans;
+    /* La Topbar collante (56 px) masquait l'élément focalisé au Maj+Tab et les
+       ancres : on réserve sa hauteur + 16 px (WCAG 2.4.11). */
+    scroll-padding-top: 4.5rem;
+    /* Même chose en bas pour les barres d'action collantes (enregistrement des
+       paramètres, réception) : un champ atteint au clavier s'arrête au-dessus
+       d'elles au lieu de passer dessous. Sur téléphone ces barres passent sur
+       deux ou trois rangées (≈ 150 px), d'où la réserve plus haute. */
+    scroll-padding-bottom: 10rem;
+  }
+  @media (min-width: 1024px) {
+    html {
+      scroll-padding-bottom: 6rem;
+    }
   }
   body {
     @apply bg-background text-foreground;
@@ -249,6 +315,81 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+}
+
+/* Rembourrages et tailles responsives par défaut des primitives, en classes de
+   composant plutôt qu'en utilitaires `p-4 sm:p-6 sm:pt-0` : un utilitaire passé
+   par la page (`p-0`, `pt-6`, `pb-2`, `text-xs`…) l'emporte alors à TOUTES les
+   largeurs, puisque la couche `utilities` suit `components`. Avec des utilitaires
+   responsives, tailwind-merge retirait la base mais gardait le `sm:` — d'où le
+   contenu collé au bord supérieur des cartes dès 640 px (61 sites relevés). */
+@layer components {
+  .card-header {
+    @apply p-4 sm:p-5;
+  }
+  /* Contenu sous un CardHeader : pas de marge haute, le titre la porte. */
+  .card-content {
+    @apply px-4 pb-4 sm:px-5 sm:pb-5;
+  }
+  /* Carte sans en-tête (tuiles, barres de filtres, bandeaux). */
+  .card-content-standalone {
+    @apply p-4 sm:p-5;
+  }
+  .card-footer {
+    @apply px-4 pb-4 sm:px-5 sm:pb-5;
+  }
+  /* Texte des champs : 16 px sous 640 px (sinon iOS zoome à la saisie), 14 px
+     au-delà, comme les tableaux et les boutons. */
+  .field-text {
+    @apply text-base sm:text-sm;
+  }
+}
+
+/* Toasts (sonner) adossés à nos tokens : ils suivent la classe .dark comme le
+   reste de l'interface, quel que soit le thème passé au <Toaster>. La palette
+   « richColors » de sonner tombait à 4,34:1 (erreur) et restait claire en thème
+   sombre. Préfixe `html` : sonner injecte sa feuille après la nôtre, il faut une
+   spécificité supérieure à ses sélecteurs `[data-sonner-toaster][data-sonner-theme]`. */
+html [data-sonner-toaster] {
+  font-family: inherit;
+}
+html [data-sonner-toaster][data-sonner-theme] {
+  --border-radius: var(--radius);
+  --normal-bg: hsl(var(--popover));
+  --normal-bg-hover: hsl(var(--accent));
+  --normal-border: hsl(var(--border));
+  --normal-border-hover: hsl(var(--input));
+  --normal-text: hsl(var(--popover-foreground));
+  --success-bg: hsl(var(--success-50));
+  --success-border: hsl(var(--success-200));
+  --success-text: hsl(var(--success-800));
+  --info-bg: hsl(var(--info-50));
+  --info-border: hsl(var(--info-200));
+  --info-text: hsl(var(--info-800));
+  --warning-bg: hsl(var(--warning-50));
+  --warning-border: hsl(var(--warning-200));
+  --warning-text: hsl(var(--warning-800));
+  --error-bg: hsl(var(--danger-50));
+  --error-border: hsl(var(--danger-200));
+  --error-text: hsl(var(--danger-800));
+}
+html [data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-description] {
+  color: hsl(var(--muted-foreground));
+}
+html [data-sonner-toaster] [data-rich-colors='true'][data-sonner-toast][data-styled='true'] [data-description] {
+  color: inherit;
+}
+/* Bouton de fermeture : sonner le peint en gris quasi noir en thème « light »,
+   invisible sur un toast sombre. */
+html [data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-close-button] {
+  background: var(--normal-bg);
+  border-color: var(--normal-border);
+  color: var(--normal-text);
+}
+html [data-sonner-toaster] [data-rich-colors='true'][data-sonner-toast][data-styled='true'] [data-close-button] {
+  background: inherit;
+  border-color: inherit;
+  color: inherit;
 }
 
 /* Bascule clair/sombre : ThemeContext pose cet attribut le temps du changement
@@ -263,6 +404,28 @@
 @layer utilities {
   .num {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Région défilante (`ScrollRegion`) : fondu sur le bord où du contenu reste
+     caché, pour qu'une colonne coupée se voie coupée. Retiré au focus clavier :
+     l'anneau de focus doit rester entier. */
+  .scroll-fade-end {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+  }
+  .scroll-fade-start {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 2rem);
+    mask-image: linear-gradient(to right, transparent, #000 2rem);
+  }
+  .scroll-fade-x {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 2rem, #000 calc(100% - 2rem), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 2rem, #000 calc(100% - 2rem), transparent);
+  }
+  .scroll-fade-end:focus-visible,
+  .scroll-fade-start:focus-visible,
+  .scroll-fade-x:focus-visible {
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 
   /* Page / route enter transition — applied by Layout on each navigation */

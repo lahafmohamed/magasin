@@ -47,7 +47,7 @@ export class BonLivraisonController {
       const resolvedTiersId = tiers_id ?? client_id;
 
       if (!resolvedTiersId || !lignes || lignes.length === 0) {
-        res.status(400).json({ success: false, error: 'tiers_id and lignes are required' });
+        res.status(400).json({ success: false, error: 'Choisissez le client et ajoutez au moins une ligne.' });
         return;
       }
 
@@ -110,14 +110,19 @@ export class BonLivraisonController {
     try {
       const { statut } = req.body;
       if (!statut) {
-        res.status(400).json({ success: false, error: 'statut is required' });
+        res.status(400).json({ success: false, error: 'Choisissez le nouveau statut.' });
         return;
       }
       await blService.updateStatut(parseInt(req.params.id), statut, req);
       res.json({ success: true, message: 'Statut mis à jour' });
     } catch (error: any) {
-      const msg = error?.message || 'Erreur lors de la mise à jour du statut';
-      res.status(400).json({ success: false, error: msg });
+      const status = businessStatusOf(error);
+      if (!status) console.error('BonLivraisonController.updateStatut:', error);
+      res.status(status ?? 500).json({
+        success: false,
+        error: status ? error.message : 'Erreur serveur',
+        ...(status && error?.code ? { code: error.code } : {}),
+      });
     }
   }
 

@@ -24,6 +24,8 @@ export default {
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
+        // Fond de la zone de contenu (sous les cartes) — voir `--canvas` dans index.css.
+        canvas: "hsl(var(--canvas))",
         foreground: "hsl(var(--foreground))",
         // Rampes sémantiques statut/argent — définies en variables CSS dans index.css
         // (:root + .dark) pour être theme-aware. La rampe est inversée en mode sombre :
@@ -34,9 +36,11 @@ export default {
         danger: semanticRamp("danger"),
         info: semanticRamp("info"),
         // Palette catégorielle — pour distinguer N éléments entre eux (méthodes
-        // de paiement, types de mouvement), sans valeur de statut. Adossée aux
-        // mêmes variables que les graphiques, déjà réglées par thème dans
-        // index.css. Usage badge : `bg-chart-3/15 text-chart-3`.
+        // de paiement, types de mouvement, rôles), sans valeur de statut. Adossée
+        // aux mêmes variables que les graphiques, déjà réglées par thème dans
+        // index.css. En pastille : `<Tag hue={3}>` (ui/tag) = texte `foreground`
+        // + pastille `bg-chart-3`. L'ancienne recette `bg-chart-3/15 text-chart-3`
+        // tombait sous 4,5:1 pour 5 teintes sur 7 en thème clair.
         chart: {
           1: "hsl(var(--chart-1) / <alpha-value>)",
           2: "hsl(var(--chart-2) / <alpha-value>)",
@@ -45,6 +49,10 @@ export default {
           5: "hsl(var(--chart-5) / <alpha-value>)",
           6: "hsl(var(--chart-6) / <alpha-value>)",
           7: "hsl(var(--chart-7) / <alpha-value>)",
+          8: "hsl(var(--chart-8) / <alpha-value>)",
+          // Série au repos (graphite) : barres fines des classements, valeurs
+          // qui ne sont pas « la » valeur mise en avant.
+          rest: "hsl(var(--chart-rest) / <alpha-value>)",
         },
         // Marque. La rampe 50..900 suit le même contrat inversé que ci-dessus :
         // elle était codée en hex ici, donc `bg-primary-500` rendait le même
@@ -82,6 +90,11 @@ export default {
         // Inter est chargé dans index.html ; sans cette clé `font-sans` retombait
         // sur la pile Tailwind par défaut au lieu de la police du produit.
         sans: ["Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+      },
+      letterSpacing: {
+        // Titre de page (24–30 px) : à peine resserré. `tracking-tight`
+        // (−0,025em) est un réglage d'affichage, pas de titre d'interface.
+        title: "-0.01em",
       },
       fontSize: {
         // Tailwind s'arrête à text-xs (12px) ; les micro-libellés (badges de

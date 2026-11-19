@@ -10,7 +10,8 @@ export interface ReceptionLigneInput {
   produit_id: number;
   quantite_commandee: number;
   quantite_recue: number;
-  cout_unitaire: number;
+  /** Omitted (or not trusted, see `trustCouts`): the order's unit price. */
+  cout_unitaire?: number;
   notes?: string;
 }
 
@@ -20,6 +21,12 @@ export interface CreateReceptionInput {
   lignes: ReceptionLigneInput[];
   notes?: string;
   receptionne_par?: number;
+  /**
+   * False for a role that does not see prices (E2, depot_staff): any
+   * `cout_unitaire` it sends is ignored and the order's unit price is used.
+   * Defaults to true (a cost sent by admin/manager is kept as before).
+   */
+  trustCouts?: boolean;
   req?: any;
 }
 
@@ -138,12 +145,33 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
 
       await checkPeriodIsOpen(new Date(), client);
 
-      const { commande_id, lignes, notes, receptionne_par, req } = input;
+      const { commande_id, notes, receptionne_par, req } = input;
       const effectiveLocationId = input.location_id || await this.getPrincipalLocationId(client);
 
-      if (!lignes || lignes.length === 0) {
+      if (!input.lignes || input.lignes.length === 0) {
         throw businessError(400, 'La réception doit contenir au moins un produit');
       }
+
+      // Reception cost of each line: the cost sent by a role that sees prices,
+      // otherwise the order's unit price for that product (quantity-weighted
+      // when it is ordered on several lines). A depot user's screen no longer
+      // shows prices (E2): trusting its 0 would value the stock at nothing.
+      const { rows: prixRows } = await client.query(
+        `SELECT produit_id,
+                ROUND(SUM(quantite * prix_unitaire) / NULLIF(SUM(quantite), 0), 2) AS prix
+         FROM commande_lignes WHERE commande_id = $1 GROUP BY produit_id`,
+        [commande_id]
+      );
+      const prixCommande = new Map<number, number>(
+        prixRows.map((r: any) => [Number(r.produit_id), Number(r.prix) || 0])
+      );
+      const trustCouts = input.trustCouts !== false;
+      const lignes = input.lignes.map((ligne) => ({
+        ...ligne,
+        cout_unitaire: trustCouts && ligne.cout_unitaire !== undefined && ligne.cout_unitaire !== null
+          ? Number(ligne.cout_unitaire)
+          : prixCommande.get(Number(ligne.produit_id)) ?? Number(ligne.cout_unitaire ?? 0),
+      }));
 
       // --- 3-way match control: block over-receipt beyond what was ordered. ---
       // Build ordered-per-product and already-received-per-product maps for this order.
@@ -164,18 +192,33 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
       for (const ligne of lignes) {
         incomingMap.set(ligne.produit_id, (incomingMap.get(ligne.produit_id) || 0) + ligne.quantite_recue);
       }
+      // Product names for the messages: the depot user must read which
+      // product is over, not an internal id (U-20).
+      const { rows: nomRows } = await client.query(
+        'SELECT id, nom FROM produits WHERE id = ANY($1::int[])',
+        [[...incomingMap.keys()]]
+      );
+      const nomByProduit = new Map<number, string>(nomRows.map((r: any) => [Number(r.id), r.nom]));
       for (const [produitId, incoming] of incomingMap) {
         const ordered = orderedMap.get(produitId) || 0;
         const already = receivedMap.get(produitId) || 0;
+        const nom = nomByProduit.get(produitId) ?? `n° ${produitId}`;
+        if (ordered === 0 && incoming > 0) {
+          throw businessError(422, `Le produit « ${nom} » ne figure pas dans cette commande.`, 'OVER_RECEIPT');
+        }
         if (already + incoming > ordered) {
           throw businessError(
             422,
-            `Réception excessive pour le produit ${produitId}: commandé ${ordered}, déjà reçu ${already}, ` +
-            `réception en cours ${incoming} (max autorisé ${Math.max(0, ordered - already)}).`,
+            `Réception excessive pour « ${nom} » : reste à recevoir ${Math.max(0, ordered - already)} ` +
+            `(commandé ${ordered}, déjà reçu ${already}).`,
             'OVER_RECEIPT'
           );
         }
       }
+      // The order is complete once every ordered product is fully received.
+      const commandeComplete = [...orderedMap].every(
+        ([produitId, ordered]) => (receivedMap.get(produitId) || 0) + (incomingMap.get(produitId) || 0) >= ordered
+      );
 
       // Generate reception number via sequence
       const { rows: seqRows } = await client.query("SELECT nextval('reception_numero_seq') as num");
@@ -289,13 +332,17 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
         );
       }
 
-      // Update order status to delivered
-      await client.query(
-        `UPDATE commandes_fournisseur 
-         SET statut = 'livree', date_livraison_reelle = CURRENT_DATE 
-         WHERE id = $1 AND statut != 'annulee'`,
-        [commande_id]
-      );
+      // Delivered only when nothing is left to receive. A partial reception
+      // used to close the order too, so it left the pending list and the rest
+      // of the delivery could never be received from the UI (U-20).
+      if (commandeComplete) {
+        await client.query(
+          `UPDATE commandes_fournisseur
+           SET statut = 'livree', date_livraison_reelle = CURRENT_DATE
+           WHERE id = $1 AND statut != 'annulee'`,
+          [commande_id]
+        );
+      }
 
       await client.query('COMMIT');
 
@@ -352,17 +399,38 @@ export class ReceptionService extends BaseService<ReceptionRecord> {
 
     if (commandeRows.length === 0) return null;
 
+    // Already-received quantities are recorded per product (reception_lignes
+    // carry no commande_ligne id), so a product ordered on two lines gets its
+    // received total spread over them in line order.
     const { rows: lignesRows } = await pool.query(
-      `SELECT cl.*, p.nom as produit_nom, p.reference as produit_reference, p.code_barre, p.stock as stock_actuel
+      `WITH recu AS (
+         SELECT rl.produit_id, SUM(rl.quantite_recue)::int AS qte
+         FROM reception_lignes rl
+         JOIN receptions r ON r.id = rl.reception_id
+         WHERE r.commande_id = $1
+         GROUP BY rl.produit_id
+       )
+       SELECT cl.*, p.nom as produit_nom, p.reference as produit_reference, p.code_barre, p.stock as stock_actuel,
+              LEAST(cl.quantite, GREATEST(0,
+                COALESCE(recu.qte, 0)
+                - COALESCE(SUM(cl.quantite) OVER (
+                    PARTITION BY cl.produit_id ORDER BY cl.id
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0)
+              ))::int AS quantite_deja_recue
        FROM commande_lignes cl
        LEFT JOIN produits p ON cl.produit_id = p.id
-       WHERE cl.commande_id = $1`,
+       LEFT JOIN recu ON recu.produit_id = cl.produit_id
+       WHERE cl.commande_id = $1
+       ORDER BY cl.id`,
       [commandeId]
     );
 
     return {
       ...commandeRows[0],
-      lignes: lignesRows,
+      lignes: lignesRows.map((l: any) => ({
+        ...l,
+        quantite_restante: Math.max(0, Number(l.quantite) - Number(l.quantite_deja_recue)),
+      })),
     };
   }
 

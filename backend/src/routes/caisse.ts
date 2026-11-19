@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { CaisseMagasinController } from '../controllers/CaisseMagasinController';
 import pool from '../db/connection';
 import { authenticate, authorize } from '../middleware/auth';
+import { tiersNomSql } from '../utils/caisseLibelle';
 import { validateBody } from '../middleware/validation';
 import {
   ouvrirSessionCaisseSchema,
@@ -61,19 +62,28 @@ router.get('/audit', authorize(['admin', 'manager']), async (req, res) => {
     const where: string[] = [];
     const params: any[] = [];
     let p = 1;
-    if (orphans_only === 'true') where.push('is_orphan = TRUE');
-    if (source_kind) { where.push(`source_kind = $${p++}`); params.push(source_kind); }
-    if (tiers_id) { where.push(`tiers_id = $${p++}`); params.push(parseInt(tiers_id)); }
-    if (date_from) { where.push(`source_date >= $${p++}`); params.push(date_from); }
-    if (date_to) { where.push(`source_date <= $${p++}`); params.push(date_to); }
+    if (orphans_only === 'true') where.push('v.is_orphan = TRUE');
+    if (source_kind) { where.push(`v.source_kind = $${p++}`); params.push(source_kind); }
+    if (tiers_id) { where.push(`v.tiers_id = $${p++}`); params.push(parseInt(tiers_id)); }
+    if (date_from) { where.push(`v.source_date >= $${p++}`); params.push(date_from); }
+    if (date_to) { where.push(`v.source_date <= $${p++}`); params.push(date_to); }
     const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const lim = Math.min(parseInt(limit) || 200, 1000);
 
     const [{ rows: items }, { rows: summary }, { rows: orphCount }] = await Promise.all([
       pool.query(
-        `SELECT * FROM v_caisse_audit ${whereSQL}
-         ORDER BY source_date DESC LIMIT ${lim}`,
+        // P-M4: name the client and the invoice, not just their ids.
+        `SELECT v.*,
+                ${tiersNomSql('t')} AS tiers_nom,
+                f.id AS facture_id,
+                f.numero_facture
+         FROM v_caisse_audit v
+         LEFT JOIN tiers t ON t.id = v.tiers_id
+         LEFT JOIN paiements pa ON v.source_kind = 'paiement' AND pa.id = v.source_id
+         LEFT JOIN factures f ON f.id = pa.facture_id
+         ${whereSQL}
+         ORDER BY v.source_date DESC LIMIT ${lim}`,
         params
       ),
       pool.query(

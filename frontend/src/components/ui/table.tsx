@@ -1,29 +1,86 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { scrollFadeClass, useScrollEdges } from "@/components/ui/scroll-edges"
 
-const Table = React.forwardRef<
-  HTMLTableElement,
-  React.HTMLAttributes<HTMLTableElement>
->(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
-    <table
-      ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
-      {...props}
-    />
-  </div>
-))
+export interface ScrollRegionProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Nom du contenu défilant (« Mouvements de la session »), repris par la région. */
+  label?: string
+}
+
+/**
+ * Conteneur à défilement horizontal accessible au clavier : tant que son contenu
+ * déborde, il devient une région focusable et nommée (WCAG 2.1.1, règle axe
+ * `scrollable-region-focusable`) ; sinon c'est une simple `<div>`, sans arrêt de
+ * tabulation. À utiliser à la place d'un `<div className="overflow-x-auto">`
+ * fait main autour d'un tableau ou d'une bande défilante.
+ *
+ * Tant qu'il reste du contenu caché, le bord concerné s'estompe : une colonne
+ * coupée se voit coupée (« −44 » ne se lit plus comme un montant entier
+ * quand « −440 FCFA » dépasse du cadre).
+ */
+const ScrollRegion = React.forwardRef<HTMLDivElement, ScrollRegionProps>(
+  ({ label, className, children, ...props }, ref) => {
+    const wrapRef = React.useRef<HTMLDivElement>(null)
+    React.useImperativeHandle(ref, () => wrapRef.current as HTMLDivElement)
+    // Focusable seulement quand il défile vraiment : pas d'arrêt de tabulation
+    // inutile sur un tableau qui tient à l'écran.
+    const edges = useScrollEdges(wrapRef)
+    const { overflowing } = edges
+    return (
+      <div
+        ref={wrapRef}
+        className={cn(
+          "relative w-full overflow-auto rounded-[inherit] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          scrollFadeClass(edges),
+          className
+        )}
+        {...(overflowing
+          ? {
+              tabIndex: 0,
+              role: "region",
+              "aria-label": label ? `${label} (défilement horizontal)` : "Contenu (défilement horizontal)",
+            }
+          : {})}
+        {...props}
+      >
+        {children}
+      </div>
+    )
+  }
+)
+ScrollRegion.displayName = "ScrollRegion"
+
+export interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
+  /** Classes du conteneur défilant (bordure, arrondi…), distinctes de celles du `<table>`. */
+  containerClassName?: string
+}
+
+/**
+ * Tableau dans un `ScrollRegion` : quand il déborde (téléphone), son conteneur
+ * devient une région focusable et nommée, défilable au clavier. Nommer le
+ * tableau avec `aria-label` (« Lignes de la facture ») : la région reprend ce nom.
+ */
+const Table = React.forwardRef<HTMLTableElement, TableProps>(
+  ({ className, containerClassName, ...props }, ref) => (
+    <ScrollRegion label={props["aria-label"] ?? "Tableau"} className={containerClassName}>
+      <table
+        ref={ref}
+        className={cn("w-full caption-bottom text-sm", className)}
+        {...props}
+      />
+    </ScrollRegion>
+  )
+)
 Table.displayName = "Table"
 
 const TableHeader = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
 >(({ className, ...props }, ref) => (
-  <thead 
-    ref={ref} 
-    className={cn("[&_tr]:border-b sticky top-0 z-10 bg-background", className)} 
-    {...props} 
-  />
+  // Pas de `sticky top-0` : à l'intérieur du conteneur `overflow-auto` il ne
+  // collait jamais à la fenêtre, et son fond `bg-background` dessinait une bande
+  // plus sombre que la carte en thème sombre.
+  <thead ref={ref} className={cn("[&_tr]:border-b", className)} {...props} />
 ))
 TableHeader.displayName = "TableHeader"
 
@@ -71,36 +128,52 @@ const TableRow = React.forwardRef<
 ))
 TableRow.displayName = "TableRow"
 
-const TableHead = React.forwardRef<
-  HTMLTableCellElement,
-  React.ThHTMLAttributes<HTMLTableCellElement>
->(({ className, ...props }, ref) => (
-  <th
-    ref={ref}
-    className={cn(
-      "h-10 sm:h-12 px-2 sm:px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 text-xs sm:text-sm",
-      className
-    )}
-    {...props}
-  />
-))
+export interface TableHeadProps extends React.ThHTMLAttributes<HTMLTableCellElement> {
+  /** Colonne de montants / quantités : en-tête aligné à droite, comme ses cellules. */
+  numeric?: boolean
+}
+
+/**
+ * En-tête de colonne : jamais sur deux lignes (« Qté commandée * » s'étalait sur
+ * trois). Le style est unique — pas d'en-têtes en capitales ailleurs.
+ */
+const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
+  ({ className, numeric, ...props }, ref) => (
+    <th
+      ref={ref}
+      className={cn(
+        "h-10 whitespace-nowrap px-3 text-left align-middle text-xs font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0",
+        numeric && "text-right",
+        className
+      )}
+      {...props}
+    />
+  )
+)
 TableHead.displayName = "TableHead"
 
-const TableCell = React.forwardRef<
-  HTMLTableCellElement,
-  React.TdHTMLAttributes<HTMLTableCellElement>
->(({ className, ...props }, ref) => (
-  <td
-    ref={ref}
-    // `tabular-nums` par défaut : dans un tableau, les chiffres doivent
-    // s'aligner en colonne. Évite d'avoir à penser à `.num` sur chaque montant.
-    className={cn(
-      "p-2 sm:p-4 align-middle [&:has([role=checkbox])]:pr-0 text-xs sm:text-sm tabular-nums",
-      className
-    )}
-    {...props}
-  />
-))
+export interface TableCellProps extends React.TdHTMLAttributes<HTMLTableCellElement> {
+  /**
+   * Montant / quantité : aligné à droite, chiffres tabulaires, jamais coupé.
+   * `tabular-nums` n'est plus posé sur toutes les cellules : la fonte Inter
+   * donne alors au trait d'union une chasse de chiffre (« Jean - Pierre »).
+   */
+  numeric?: boolean
+}
+
+const TableCell = React.forwardRef<HTMLTableCellElement, TableCellProps>(
+  ({ className, numeric, ...props }, ref) => (
+    <td
+      ref={ref}
+      className={cn(
+        "px-3 py-2.5 align-middle text-sm [&:has([role=checkbox])]:pr-0",
+        numeric && "whitespace-nowrap text-right tabular-nums",
+        className
+      )}
+      {...props}
+    />
+  )
+)
 TableCell.displayName = "TableCell"
 
 const TableCaption = React.forwardRef<
@@ -116,6 +189,7 @@ const TableCaption = React.forwardRef<
 TableCaption.displayName = "TableCaption"
 
 export {
+  ScrollRegion,
   Table,
   TableHeader,
   TableBody,

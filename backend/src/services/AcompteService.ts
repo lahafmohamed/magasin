@@ -5,6 +5,7 @@ import { caisseMagasinService } from './CaisseMagasinService';
 import { ClientAllocationService } from './ClientAllocationService';
 import { PAYMENT_METHODS, PaymentMethod, toPaiementMethod } from '../utils/paymentMethods';
 import { SupplierAllocationService, SupplierAllocationResult } from './SupplierAllocationService';
+import { mouvementLibelle, tiersNomSql } from '../utils/caisseLibelle';
 
 const CASH_METHODS: PaymentMethod[] = ['espece'];
 
@@ -67,7 +68,7 @@ export class AcompteService {
       [magasinId]
     );
     if (rows.length === 0) {
-      throw businessError(409, 'Aucune session caisse ouverte pour ce magasin');
+      throw businessError(409, 'La caisse de ce magasin est fermée : ouvrez-la avant d’encaisser des espèces.', 'CAISSE_FERMEE');
     }
     return rows[0].id;
   }
@@ -117,7 +118,7 @@ export class AcompteService {
 
     const montantNum = Number(montant);
     if (!montantNum || montantNum <= 0) {
-      throw businessError(400, 'Montant doit être > 0');
+      throw businessError(400, 'Le montant doit être supérieur à 0.');
     }
     if (!methode_paiement || !PAYMENT_METHODS.includes(methode_paiement)) {
       throw businessError(400, 'methode_paiement invalide');
@@ -143,11 +144,12 @@ export class AcompteService {
       }
 
       const { rows: tiersRows } = await client.query(
-        `SELECT id, ${roleColumn} AS has_role FROM tiers WHERE id = $1 AND deleted_at IS NULL`,
+        `SELECT id, ${roleColumn} AS has_role, ${tiersNomSql('tiers')} AS nom
+         FROM tiers WHERE id = $1 AND deleted_at IS NULL`,
         [tiersId]
       );
       if (tiersRows.length === 0) {
-        throw businessError(404, 'Tiers introuvable');
+        throw businessError(404, 'Contact introuvable');
       }
       if (tiersRows[0].has_role === false) {
         throw businessError(422, isClient
@@ -169,7 +171,7 @@ export class AcompteService {
             [effectiveMagasinId]
           );
           if (sessRows.length === 0) {
-            throw businessError(409, 'Aucune session caisse ouverte pour ce magasin');
+            throw businessError(409, 'La caisse de ce magasin est fermée : ouvrez-la avant d’encaisser des espèces.', 'CAISSE_FERMEE');
           }
           effectiveSessionId = sessRows[0].id;
         } else {
@@ -207,7 +209,7 @@ export class AcompteService {
           methode_paiement,
           reference_type: isClient ? 'acompte' : 'acompte_fournisseur',
           reference_id: acompte.id,
-          libelle: isClient ? `Acompte client #${tiersId}` : `Acompte fournisseur #${tiersId}`,
+          libelle: mouvementLibelle(isClient ? 'Acompte' : 'Acompte fournisseur', tiersRows[0].nom),
           user_id: userId ?? undefined,
           idempotency_key: idempotency_key ? `${idempotency_key}:mvt` : undefined,
         });
@@ -303,7 +305,7 @@ export class AcompteService {
       void acRestant;
 
       const { rows: facRows } = await client.query(
-        `SELECT id, tiers_id, total, montant_paye,
+        `SELECT id, numero_facture, tiers_id, total, montant_paye,
                 GREATEST(total - montant_paye, 0) AS remaining, location_id, statut
          FROM factures WHERE id = $1 FOR UPDATE`,
         [factureId]
@@ -334,7 +336,7 @@ export class AcompteService {
         ) VALUES ($1,$2,$3,CURRENT_TIMESTAMP,$4,$5,$6,'acompte_application',$7,$8)
         RETURNING id`,
         [factureId, montantNum, toPaiementMethod(acompte.methode_paiement),
-          `ACO-APP-${acompteId}`, `Application acompte #${acompteId}`,
+          `Acompte n° ${acompteId}`, `Acompte n° ${acompteId} appliqué`,
           magasinId, idempotency_key || null, userId]
       );
 
@@ -349,7 +351,7 @@ export class AcompteService {
            (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
          VALUES ($1, 'paiement', $2, $3, 0, $4, $5, $6)`,
         [acompte.tiers_id, payRows[0].id, `PAI-${payRows[0].id}`, montantNum,
-          `Application acompte #${acompteId} sur facture #${factureId}`, userId]
+          `Acompte n° ${acompteId} appliqué à ${facture.numero_facture}`, userId]
       );
 
       await ClientAllocationService.recomputeClientAllocations(acompte.tiers_id, { transaction: client, userId });
@@ -383,7 +385,8 @@ export class AcompteService {
       await checkPeriodIsOpen(new Date(), client);
 
       const { rows: acRows } = await client.query(
-        `SELECT * FROM acomptes_clients WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        `SELECT a.*, (SELECT ${tiersNomSql('t')} FROM tiers t WHERE t.id = a.tiers_id) AS tiers_nom
+         FROM acomptes_clients a WHERE a.id = $1 AND a.deleted_at IS NULL FOR UPDATE OF a`,
         [acompteId]
       );
       if (acRows.length === 0) {
@@ -403,7 +406,7 @@ export class AcompteService {
         methode_paiement,
         reference_type: 'acompte',
         reference_id: acompteId,
-        libelle: `Remboursement acompte #${acompteId}`,
+        libelle: mouvementLibelle('Remboursement acompte', acompte.tiers_nom),
         user_id: userId || undefined,
         idempotency_key: idempotency_key || undefined,
       });
@@ -431,7 +434,7 @@ export class AcompteService {
            (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
          VALUES ($1, 'ajustement', $2, $3, $4, 0, $5, $6)`,
         [acompte.tiers_id, acompteId, `REMB-ACO-${acompteId}`, montantNum,
-          `Remboursement acompte #${acompteId}`, userId]
+          `Remboursement de l’acompte n° ${acompteId}`, userId]
       );
 
       await ClientAllocationService.recomputeClientAllocations(acompte.tiers_id, { transaction: client, userId });
@@ -497,7 +500,7 @@ export class AcompteService {
       this.assertAcompteUsable(acompte, montantNum);
 
       const { rows: facRows } = await client.query(
-        `SELECT id, tiers_id, total, montant_paye,
+        `SELECT id, numero_facture_interne, tiers_id, total, montant_paye,
                 GREATEST(total - COALESCE(montant_paye,0), 0) AS remaining, statut
          FROM factures_fournisseur WHERE id = $1 FOR UPDATE`,
         [factureId]
@@ -524,7 +527,7 @@ export class AcompteService {
         ) VALUES ($1,$2,$3,CURRENT_TIMESTAMP,$4,$5,$6,'acompte_application',$7,$8)
         RETURNING id`,
         [factureId, montantNum, toPaiementMethod(acompte.methode_paiement),
-          `ACOF-APP-${acompteId}`, `Application acompte fournisseur #${acompteId}`,
+          `Acompte fournisseur n° ${acompteId}`, `Acompte fournisseur n° ${acompteId} appliqué`,
           acompte.magasin_id, idempotency_key || null, userId]
       );
 
@@ -540,7 +543,7 @@ export class AcompteService {
            (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
          VALUES ($1, 'paiement', $2, $3, $4, 0, $5, $6)`,
         [acompte.tiers_id, payRows[0].id, `PAIF-${payRows[0].id}`, montantNum,
-          `Application acompte fournisseur #${acompteId} sur facture #${factureId}`, userId]
+          `Acompte fournisseur n° ${acompteId} appliqué à ${facture.numero_facture_interne}`, userId]
       );
 
       await client.query('COMMIT');
@@ -572,7 +575,8 @@ export class AcompteService {
       await checkPeriodIsOpen(new Date(), client);
 
       const { rows: acRows } = await client.query(
-        `SELECT * FROM acomptes_fournisseur WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        `SELECT a.*, (SELECT ${tiersNomSql('t')} FROM tiers t WHERE t.id = a.tiers_id) AS tiers_nom
+         FROM acomptes_fournisseur a WHERE a.id = $1 AND a.deleted_at IS NULL FOR UPDATE OF a`,
         [acompteId]
       );
       if (acRows.length === 0) {
@@ -592,7 +596,7 @@ export class AcompteService {
         methode_paiement,
         reference_type: 'acompte_fournisseur',
         reference_id: acompteId,
-        libelle: `Remboursement acompte fournisseur #${acompteId}`,
+        libelle: mouvementLibelle('Remboursement acompte fournisseur', acompte.tiers_nom),
         user_id: userId || undefined,
         idempotency_key: idempotency_key || undefined,
       });
@@ -618,7 +622,7 @@ export class AcompteService {
            (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
          VALUES ($1, 'ajustement', $2, $3, 0, $4, $5, $6)`,
         [acompte.tiers_id, acompteId, `REMB-ACOF-${acompteId}`, montantNum,
-          `Remboursement acompte fournisseur #${acompteId}`, userId]
+          `Remboursement de l’acompte fournisseur n° ${acompteId}`, userId]
       );
 
       await client.query('COMMIT');

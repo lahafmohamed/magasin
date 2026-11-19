@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { CreditNoteController } from '../controllers/CreditNoteController';
 import { validateBody } from '../middleware/validation';
-import { createAvoirFromRetourSchema, createAvoirManualSchema, updateAvoirStatutSchema, applyAvoirToFactureSchema } from '../validation/schemas';
+import { createAvoirFromRetourSchema, createAvoirManualSchema, updateAvoirStatutSchema, applyAvoirToFactureSchema, rembourserAvoirSchema } from '../validation/schemas';
 import { authenticate, authorize } from '../middleware/auth';
 
 const router = Router();
@@ -31,6 +31,9 @@ router.patch('/:id/statut', authorize(['admin', 'manager']), validateBody(update
 
 // POST /api/avoirs/:id/apply-to-facture - Apply credit note to an invoice (admin, manager only)
 router.post('/:id/apply-to-facture', authorize(['admin', 'manager']), validateBody(applyAvoirToFactureSchema), CreditNoteController.applyToFacture);
+
+// POST /api/avoirs/:id/rembourser - Pay a valid, unused credit note back (admin, manager only)
+router.post('/:id/rembourser', authorize(['admin', 'manager']), validateBody(rembourserAvoirSchema), CreditNoteController.rembourser);
 
 // DELETE /api/avoirs/:id - Delete (admin only)
 router.delete('/:id', authorize(['admin']), CreditNoteController.delete);

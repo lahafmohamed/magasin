@@ -1,5 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { formatNombrePdf } from './PDFService';
+import { companyName, formatDatePdf, formatMoisPdf, formatNombrePdf, formatPeriodePdf } from './PDFService';
+
+/**
+ * CPG2-04 : les PDF imprimaient « Période : 2026-10-01 au 2026-10-31 »,
+ * « Période : ... au … » et « Période : 2026-10 » sur des documents remis au
+ * client ou à l'employé.
+ */
+describe('dates imprimées', () => {
+  const winAnsi = (texte: string) => [...texte].every((c) => c.charCodeAt(0) <= 255 || '’…'.includes(c));
+
+  it('écrit les dates comme l’interface, avec « 1er » pour le premier du mois', () => {
+    expect(formatDatePdf('2026-10-01')).toBe('1er oct. 2026');
+    expect(formatDatePdf('2026-10-31')).toBe('31 oct. 2026');
+    expect(formatDatePdf('')).toBe('');
+  });
+
+  it('écrit une période en toutes lettres, bornée d’un côté ou des deux', () => {
+    expect(formatPeriodePdf('2026-10-01', '2026-10-31')).toBe('Période : du 1er oct. 2026 au 31 oct. 2026');
+    expect(formatPeriodePdf(null, '2026-10-31')).toBe('Période : jusqu’au 31 oct. 2026');
+    expect(formatPeriodePdf('2026-10-01', undefined)).toBe('Période : depuis le 1er oct. 2026');
+    expect(formatPeriodePdf()).toBe('');
+    expect(winAnsi(formatPeriodePdf('2026-02-01', '2026-12-31'))).toBe(true);
+  });
+
+  it('écrit le mois de paie en toutes lettres', () => {
+    expect(formatMoisPdf('2026-10')).toBe('octobre 2026');
+    expect(formatMoisPdf('2026-08')).toBe('août 2026');
+    expect(formatMoisPdf('n/a')).toBe('n/a');
+  });
+});
 
 /**
  * Régression : `toLocaleString('fr-FR')` sépare les milliers avec une espace
@@ -35,5 +64,22 @@ describe('formatNombrePdf', () => {
 
   it('accepte les montants NUMERIC renvoyés en chaîne par pg', () => {
     expect(formatNombrePdf('2920000.00')).toBe('2 920 000');
+  });
+});
+
+/**
+ * CPG-08 : l'en-tête des documents prenait « Hitek-CI » quand la raison
+ * sociale n'était pas renseignée — la marque d'un client imprimée chez un
+ * autre. Le nom vient des paramètres de l'entreprise, sinon rien.
+ */
+describe('companyName', () => {
+  it('reprend la raison sociale des paramètres', () => {
+    expect(companyName({ nom: '  Boutique Plateau  ' })).toBe('Boutique Plateau');
+  });
+
+  it('n’invente aucune marque quand elle manque', () => {
+    expect(companyName({ nom: '' })).toBe('');
+    expect(companyName({ nom: null })).toBe('');
+    expect(companyName(undefined)).toBe('');
   });
 });

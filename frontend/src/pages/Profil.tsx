@@ -1,217 +1,196 @@
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
-import {
-  User as UserIcon,
-  ShieldCheck,
-  KeyRound,
-  Check,
-  X,
-  Clock,
-  Mail,
-  BadgeCheck,
-} from 'lucide-react';
+import { AlertCircle, Keyboard } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { authService } from '../services/authService';
+import { useSingleKeyShortcuts } from '@/lib/shortcutPreferences';
+import { openShortcutsHelp } from '@/hooks/useKeyboardShortcuts';
+import { PageShell } from '@/components/ui/page-shell';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
-import { Spinner } from '@/components/ui/loading';
-import { PageHeader } from '@/components/ui/page-header';
+import { KeyValue, KeyValueList } from '@/components/ui/key-value';
+import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
-import { formatDate } from '../utils/format';
-import { getErrorMessage } from '@/utils/errors';
-import { isStrongPassword, passwordRules, PASSWORD_POLICY_MESSAGE } from '../utils/password';
-import { ROLE_LABELS } from '../utils/roles';
+import { Spinner } from '@/components/ui/loading';
+import { formatDateTime } from '../utils/format';
+import { getErrorMessage, isCredentialError } from '@/utils/errors';
+import { LOGIN_NOTICE_MESSAGES, leaveLoginNotice } from '@/lib/loginNotice';
+import { isStrongPassword, PASSWORD_POLICY_MESSAGE } from '../utils/password';
+import { formatRole } from '../utils/roles';
+import { PasswordRules } from './ChangePassword';
 
-/** Ligne libellé / valeur de la carte identité. */
-function InfoRow({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof UserIcon;
-  label: string;
-  value: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-3 py-2">
-      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="truncate text-sm font-medium">{value}</p>
-      </div>
-    </div>
-  );
+type Field = 'current' | 'new' | 'confirm';
+type Errors = Partial<Record<Field | 'form', string>>;
+
+/** Ancre du menu utilisateur « Changer mon mot de passe » (`/profil#mot-de-passe`). */
+const PASSWORD_ANCHOR = 'mot-de-passe';
+
+function NotSet({ children }: { children: string }) {
+  return <span className="font-normal text-muted-foreground">{children}</span>;
+}
+
+/** Touche de raccourci, dessinée comme une touche de clavier. */
+function Key({ children }: { children: string }) {
+  return <kbd className="rounded border bg-muted px-1 font-sans text-xs">{children}</kbd>;
 }
 
 export default function Profil() {
   const { user, logout } = useAuth();
+  const location = useLocation();
+  const [singleKeyShortcuts, setSingleKeyShortcuts] = useSingleKeyShortcuts();
+  const passwordTitleId = useId();
+  const sectionRef = useRef<HTMLElement>(null);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [errors, setErrors] = useState<{ newPassword?: string; confirm?: string }>({});
+  const [errors, setErrors] = useState<Errors>({});
+  const refs = {
+    current: useRef<HTMLInputElement>(null),
+    new: useRef<HTMLInputElement>(null),
+    confirm: useRef<HTMLInputElement>(null),
+  };
+  const currentRef = refs.current;
 
-  const rules = passwordRules(newPassword);
+  // Arrivée par « Changer mon mot de passe » : la page se place sur le
+  // formulaire et le premier champ prend le focus (le Layout ne le déplace
+  // alors pas sur le titre).
+  useEffect(() => {
+    if (location.hash !== `#${PASSWORD_ANCHOR}`) return;
+    sectionRef.current?.scrollIntoView?.({ block: 'start' });
+    currentRef.current?.focus({ preventScroll: true });
+  }, [location.hash, currentRef]);
+
+  const newDescribedBy = ['profil-new-rules', errors.new && 'profil-new-error'].filter(Boolean).join(' ');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrors({});
 
-    if (!isStrongPassword(newPassword)) {
-      setErrors({ newPassword: PASSWORD_POLICY_MESSAGE });
-      toast.error(PASSWORD_POLICY_MESSAGE);
-      return;
-    }
-    if (newPassword !== confirm) {
-      const msg = 'Les mots de passe ne correspondent pas.';
-      setErrors({ confirm: msg });
-      toast.error(msg);
+    const next: Errors = {};
+    if (!currentPassword) next.current = 'Saisissez votre mot de passe actuel.';
+    if (!isStrongPassword(newPassword)) next.new = PASSWORD_POLICY_MESSAGE;
+    else if (newPassword === currentPassword) next.new = 'Choisissez un mot de passe différent de l’actuel.';
+    if (!next.new && newPassword !== confirm) next.confirm = 'Les deux mots de passe ne correspondent pas.';
+    setErrors(next);
+    const firstInvalid = (['current', 'new', 'confirm'] as const).find((f) => next[f]);
+    if (firstInvalid) {
+      refs[firstInvalid].current?.focus();
       return;
     }
 
     setSubmitting(true);
     try {
       await authService.changePassword(currentPassword, newPassword);
-      toast.success('Mot de passe mis à jour. Veuillez vous reconnecter.');
+      leaveLoginNotice('mot-de-passe-modifie');
+      toast.success(LOGIN_NOTICE_MESSAGES['mot-de-passe-modifie']);
       await logout();
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur lors du changement de mot de passe.'));
+      if (isCredentialError(err)) {
+        setErrors({ current: getErrorMessage(err) });
+        refs.current.current?.focus();
+      } else {
+        setErrors({ form: getErrorMessage(err, 'Impossible de changer le mot de passe. Réessayez.') });
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (!user) return null;
-
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Mon profil"
-        icon={UserIcon}
-        description="Vos informations de compte et votre mot de passe"
-      />
+    <PageShell
+      title="Mon profil"
+      description="Vos informations de compte, votre mot de passe et vos préférences"
+      width="narrow"
+    >
+      <Card>
+        <CardHeader>
+          <CardTitle>Informations du compte</CardTitle>
+          <CardDescription>Ces informations sont gérées par votre administrateur</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <KeyValueList>
+            <KeyValue label="Identifiant">{user?.username ?? '—'}</KeyValue>
+            <KeyValue label="Nom complet">{user?.nom_complet || <NotSet>Non renseigné</NotSet>}</KeyValue>
+            <KeyValue label="Adresse e-mail">
+              <span className="break-all">{user?.email || <NotSet>Non renseignée</NotSet>}</span>
+            </KeyValue>
+            <KeyValue label="Rôle">{formatRole(user?.role)}</KeyValue>
+            <KeyValue label="Dernière connexion">
+              {user?.dernier_login ? formatDateTime(user.dernier_login) : <NotSet>Première connexion</NotSet>}
+            </KeyValue>
+          </KeyValueList>
+        </CardContent>
+      </Card>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* ---------- Identité ---------- */}
+      <section id={PASSWORD_ANCHOR} ref={sectionRef} aria-labelledby={passwordTitleId} className="scroll-mt-20">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <BadgeCheck className="h-4 w-4" />
-              Informations du compte
-            </CardTitle>
+            <CardTitle id={passwordTitleId}>Changer mon mot de passe</CardTitle>
             <CardDescription>
-              Ces informations sont gérées par un administrateur.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="divide-y">
-            <InfoRow icon={UserIcon} label="Identifiant" value={user.username} />
-            <InfoRow
-              icon={UserIcon}
-              label="Nom complet"
-              value={user.nom_complet || <span className="text-muted-foreground">Non renseigné</span>}
-            />
-            <InfoRow
-              icon={Mail}
-              label="Adresse e-mail"
-              value={user.email || <span className="text-muted-foreground">Non renseignée</span>}
-            />
-            <InfoRow
-              icon={ShieldCheck}
-              label="Rôle"
-              value={
-                <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs uppercase tracking-wide">
-                  {ROLE_LABELS[user.role] || user.role}
-                </span>
-              }
-            />
-            <InfoRow
-              icon={Clock}
-              label="Dernière connexion"
-              value={
-                user.dernier_login ? (
-                  formatDate(user.dernier_login)
-                ) : (
-                  <span className="text-muted-foreground">Première connexion</span>
-                )
-              }
-            />
-          </CardContent>
-        </Card>
-
-        {/* ---------- Sécurité ---------- */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <KeyRound className="h-4 w-4" />
-              Changer mon mot de passe
-            </CardTitle>
-            <CardDescription>
-              Vous serez déconnecté après le changement et devrez vous reconnecter.
+              Après le changement, vous serez déconnecté : reconnectez-vous avec le nouveau mot de passe
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            {errors.form && (
+              <div
+                role="alert"
+                className="mb-4 flex items-start gap-2 rounded-md border border-danger-200 bg-danger-50 p-3 text-sm"
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger-700" aria-hidden="true" />
+                <span>{errors.form}</span>
+              </div>
+            )}
+            <form noValidate onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="profil-current">Mot de passe actuel</Label>
                 <PasswordInput
+                  ref={refs.current}
                   id="profil-current"
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
-                  required
                   autoComplete="current-password"
+                  {...fieldErrorProps('profil-current', errors.current)}
                 />
+                <FieldError id="profil-current">{errors.current}</FieldError>
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="profil-new">Nouveau mot de passe</Label>
                 <PasswordInput
+                  ref={refs.new}
                   id="profil-new"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  required
                   autoComplete="new-password"
-                  aria-invalid={!!errors.newPassword}
-                  aria-describedby={
-                    errors.newPassword ? 'profil-new-rules profil-new-error' : 'profil-new-rules'
-                  }
+                  aria-invalid={errors.new ? true : undefined}
+                  aria-describedby={newDescribedBy}
                 />
-                <ul id="profil-new-rules" className="space-y-0.5 pt-1">
-                  {rules.map((rule) => (
-                    <li
-                      key={rule.label}
-                      className={`flex items-center gap-1.5 text-xs ${
-                        rule.ok ? 'text-success-600' : 'text-muted-foreground'
-                      }`}
-                    >
-                      {rule.ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
-                      {rule.label}
-                    </li>
-                  ))}
-                </ul>
-                <FieldError id="profil-new">{errors.newPassword}</FieldError>
+                <PasswordRules id="profil-new-rules" password={newPassword} />
+                <FieldError id="profil-new">{errors.new}</FieldError>
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="profil-confirm">Confirmer le nouveau mot de passe</Label>
                 <PasswordInput
+                  ref={refs.confirm}
                   id="profil-confirm"
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
-                  required
                   autoComplete="new-password"
                   {...fieldErrorProps('profil-confirm', errors.confirm)}
                 />
                 <FieldError id="profil-confirm">{errors.confirm}</FieldError>
               </div>
 
-              <Button type="submit" disabled={submitting} className="w-full">
+              <Button type="submit" size="touch" disabled={submitting} className="w-full sm:w-auto">
                 {submitting ? (
                   <>
                     <Spinner />
-                    Mise à jour…
+                    Enregistrement…
                   </>
                 ) : (
                   'Changer le mot de passe'
@@ -220,7 +199,38 @@ export default function Profil() {
             </form>
           </CardContent>
         </Card>
-      </div>
-    </div>
+      </section>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Raccourcis clavier</CardTitle>
+          <CardDescription>Préférence propre à votre compte, sur ce poste</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-start gap-3">
+            <Checkbox
+              id="profil-raccourcis"
+              checked={singleKeyShortcuts}
+              onChange={(e) => setSingleKeyShortcuts(e.target.checked)}
+              aria-describedby="profil-raccourcis-aide"
+              className="mt-0.5 h-5 w-5"
+            />
+            <div className="space-y-1">
+              <Label htmlFor="profil-raccourcis" className="leading-5">
+                Activer les raccourcis à une touche
+              </Label>
+              <p id="profil-raccourcis-aide" className="text-sm text-muted-foreground text-pretty">
+                <Key>G</Key> puis <Key>F</Key>, <Key>/</Key>, <Key>N</Key>… Désactivez-les si vous utilisez la dictée
+                vocale ou si des touches se déclenchent par erreur.
+              </p>
+            </div>
+          </div>
+          <Button variant="outline" className="gap-2" onClick={openShortcutsHelp}>
+            <Keyboard className="h-4 w-4" aria-hidden="true" />
+            Afficher les raccourcis clavier
+          </Button>
+        </CardContent>
+      </Card>
+    </PageShell>
   );
 }

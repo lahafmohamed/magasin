@@ -5,7 +5,9 @@ export const receptionLigneSchema = z.object({
   produit_id: z.coerce.number().int().positive('Produit requis'),
   quantite_commandee: z.coerce.number().int().positive('Quantité commandée requise'),
   quantite_recue: z.coerce.number().int().nonnegative('Quantité reçue requise'),
-  cout_unitaire: z.coerce.number().nonnegative('Coût unitaire requis'),
+  // Optional: omitted, the order's unit price is used (always, for a role
+  // that does not see prices — E2).
+  cout_unitaire: z.coerce.number().nonnegative('Le coût unitaire ne peut pas être négatif.').optional(),
   notes: z.string().max(500).optional().or(z.literal('')),
 });
 

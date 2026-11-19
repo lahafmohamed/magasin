@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
+import { scrollFadeClass, useScrollEdges } from '@/components/ui/scroll-edges';
 
 /**
  * Onglets accessibles (style « souligné »), sans dépendance externe.
@@ -70,8 +71,16 @@ const Tabs = React.forwardRef<HTMLDivElement, TabsProps>(
 );
 Tabs.displayName = 'Tabs';
 
+/**
+ * Barre d'onglets. Elle défile quand les onglets ne tiennent pas (téléphone) :
+ * le bord encore coupé s'estompe, pour qu'un « Plan co… » tronqué se lise
+ * comme un onglet de plus et non comme un libellé.
+ */
 const TabsList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, onKeyDown, ...props }, ref) => {
+    const listRef = React.useRef<HTMLDivElement>(null);
+    React.useImperativeHandle(ref, () => listRef.current as HTMLDivElement);
+    const edges = useScrollEdges(listRef);
     const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
       onKeyDown?.(event);
       if (event.defaultPrevented) return;
@@ -96,9 +105,9 @@ const TabsList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivEl
 
     return (
       <div
-        ref={ref}
+        ref={listRef}
         role="tablist"
-        className={cn('flex gap-1 overflow-x-auto border-b', className)}
+        className={cn('flex gap-1 overflow-x-auto border-b', scrollFadeClass(edges), className)}
         onKeyDown={handleKeyDown}
         {...props}
       />
@@ -162,7 +171,11 @@ const TabsContent = React.forwardRef<HTMLDivElement, TabsContentProps>(
         id={`${baseId}-content-${value}`}
         aria-labelledby={`${baseId}-trigger-${value}`}
         tabIndex={0}
-        className={cn('focus-visible:outline-none', className)}
+        // Panneau focusable (APG) : son focus doit se voir (WCAG 2.4.7).
+        className={cn(
+          'rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+          className
+        )}
         {...props}
       />
     );

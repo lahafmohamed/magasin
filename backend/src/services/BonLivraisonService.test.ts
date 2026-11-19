@@ -117,6 +117,24 @@ describe('BonLivraisonService (intégration)', () => {
     return rows.length ? Number(rows[0].quantite) : 0;
   }
 
+  it('un BL saisi sans emplacement prend celui de son devis, comme le BL automatique', async () => {
+    const produitId = await stockedProduct(10);
+    const devisId = await makeDevis(produitId, 2);
+    const bl = await bonLivraisonService.create({
+      tiers_id: tiersId,
+      devis_id: devisId,
+      lignes: [{ produit_id: produitId, quantite_commandee: 2, quantite_livree: 2, prix_unitaire: 1000 }],
+    });
+    createdBlIds.push(bl.id);
+
+    const { rows } = await pool.query('SELECT location_id FROM bons_livraison WHERE id = $1', [bl.id]);
+    expect(rows[0].location_id).toBe(locationId);
+
+    // La livraison sort donc le stock du magasin du devis.
+    await bonLivraisonService.updateStatut(bl.id, 'livre');
+    expect(await stockAt(produitId)).toBe(8);
+  });
+
   it('exige un devis confirmé', async () => {
     const produitId = await stockedProduct(10);
     const brouillon = await makeDevis(produitId, 2, 'brouillon');
@@ -262,7 +280,7 @@ describe('BonLivraisonService (intégration)', () => {
     const produitId = await stockedProduct(10);
     const blId = await makeBl(produitId, 4);
 
-    await expect(bonLivraisonService.updateStatut(blId, 'expedie')).rejects.toThrow(/Invalid statut/);
+    await expect(bonLivraisonService.updateStatut(blId, 'expedie')).rejects.toMatchObject({ statusCode: 400, message: 'Statut de bon de livraison inconnu.' });
   });
 
   it('ne facture que depuis un bon livré', async () => {

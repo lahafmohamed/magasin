@@ -1,97 +1,194 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useForm, useFieldArray, Controller } from 'react-hook-form';
+import { useForm, useFieldArray, useWatch, Controller, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { bonLivraisonService, devisService, produitService } from '@/services/api';
-import { formatCurrency } from '@/utils/format';
-import { DocumentPicker, DocumentOption } from '@/components/DocumentPicker';
+import { toast } from 'sonner';
+import { Package, RotateCcw, X } from 'lucide-react';
+import { bonLivraisonService, devisService, produitService, tiersService } from '@/services/api';
+import { DocumentPicker, type DocumentOption, type DocumentPickerHandle } from '@/components/DocumentPicker';
+import { TiersPicker, type TiersPickerValue } from '@/components/TiersPicker';
+import { ProductCombobox } from '@/components/ProductCombobox';
+import { NumericField } from '@/components/NumericField';
+import { DocumentLines, type DocumentLineColumn } from '@/components/DocumentLines';
+import { DocumentFormShell, DraftNotice, SummaryItem, SummaryList } from '@/components/DocumentFormShell';
+import { InlineNotice, SalesProductOption, type SalesSearchProduct } from '@/components/SalesFormParts';
 import { useDraft } from '@/hooks/useDraft';
-import { TiersPicker } from '@/components/TiersPicker';
-import { Tiers, Produit } from '@/types';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { DocumentTotals } from '@/components/ui/document-totals';
+import { DocumentCode } from '@/components/ui/document-code';
+import { EmptyState } from '@/components/ui/empty-state';
 import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
 import { Label } from '@/components/ui/label';
+import { Money } from '@/components/ui/money';
+import { RequiredMark } from '@/components/ui/required-mark';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { EmptyState } from '@/components/ui/empty-state';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ArrowLeft, Check, Package, Search, Truck, Users, X } from 'lucide-react';
-import { toast } from 'sonner';
-import { getValidSalePrice } from '@/utils/salesPrice';
 import { getErrorMessage } from '@/utils/errors';
+import { toNumber } from '@/utils/format';
+import { getValidSalePrice, saleDisabledReason } from '@/utils/salesPrice';
+import { SALES_MESSAGES as M, lineFieldLabel, plural } from '@/validation/salesForms';
 
 const ligneSchema = z.object({
   produit_id: z.number(),
   produit_nom: z.string(),
   produit_reference: z.string(),
-  quantite_commandee: z.number().positive('Quantité invalide'),
-  quantite_livree: z.number().positive('Quantité invalide'),
-  prix_unitaire: z.number().positive('Le prix doit être supérieur à zéro'),
-  stock_dispo: z.number(),
+  quantite_commandee: z.number({ error: M.quantity }).int(M.quantityInteger).min(1, M.quantity),
+  quantite_livree: z
+    .number({ error: M.deliveredQuantity })
+    .int(M.quantityInteger)
+    .min(0, M.deliveredQuantity),
+  prix_unitaire: z.number({ error: M.price }).positive(M.price),
 });
 
+const CLIENT_MISSING = 'Le client du devis n’a pas pu être chargé : choisissez à nouveau le devis.';
+
 const blSchema = z.object({
-  tiers: z
-    .custom<Tiers | null>()
-    .refine((t) => !!t?.id, 'Veuillez sélectionner un client'),
-  devisId: z
-    .string()
-    .refine((v) => Number(v) > 0, 'Le numéro de devis est obligatoire'),
-  notes: z.string().optional(),
-  lignes: z.array(ligneSchema).min(1, 'Veuillez ajouter au moins un produit'),
+  devis: z.custom<DocumentOption | null>((v) => v != null, { error: M.devisRequired }),
+  tiers: z.custom<TiersPickerValue | null>((v) => v != null, { error: CLIENT_MISSING }),
+  notes: z.string(),
+  lignes: z.array(ligneSchema).min(1, M.linesRequired),
 });
 
 type BLFormValues = z.infer<typeof blSchema>;
+type LigneBL = z.infer<typeof ligneSchema>;
 
-const searchDevisAcceptes = async (q: string): Promise<DocumentOption[]> => {
+/** Ligne de devis (`GET /devis/:id`). */
+interface DevisLigneApi {
+  produit_id: number | null;
+  produit_nom?: string | null;
+  produit_reference?: string | null;
+  description?: string | null;
+  quantite: number | string;
+  prix_unitaire: number | string;
+}
+
+const ID = {
+  devis: 'bl-devis',
+  devisHint: 'bl-devis-aide',
+  search: 'bl-produit-search',
+  searchHint: 'bl-produit-aide',
+  lignes: 'bl-lignes',
+  notes: 'bl-notes',
+  commandee: (i: number) => `bl-ligne-${i}-quantite-commandee`,
+  livree: (i: number) => `bl-ligne-${i}-quantite-livree`,
+  prix: (i: number) => `bl-ligne-${i}-prix`,
+};
+
+/** Colonnes des lignes : tableau quand la colonne du formulaire a la place, cartes sinon (`DocumentLines`). */
+const LINE_COLUMNS: DocumentLineColumn[] = [
+  { id: 'produit', header: 'Produit', mobile: 'title', cellClassName: 'min-w-[10rem]' },
+  { id: 'commandee', header: 'Qté commandée', mobile: 'field', headClassName: 'text-right', cellClassName: 'text-right' },
+  { id: 'livree', header: 'Qté livrée', mobile: 'field', headClassName: 'text-right', cellClassName: 'text-right' },
+  {
+    id: 'prix',
+    header: 'Prix unitaire',
+    mobile: 'field',
+    headClassName: 'text-right',
+    cellClassName: 'text-right',
+  },
+  { id: 'total', header: 'Total', numeric: true, mobile: 'field' },
+  {
+    id: 'retirer',
+    header: 'Retirer',
+    srOnlyHeader: true,
+    mobile: 'action',
+    headClassName: 'w-10',
+    cellClassName: 'px-1',
+  },
+];
+
+function firstErrorId(errors: FieldErrors<BLFormValues>, lineCount: number): string | null {
+  for (let i = 0; i < lineCount; i++) {
+    const le = errors.lignes?.[i];
+    if (le?.quantite_commandee) return ID.commandee(i);
+    if (le?.quantite_livree) return ID.livree(i);
+    if (le?.prix_unitaire) return ID.prix(i);
+  }
+  if (errors.lignes?.message || errors.lignes?.root?.message) return ID.search;
+  return null;
+}
+
+function focusById(id: string | null) {
+  if (!id) return;
+  window.setTimeout(() => document.getElementById(id)?.focus(), 0);
+}
+
+const searchDevisConfirmes = async (q: string): Promise<DocumentOption[]> => {
   const res = await devisService.getAll(q, 'accepte', 1, 10);
-  const rows: any[] = res?.data ?? [];
+  const rows: Array<Record<string, unknown>> = res?.data ?? [];
   return rows.map((d) => ({
-    id: d.id,
-    numero: d.numero_devis,
-    tiers_nom: `${d.client_nom || ''} ${d.client_prenom || ''}`.trim() || null,
-    montant: d.montant_total ?? d.total ?? null,
-    date: d.date_devis,
-    statut: d.statut,
+    id: Number(d.id),
+    numero: String(d.numero_devis ?? ''),
+    tiers_nom: `${d.client_nom ?? ''} ${d.client_prenom ?? ''}`.trim() || null,
+    montant: (d.montant_total ?? d.total ?? null) as number | string | null,
+    date: (d.date_devis as string | null) ?? null,
+    statut: (d.statut as string | null) ?? null,
   }));
 };
 
+const searchProducts = async (q: string): Promise<SalesSearchProduct[]> => {
+  const rows = await produitService.searchFuzzy(q, 10, 0.1);
+  return Array.isArray(rows) ? (rows as SalesSearchProduct[]) : [];
+};
+
+function toLines(lignes: DevisLigneApi[]): LigneBL[] {
+  return lignes
+    .filter((l) => l.produit_id != null)
+    .map((l) => {
+      const qty = toNumber(l.quantite) ?? 1;
+      return {
+        produit_id: Number(l.produit_id),
+        produit_nom: l.produit_nom || l.description || '',
+        produit_reference: l.produit_reference || '',
+        quantite_commandee: qty,
+        quantite_livree: qty,
+        prix_unitaire: toNumber(l.prix_unitaire) ?? 0,
+      };
+    });
+}
+
 export default function NouveauBonLivraison() {
   const navigate = useNavigate();
-
-  // État UI de la recherche produit — non géré par le formulaire (trop entangled).
-  const [produits, setProduits] = useState<Produit[]>([]);
-  const [produitSearch, setProduitSearch] = useState('');
-  const [showProduitDropdown, setShowProduitDropdown] = useState(false);
+  const devisTitleId = useId();
   const [submitting, setSubmitting] = useState(false);
-  const [selectedDevis, setSelectedDevis] = useState<DocumentOption | null>(null);
+  const [lineAnnounce, setLineAnnounce] = useState('');
+  const [devisLines, setDevisLines] = useState<LigneBL[] | null>(null);
+  const [devisState, setDevisState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [devisError, setDevisError] = useState<unknown>(null);
+  const devisSeq = useRef(0);
+  const devisPickerRef = useRef<DocumentPickerHandle>(null);
 
   const {
     control,
     register,
     handleSubmit,
+    setValue,
+    getValues,
+    setError,
     watch,
     reset,
-    getValues,
-    formState: { errors, isDirty },
+    formState: { errors, isDirty, isSubmitted },
   } = useForm<BLFormValues>({
     resolver: zodResolver(blSchema),
-    defaultValues: {
-      tiers: null,
-      devisId: '',
-      notes: '',
-      lignes: [],
-    },
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
+    shouldFocusError: false,
+    defaultValues: { devis: null, tiers: null, notes: '', lignes: [] },
   });
 
-  // --- Draft autosave + unsaved-changes guard ------------------------------
+  const { fields, append, remove, replace } = useFieldArray({ control, name: 'lignes' });
+
+  // --- Brouillon ------------------------------------------------------------------
   const { draft, save, clear, hasDraft } = useDraft<BLFormValues>('bl:new');
-  const [showDraftBanner, setShowDraftBanner] = useState(hasDraft);
+  const [showDraftBanner, setShowDraftBanner] = useState(
+    () => hasDraft && (Array.isArray(draft?.lignes) && draft.lignes.length > 0)
+  );
 
   useEffect(() => {
-    const sub = watch((v) => save(v as BLFormValues));
+    const sub = watch((values, { name, type }) => {
+      if (type === 'change' || name?.startsWith('lignes') || name === 'devis') save(values as BLFormValues);
+    });
     return () => sub.unsubscribe();
   }, [watch, save]);
 
@@ -106,372 +203,440 @@ export default function NouveauBonLivraison() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
 
-  const { fields, append, remove } = useFieldArray({ control, name: 'lignes' });
+  const devis = useWatch({ control, name: 'devis' });
+  const tiers = useWatch({ control, name: 'tiers' });
+  const watchedLignes = useWatch({ control, name: 'lignes' });
+  const lignes = useMemo(() => (watchedLignes ?? []) as LigneBL[], [watchedLignes]);
 
-  useEffect(() => {
-    if (produitSearch.length >= 2) {
-      produitService.searchFuzzy(produitSearch, 10, 0.1).then(setProduits).catch(() => setProduits([]));
-    } else {
-      setProduits([]);
+  // --- Devis d'origine : il fixe le client et propose ses lignes -------------------
+  const loadDevis = async (doc: DocumentOption) => {
+    const seq = ++devisSeq.current;
+    setDevisState('loading');
+    setDevisError(null);
+    try {
+      const detail = await devisService.getById(doc.id);
+      const client = detail?.tiers_id ? await tiersService.getById(detail.tiers_id) : null;
+      if (seq !== devisSeq.current) return;
+      const lines = toLines(Array.isArray(detail?.lignes) ? detail.lignes : []);
+      setValue('tiers', client ?? null, { shouldValidate: isSubmitted });
+      setDevisLines(lines);
+      if (getValues('lignes').length === 0 && lines.length > 0) replace(lines);
+      setDevisState('ready');
+    } catch (err) {
+      if (seq !== devisSeq.current) return;
+      setValue('tiers', null);
+      setDevisError(err);
+      setDevisState('error');
     }
-  }, [produitSearch]);
-
-  const addProduit = (produit: Produit) => {
-    const prixVente = getValidSalePrice(produit.prix_vente);
-    if (prixVente === null) {
-      toast.error(
-        'Prix de vente non renseigné. Corrigez la fiche produit avant de continuer.'
-      );
-      return;
-    }
-
-    if (getValues('lignes').some((l) => l.produit_id === produit.id)) {
-      toast.warning('Ce produit est déjà dans le bon de livraison');
-      return;
-    }
-
-    const stock = typeof produit.stock === 'string' ? parseInt(produit.stock) : produit.stock;
-
-    append({
-      produit_id: produit.id,
-      produit_nom: produit.nom,
-      produit_reference: produit.reference,
-      quantite_commandee: 1,
-      quantite_livree: 1,
-      prix_unitaire: prixVente,
-      stock_dispo: stock,
-    });
-
-    setProduitSearch('');
-    setProduits([]);
-    setShowProduitDropdown(false);
   };
 
-  // Valeurs surveillées pour les totaux et l'état du bouton (calcul identique).
-  const selectedClient = watch('tiers');
-  const watchedLignes = watch('lignes');
-  const total = (watchedLignes ?? []).reduce(
-    (sum, l) => sum + Number(l.quantite_livree || 0) * Number(l.prix_unitaire || 0),
-    0
-  );
+  const onDevisChange = (doc: DocumentOption | null) => {
+    setValue('devis', doc, { shouldDirty: true, shouldValidate: isSubmitted });
+    if (doc) {
+      void loadDevis(doc);
+    } else {
+      devisSeq.current += 1;
+      setValue('tiers', null);
+      setDevisLines(null);
+      setDevisState('idle');
+    }
+  };
+
+  // Brouillon restauré : on recharge le devis pour retrouver ses lignes.
+  const restoreDraft = () => {
+    if (draft) {
+      reset(
+        {
+          devis: draft.devis ?? null,
+          tiers: draft.tiers ?? null,
+          notes: draft.notes ?? '',
+          lignes: Array.isArray(draft.lignes) ? draft.lignes : [],
+        },
+        { keepDefaultValues: true }
+      );
+      if (draft.devis) void loadDevis(draft.devis);
+    }
+    setShowDraftBanner(false);
+  };
+
+  const discardDraft = () => {
+    clear();
+    setShowDraftBanner(false);
+  };
+
+  // --- Produits --------------------------------------------------------------------
+  const addProduit = (p: SalesSearchProduct) => {
+    const prixVente = getValidSalePrice(p.prix_vente);
+    if (prixVente === null) return;
+    const current = getValues('lignes');
+    const existing = current.findIndex((l) => l.produit_id === p.id);
+    if (existing >= 0) {
+      // Même produit scanné deux fois : une unité de plus, commandée et livrée.
+      const line = current[existing];
+      const inc = (n: number) => (Number.isFinite(n) ? n : 0) + 1;
+      setValue(`lignes.${existing}.quantite_commandee`, inc(line.quantite_commandee), { shouldDirty: true });
+      setValue(`lignes.${existing}.quantite_livree`, inc(line.quantite_livree), {
+        shouldDirty: true,
+        shouldValidate: isSubmitted,
+      });
+      return;
+    }
+    append(
+      {
+        produit_id: p.id,
+        produit_nom: p.nom,
+        produit_reference: p.reference ?? '',
+        quantite_commandee: 1,
+        quantite_livree: 1,
+        prix_unitaire: prixVente,
+      },
+      { shouldFocus: false }
+    );
+  };
+
+  const removeLigne = (index: number) => {
+    const nom = getValues(`lignes.${index}.produit_nom`);
+    remove(index);
+    setLineAnnounce(`${nom} retiré du bon de livraison.`);
+    document.getElementById(ID.search)?.focus();
+  };
+
+  const totals = useMemo(() => {
+    let total = 0;
+    let units = 0;
+    for (const l of lignes) {
+      const livree = Number.isFinite(l.quantite_livree) ? l.quantite_livree : 0;
+      total += livree * (Number.isFinite(l.prix_unitaire) ? l.prix_unitaire : 0);
+      units += livree;
+    }
+    return { total, units, lines: lignes.length };
+  }, [lignes]);
+
+  // --- Envoi -----------------------------------------------------------------------
+  const onInvalid = (errs: FieldErrors<BLFormValues>) => {
+    // Devis absent (ou client du devis non chargé) : focus sur le sélecteur de devis.
+    if (errs.devis || errs.tiers) {
+      window.setTimeout(() => devisPickerRef.current?.focus(), 0);
+      return;
+    }
+    focusById(firstErrorId(errs, fields.length));
+  };
 
   const onValid = async (values: BLFormValues) => {
+    const over = values.lignes.flatMap((l, i) => (l.quantite_livree > l.quantite_commandee ? [i] : []));
+    if (over.length > 0) {
+      for (const i of over) {
+        setError(`lignes.${i}.quantite_livree`, { type: 'max', message: M.deliveredOverOrdered });
+      }
+      focusById(ID.livree(over[0]));
+      return;
+    }
+    if (!values.devis || !values.tiers) return;
     setSubmitting(true);
     try {
       const result = await bonLivraisonService.create({
-        tiers_id: values.tiers!.id,
-        devis_id: Number(values.devisId),
+        tiers_id: values.tiers.id,
+        devis_id: values.devis.id,
         lignes: values.lignes.map((l) => ({
           produit_id: l.produit_id,
           quantite_commandee: l.quantite_commandee,
           quantite_livree: l.quantite_livree,
           prix_unitaire: l.prix_unitaire,
         })),
-        notes: values.notes || undefined,
+        notes: values.notes.trim() || undefined,
       });
-
       clear();
-      toast.success(`Bon de livraison ${result.numero_bl || ''} créé avec succès`.trim());
-      navigate('/bons-livraison');
+      toast.success(result?.numero_bl ? `Bon de livraison ${result.numero_bl} créé` : 'Bon de livraison créé');
+      navigate(result?.id ? `/bons-livraison/${result.id}` : '/bons-livraison', {
+        replace: true,
+        state: { justCreated: true },
+      });
     } catch (error) {
-      toast.error(getErrorMessage(error, 'Erreur lors de la création du bon de livraison'));
-    } finally {
+      toast.error(getErrorMessage(error, 'Impossible de créer le bon de livraison. Réessayez.'));
       setSubmitting(false);
     }
   };
 
+  // --- Rendu ------------------------------------------------------------------------
+  const lignesError = errors.lignes?.message ?? errors.lignes?.root?.message;
+  const devisFieldError = errors.devis?.message ?? (devis ? undefined : errors.tiers?.message);
+
+  const summary = (
+    <>
+      <SummaryList>
+        <SummaryItem label="Devis">
+          {devis ? (
+            <DocumentCode className="font-normal">{devis.numero}</DocumentCode>
+          ) : (
+            <span className="font-normal text-muted-foreground">Non choisi</span>
+          )}
+        </SummaryItem>
+        {/* « Repris du devis » est dit une fois, sous le titre « Devis d’origine ». */}
+        <SummaryItem label="Client">
+          {tiers ? (
+            `${tiers.raison_sociale}${tiers.prenom ? ` ${tiers.prenom}` : ''}`
+          ) : (
+            <span className="font-normal text-muted-foreground">—</span>
+          )}
+        </SummaryItem>
+        <SummaryItem label="Produits" numeric>
+          {totals.lines === 0
+            ? '—'
+            : `${plural(totals.lines, 'ligne', 'lignes')} · ${plural(totals.units, 'unité livrée', 'unités livrées')}`}
+        </SummaryItem>
+      </SummaryList>
+      <DocumentTotals
+        className="mt-0 w-full pt-2 sm:w-full"
+        aria-label="Total du bon de livraison"
+        total={{ label: 'Total', value: totals.total }}
+      />
+    </>
+  );
+
   return (
-    <div className="p-3 sm:p-6 w-full space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Retour
-        </Button>
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <Truck className="h-8 w-8" />
-            Nouveau bon de livraison
-          </h1>
-          <p className="text-muted-foreground mt-1">Créez un nouveau bon de livraison client</p>
-        </div>
-      </div>
-
-      <form onSubmit={handleSubmit(onValid)} className="space-y-6">
-        {showDraftBanner && (
-          <div className="rounded-lg border bg-muted/50 p-3 text-sm flex items-center justify-between gap-3">
-            <span>Un brouillon non enregistré a été récupéré.</span>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  if (draft) reset(draft);
-                  setShowDraftBanner(false);
-                }}
-              >
-                Restaurer
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  clear();
-                  setShowDraftBanner(false);
-                }}
-              >
-                Ignorer
-              </Button>
-            </div>
-          </div>
-        )}
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Devis parent</CardTitle>
-            <CardDescription>Le bon de livraison doit être lié à un devis accepté</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-1.5">
-              <Label htmlFor="bl-devis-id">Devis<span className="text-destructive"> *</span></Label>
-              <Controller
-                control={control}
-                name="devisId"
-                render={({ field }) => (
-                  <DocumentPicker
-                    inputId="bl-devis-id"
-                    value={field.value ? selectedDevis : null}
-                    fallbackId={field.value && !selectedDevis ? field.value : undefined}
-                    onChange={(doc) => {
-                      setSelectedDevis(doc);
-                      field.onChange(doc ? String(doc.id) : '');
-                    }}
-                    search={searchDevisAcceptes}
-                    placeholder="Rechercher un devis accepté (numéro, client)…"
-                    {...fieldErrorProps('bl-devis-id', errors.devisId)}
-                  />
-                )}
-              />
-              <FieldError id="bl-devis-id">{errors.devisId?.message}</FieldError>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Client<span className="text-destructive"> *</span></CardTitle>
-            <CardDescription>Sélectionnez le client</CardDescription>
-          </CardHeader>
-          <CardContent>
+    <DocumentFormShell
+      title="Nouveau bon de livraison"
+      description="Le stock sort du magasin quand le bon est marqué livré, pas à sa création"
+      backTo="/bons-livraison"
+      onSubmit={handleSubmit(onValid, onInvalid)}
+      notice={showDraftBanner ? <DraftNotice onRestore={restoreDraft} onDiscard={discardDraft} /> : null}
+      summary={summary}
+      total={totals.total}
+      submitLabel="Créer le bon de livraison"
+      submittingLabel="Création du bon de livraison…"
+      submitting={submitting}
+    >
+      {/* Devis d'origine + client */}
+      <Card>
+        <CardHeader>
+          <CardTitle id={devisTitleId}>
+            Devis d’origine
+            <RequiredMark />
+          </CardTitle>
+          <CardDescription id={ID.devisHint}>
+            Choisissez le devis confirmé à livrer : son client et ses produits sont repris
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
             <Controller
               control={control}
-              name="tiers"
+              name="devis"
               render={({ field }) => (
-                <TiersPicker
-                  role="client"
+                <DocumentPicker
+                  ref={devisPickerRef}
+                  inputId={ID.devis}
                   value={field.value}
-                  onChange={field.onChange}
-                  {...fieldErrorProps('bl-tiers', errors.tiers)}
+                  onChange={onDevisChange}
+                  search={searchDevisConfirmes}
+                  placeholder="Numéro ou client"
+                  changeLabel="Changer de devis"
+                  aria-labelledby={devisTitleId}
+                  {...fieldErrorProps(ID.devis, devisFieldError)}
+                  // La consigne complète (« devis confirmé à livrer ») reste lue avec le champ.
+                  aria-describedby={[ID.devisHint, devisFieldError ? `${ID.devis}-error` : null]
+                    .filter(Boolean)
+                    .join(' ')}
                 />
               )}
             />
-            <FieldError id="bl-tiers" className="mt-1.5">{errors.tiers?.message}</FieldError>
-          </CardContent>
-        </Card>
+            <FieldError id={ID.devis}>{devisFieldError}</FieldError>
+          </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              Produits
-            </CardTitle>
-            <CardDescription>Ajoutez les produits à livrer</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Label htmlFor="bl-produit-search" className="block mb-1.5">
-              Rechercher un produit
-            </Label>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                id="bl-produit-search"
-                className="pl-10 sm:pl-10"
-                placeholder="Rechercher un produit…"
-                value={produitSearch}
-                onChange={(e) => {
-                  setProduitSearch(e.target.value);
-                  setShowProduitDropdown(true);
-                }}
-                onFocus={() => setShowProduitDropdown(true)}
-                onBlur={() => setTimeout(() => setShowProduitDropdown(false), 200)}
+          {devisState === 'error' && devis && (
+            <InlineNotice tone="danger" onRetry={() => void loadDevis(devis)}>
+              {getErrorMessage(devisError, 'Impossible de charger le devis choisi.')}
+            </InlineNotice>
+          )}
+
+          {/* Le client n'apparaît qu'une fois repris du devis : avant, la carte
+              redisait « Repris du devis » sous la consigne qui le dit déjà. */}
+          {tiers && (
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium">Client</p>
+              <TiersPicker role="client" value={tiers} onChange={() => undefined} disabled />
+            </div>
+          )}
+          {devis && !tiers && <FieldError id="bl-tiers">{errors.tiers?.message}</FieldError>}
+        </CardContent>
+      </Card>
+
+      {/* Produits */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Produits
+            <RequiredMark />
+          </CardTitle>
+          <CardDescription id={ID.searchHint}>
+            Les lignes du devis sont reprises ; ajustez les quantités livrées ou ajoutez un produit
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Label htmlFor={ID.search}>Ajouter un produit</Label>
+              <ProductCombobox<SalesSearchProduct>
+                id={ID.search}
+                search={searchProducts}
+                onSelect={addProduit}
+                describedBy={[ID.searchHint, lignesError ? `${ID.lignes}-error` : null].filter(Boolean).join(' ')}
+                aria-invalid={lignesError ? true : undefined}
+                getDisabledReason={saleDisabledReason}
+                addedMessage={(p) => `${p.nom} ajouté au bon de livraison.`}
+                noResultsHint="Vérifiez l’orthographe ou le code-barres."
+                renderOption={(p, { disabledReason }) => (
+                  <SalesProductOption product={p} stock={null} disabledReason={disabledReason} />
+                )}
               />
-              {showProduitDropdown && produits.length > 0 && (
-                <ul className="absolute z-10 w-full mt-1 bg-background border rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                  {produits.map((p) => {
-                    const prixVente = getValidSalePrice(p.prix_vente);
-                    const prixManquant = prixVente === null;
-                    return (
-                      <li key={p.id} className="border-b last:border-b-0">
-                        <button
-                          type="button"
-                          disabled={prixManquant}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                            if (!prixManquant) addProduit(p);
-                          }}
-                          title={prixManquant ? 'Renseignez le prix de vente dans la fiche produit' : undefined}
-                          className={`w-full px-4 py-3 transition-colors flex justify-between text-left ${
-                            prixManquant
-                              ? 'cursor-not-allowed bg-destructive/5 opacity-70'
-                              : 'hover:bg-muted'
-                          }`}
-                        >
-                          <div>
-                            <p className="font-semibold">{p.nom}</p>
-                            <p className="text-sm text-muted-foreground font-mono">{p.reference}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className={`font-semibold ${prixManquant ? 'text-destructive' : ''}`}>
-                              {prixManquant ? 'Prix non renseigné' : formatCurrency(prixVente)}
-                            </p>
-                            {prixManquant && (
-                              <p className="text-xs text-destructive">Corriger dans l’inventaire</p>
-                            )}
-                          </div>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
             </div>
+            {devisLines && devisLines.length > 0 && (
+              <Button type="button" variant="outline" className="shrink-0" onClick={() => replace(devisLines)}>
+                <RotateCcw className="mr-2 h-4 w-4" aria-hidden="true" />
+                Reprendre les lignes du devis
+              </Button>
+            )}
+          </div>
+          <FieldError id={ID.lignes}>{lignesError}</FieldError>
 
-            <div className="border rounded-lg overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Produit</TableHead>
-                    <TableHead className="w-28">Qté commandée<span className="text-destructive"> *</span></TableHead>
-                    <TableHead className="w-28">Qté livrée<span className="text-destructive"> *</span></TableHead>
-                    <TableHead className="w-36">Prix unitaire<span className="text-destructive"> *</span></TableHead>
-                    <TableHead className="w-32">Total</TableHead>
-                    <TableHead className="w-16"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {fields.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="p-0 sm:p-0">
-                        <EmptyState
-                          icon={Package}
-                          title="Aucun article ajouté au bon de livraison"
-                          description="Recherchez un produit ci-dessus pour l'ajouter à la livraison."
-                          className="py-8"
+          <p role="status" className="sr-only">
+            {lineAnnounce}
+          </p>
+
+          {/* Les consignes sont déjà sous les titres des cartes : l'état vide ne les répète pas. */}
+          {fields.length === 0 ? (
+            <div className="rounded-md bg-muted/40">
+              <EmptyState compact icon={Package} title="Aucun produit sur le bon de livraison" />
+            </div>
+          ) : (
+            <DocumentLines
+              label="Lignes du bon de livraison"
+              columns={LINE_COLUMNS}
+              rows={fields.map((field, index) => {
+                const l = (lignes[index] ?? field) as LigneBL;
+                const lineErrors = errors.lignes?.[index];
+                const livree = Number.isFinite(l.quantite_livree) ? l.quantite_livree : 0;
+                const price = Number.isFinite(l.prix_unitaire) ? l.prix_unitaire : 0;
+                return {
+                  key: field.id,
+                  cells: {
+                    produit: (
+                      <>
+                        <p className="font-medium">{l.produit_nom}</p>
+                        {l.produit_reference && (
+                          <DocumentCode className="block text-xs text-muted-foreground">{l.produit_reference}</DocumentCode>
+                        )}
+                      </>
+                    ),
+                    commandee: (
+                      <>
+                        <Controller
+                          control={control}
+                          name={`lignes.${index}.quantite_commandee`}
+                          render={({ field: f }) => (
+                            <NumericField
+                              ref={f.ref}
+                              id={ID.commandee(index)}
+                              mode="integer"
+                              value={f.value}
+                              onValueChange={f.onChange}
+                              onBlur={f.onBlur}
+                              aria-label={lineFieldLabel('Quantité commandée', l.produit_nom)}
+                              {...fieldErrorProps(ID.commandee(index), lineErrors?.quantite_commandee)}
+                              containerClassName="w-full group-data-[layout=table]/lines:ms-auto group-data-[layout=table]/lines:w-16"
+                              className="h-9 group-data-[layout=table]/lines:h-8"
+                            />
+                          )}
                         />
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    fields.map((field, index) => {
-                      const ligne = watchedLignes?.[index] ?? field;
-                      return (
-                        <TableRow key={field.id}>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium">{field.produit_nom}</p>
-                              <p className="text-xs text-muted-foreground font-mono">{field.produit_reference}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              id={`bl-ligne-${index}-quantite-commandee`}
-                              type="number" inputMode="numeric"
-                              min={1}
-                              {...fieldErrorProps(
-                                `bl-ligne-${index}-quantite-commandee`,
-                                errors.lignes?.[index]?.quantite_commandee,
-                              )}
-                              {...register(`lignes.${index}.quantite_commandee` as const, { valueAsNumber: true })}
+                        <FieldError id={ID.commandee(index)} className="group-data-[layout=table]/lines:max-w-[10rem]">
+                          {lineErrors?.quantite_commandee?.message}
+                        </FieldError>
+                      </>
+                    ),
+                    livree: (
+                      <>
+                        <Controller
+                          control={control}
+                          name={`lignes.${index}.quantite_livree`}
+                          render={({ field: f }) => (
+                            <NumericField
+                              ref={f.ref}
+                              id={ID.livree(index)}
+                              mode="integer"
+                              value={f.value}
+                              onValueChange={f.onChange}
+                              onBlur={f.onBlur}
+                              aria-label={lineFieldLabel('Quantité livrée', l.produit_nom)}
+                              {...fieldErrorProps(ID.livree(index), lineErrors?.quantite_livree)}
+                              containerClassName="w-full group-data-[layout=table]/lines:ms-auto group-data-[layout=table]/lines:w-16"
+                              className="h-9 group-data-[layout=table]/lines:h-8"
                             />
-                            <FieldError id={`bl-ligne-${index}-quantite-commandee`}>
-                              {errors.lignes?.[index]?.quantite_commandee?.message}
-                            </FieldError>
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              id={`bl-ligne-${index}-quantite-livree`}
-                              type="number" inputMode="numeric"
-                              min={1}
-                              {...fieldErrorProps(
-                                `bl-ligne-${index}-quantite-livree`,
-                                errors.lignes?.[index]?.quantite_livree,
-                              )}
-                              {...register(`lignes.${index}.quantite_livree` as const, { valueAsNumber: true })}
+                          )}
+                        />
+                        <FieldError id={ID.livree(index)} className="group-data-[layout=table]/lines:max-w-[10rem]">
+                          {lineErrors?.quantite_livree?.message}
+                        </FieldError>
+                      </>
+                    ),
+                    prix: (
+                      <>
+                        <Controller
+                          control={control}
+                          name={`lignes.${index}.prix_unitaire`}
+                          render={({ field: f }) => (
+                            <NumericField
+                              ref={f.ref}
+                              id={ID.prix(index)}
+                              mode="decimal"
+                              value={f.value}
+                              onValueChange={f.onChange}
+                              onBlur={f.onBlur}
+                              aria-label={lineFieldLabel('Prix unitaire', l.produit_nom)}
+                              {...fieldErrorProps(ID.prix(index), lineErrors?.prix_unitaire)}
+                              containerClassName="w-full group-data-[layout=table]/lines:ms-auto group-data-[layout=table]/lines:w-28"
+                              className="h-9 group-data-[layout=table]/lines:h-8"
                             />
-                            <FieldError id={`bl-ligne-${index}-quantite-livree`}>
-                              {errors.lignes?.[index]?.quantite_livree?.message}
-                            </FieldError>
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              id={`bl-ligne-${index}-prix`}
-                              type="number" inputMode="decimal"
-                              min={0}
-                              step="0.01"
-                              {...fieldErrorProps(
-                                `bl-ligne-${index}-prix`,
-                                errors.lignes?.[index]?.prix_unitaire,
-                              )}
-                              {...register(`lignes.${index}.prix_unitaire` as const, { valueAsNumber: true })}
-                            />
-                            <FieldError id={`bl-ligne-${index}-prix`}>
-                              {errors.lignes?.[index]?.prix_unitaire?.message}
-                            </FieldError>
-                          </TableCell>
-                          <TableCell className="font-semibold">
-                            {formatCurrency(Number(ligne.quantite_livree || 0) * Number(ligne.prix_unitaire || 0))}
-                          </TableCell>
-                          <TableCell>
-                            <Button type="button" variant="ghost" size="icon" onClick={() => remove(index)} aria-label="Retirer cette ligne">
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-            <FieldError id="bl-lignes">{errors.lignes?.root?.message}</FieldError>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Informations complémentaires</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Textarea
-              placeholder="Notes internes ou instructions de livraison…"
-              rows={4}
-              {...register('notes')}
+                          )}
+                        />
+                        <FieldError id={ID.prix(index)}>{lineErrors?.prix_unitaire?.message}</FieldError>
+                      </>
+                    ),
+                    total: <Money value={livree * price} className="font-medium" />,
+                    retirer: (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-muted-foreground hover:text-danger-700 group-data-[layout=table]/lines:h-8 group-data-[layout=table]/lines:w-8"
+                        aria-label={`Retirer ${l.produit_nom} du bon de livraison`}
+                        title="Retirer du bon de livraison"
+                        onClick={() => removeLigne(index)}
+                      >
+                        <X className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    ),
+                  },
+                };
+              })}
             />
-          </CardContent>
-        </Card>
+          )}
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardContent className="pt-6 flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Total estimé</p>
-              <p className="text-2xl font-bold">{formatCurrency(total)}</p>
-            </div>
-            <Button type="submit" disabled={submitting || !selectedClient || fields.length === 0}>
-              <Check className="h-4 w-4 mr-2" />
-              {submitting ? 'Création…' : 'Créer le bon de livraison'}
-            </Button>
-          </CardContent>
-        </Card>
-      </form>
-    </div>
+      {/* Notes */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <Label htmlFor={ID.notes} className="text-base">
+              Notes de livraison
+            </Label>
+          </CardTitle>
+          <CardDescription>Facultatif. Instructions pour le livreur ou notes internes.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Textarea id={ID.notes} rows={3} {...register('notes')} />
+        </CardContent>
+      </Card>
+    </DocumentFormShell>
   );
 }

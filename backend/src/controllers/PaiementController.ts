@@ -16,7 +16,10 @@ import { successResponse } from '../utils/response';
 export class PaiementController {
 
   /**
-   * Record a new payment on a facture (acomptes FIFO d'abord, reste en direct).
+   * Record a new payment on a facture: exactly `montant` (D3). Acomptes are
+   * applied first only when the body says `appliquer_acomptes: true`.
+   * Response: { success, data: CreatePaiementResult, message } — `message` is
+   * the French sentence stating what was recorded.
    */
   static async create(req: Request, res: Response): Promise<void> {
     try {
@@ -37,19 +40,29 @@ export class PaiementController {
         notes: req.body.notes,
         session_caisse_id: req.body.session_caisse_id,
         idempotency_key: req.body.idempotency_key,
+        appliquer_acomptes: req.body.appliquer_acomptes,
         skip_acompte_application: req.body.skip_acompte_application,
         userId,
       });
 
       if (result.idempotent) {
-        res.status(200).json({ idempotent: true, ...result.existing });
+        res.status(200).json({
+          success: true,
+          data: { idempotent: true, ...result.existing },
+          message: 'Ce paiement a déjà été enregistré.',
+        });
         return;
       }
-      res.status(201).json(result);
+      res.status(201).json({ success: true, data: result, message: result.message });
     } catch (error: any) {
       logger.error({ err: error }, 'Erreur POST /api/factures/:factureId/paiements');
       const status = businessStatusOf(error);
-      res.status(status ?? 500).json({ success: false, error: status ? error.message : 'Erreur serveur' });
+      res.status(status ?? 500).json({
+        success: false,
+        error: status ? error.message : 'Erreur serveur',
+        // e.g. CAISSE_FERMEE (cash with no open till), STALE_CASH_SESSION
+        ...(status && error.code ? { code: error.code } : {}),
+      });
     }
   }
 
@@ -71,8 +84,9 @@ export class PaiementController {
         return;
       }
 
+      // Same rule as GET /factures/:id: a soft-deleted payment is not a payment.
       const { rows } = await pool.query(
-        `SELECT * FROM paiements WHERE facture_id = $1 ORDER BY date_paiement DESC`,
+        `SELECT * FROM paiements WHERE facture_id = $1 AND deleted_at IS NULL ORDER BY date_paiement DESC`,
         [factureId]
       );
 

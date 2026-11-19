@@ -214,4 +214,19 @@ describe('ReportingService', () => {
     expect(invalid.status).toBe(400);
     expect(invalid.body.error).toBe('Paramètres de requête invalides');
   });
+
+  // The dashboard alert banner reads this endpoint; a join on a column that
+  // produits does not have made it answer 500 on every canonical schema.
+  it('serves dashboard alerts, listing products at or under their minimum', async () => {
+    await pool.query('UPDATE produits SET stock_min = stock + 1 WHERE id = $1', [testProductId]);
+
+    const res = await request(app)
+      .get('/api/reports/alerts')
+      .set('Authorization', `Bearer ${authToken}`);
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data.overdue_invoices)).toBe(true);
+    expect(Array.isArray(res.body.data.pending_orders)).toBe(true);
+    expect(res.body.data.low_stock.map((p: { id: number }) => p.id)).toContain(testProductId);
+  });
 });

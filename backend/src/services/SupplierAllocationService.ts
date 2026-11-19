@@ -86,7 +86,8 @@ export class SupplierAllocationService {
         if (factureRemaining <= 0) continue;
 
         const montant = Math.min(advanceRemaining, factureRemaining);
-        const reference = `ACOF-AUTO-${advance.id}-${facture.id}`;
+        // CPG2-02: the deposit's number, never ids behind « # » (shown in the supplier invoice history).
+        const reference = `Acompte fournisseur n° ${advance.id}`;
         const { rows: paymentRows } = await client.query(
           `INSERT INTO paiements_fournisseur (
              facture_id, montant, methode_paiement, date_paiement, reference,
@@ -99,7 +100,7 @@ export class SupplierAllocationService {
             advance.methode_paiement || 'virement',
             advance.date_acompte,
             reference,
-            `Affectation automatique de l'acompte fournisseur #${advance.id}`,
+            `Acompte fournisseur n° ${advance.id} déduit automatiquement (factures les plus anciennes d’abord)`,
             advance.magasin_id || null,
             `acof-auto:${advance.id}:${facture.id}`,
             options.userId ?? advance.cree_par ?? null,
@@ -116,7 +117,7 @@ export class SupplierAllocationService {
             paymentRows[0].id,
             montant,
             options.userId ?? advance.cree_par ?? null,
-            'Affectation FIFO automatique',
+            'Déduit automatiquement (factures les plus anciennes d’abord)',
           ],
         );
 

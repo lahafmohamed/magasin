@@ -5,6 +5,32 @@ import { AuthRequest } from '../middleware/auth';
 import { getUserLocationRole } from '../middleware/permissions';
 import { businessStatusOf } from '../utils/errors';
 import pool from '../db/connection';
+import { PRODUCT_MONEY_KEYS, redactForRole } from '../utils/roleRedaction';
+
+/**
+ * Gérant (`manager`) et administrateur supervisent tous les emplacements :
+ * ils voient, décident et exécutent n'importe quelle demande sans affectation
+ * à un dépôt (décision produit D2, 2026-10-23). Avant, seul `admin` passait le
+ * contrôle d'emplacement : la cloche et le tableau de bord invitaient le gérant
+ * à décider, puis l'API lui répondait 403.
+ */
+const SUPERVISOR_ROLES = ['admin', 'manager'];
+
+/** demandes_reapprovisionnement.statut CHECK values. */
+const DEMANDE_STATUTS = [
+    'brouillon',
+    'envoyee',
+    'approuvee',
+    'partiellement_approuvee',
+    'refusee',
+    'en_cours',
+    'livree',
+    'cloturee',
+];
+
+function isSupervisor(role: string | undefined): boolean {
+    return !!role && SUPERVISOR_ROLES.includes(role);
+}
 
 export class DemandeController {
     /** Location ids this user holds one of the given roles at. */
@@ -23,7 +49,7 @@ export class DemandeController {
 
     static async getAll(req: AuthRequest, res: Response): Promise<void> {
         try {
-            const { statut, magasin_id, depot_id, date_from, date_to, page, limit } = req.query;
+            const { statut, search, magasin_id, depot_id, date_from, date_to, page, limit } = req.query;
             const userId = req.user?.id;
             const userRole = req.user?.role;
 
@@ -32,8 +58,20 @@ export class DemandeController {
                 return;
             }
 
+            // `statut` accepts one status or several, comma-separated
+            // (statut=approuvee,partiellement_approuvee).
+            const statuts = typeof statut === 'string'
+                ? [...new Set(statut.split(',').map((s) => s.trim()).filter(Boolean))]
+                : [];
+            const unknown = statuts.find((s) => !DEMANDE_STATUTS.includes(s));
+            if (unknown) {
+                res.status(400).json({ success: false, error: 'Statut de demande inconnu.' });
+                return;
+            }
+
             const filters: DemandeFilters = {
-                statut: statut as string | undefined,
+                statuts: statuts.length > 0 ? statuts : undefined,
+                search: typeof search === 'string' && search.trim() ? search.trim() : undefined,
                 page: page ? parseInt(page as string, 10) : 1,
                 limit: limit ? parseInt(limit as string, 10) : 20,
             };
@@ -46,7 +84,7 @@ export class DemandeController {
 
             // Role decides what the user is allowed to see; the query itself
             // belongs to the service.
-            if (userRole === 'admin') {
+            if (isSupervisor(userRole)) {
                 if (magasin_id) filters.magasin_id = parseInt(magasin_id as string, 10);
                 if (depot_id) filters.depot_id = parseInt(depot_id as string, 10);
             } else if (userRole === 'magasin_staff') {
@@ -64,10 +102,18 @@ export class DemandeController {
                     return;
                 }
                 filters.depot_ids = depotIds;
+                // A store's draft is never visible to the depot (GET /:id answers
+                // 403 on it), even when asked for explicitly.
+                filters.exclude_statuts = ['brouillon'];
                 // Without an explicit filter, depot staff see only actionable states.
-                if (!statut) {
+                if (!filters.statuts) {
                     filters.statuts = ['envoyee', 'approuvee', 'partiellement_approuvee', 'en_cours', 'livree'];
                 }
+            } else {
+                // Caissier and any other role: only the demandes they created —
+                // exactly what GET /:id lets them open. The list used to return
+                // every demande of every store to a cashier.
+                filters.created_by_user_id = userId;
             }
 
             const { data, total } = await demandeService.getAll(filters);
@@ -97,8 +143,8 @@ export class DemandeController {
             }
 
             // Role-based access check
-            if (userRole === 'admin') {
-                // Full access
+            if (isSupervisor(userRole)) {
+                // Full access (admin + gérant)
             } else if (userRole === 'magasin_staff') {
                 // Can access if creator or assigned to this magasin
                 const canAccess = demande.created_by_user_id === userId || 
@@ -120,12 +166,14 @@ export class DemandeController {
                     res.status(403).json({ success: false, error: 'Cette demande n\'est pas encore visible' });
                     return;
                 }
-            } else {
-                res.status(403).json({ success: false, error: 'Permissions insuffisantes' });
+            } else if (demande.created_by_user_id !== userId) {
+                // Caissier and other roles: their own demandes only (same rule as the list).
+                res.status(403).json({ success: false, error: 'Accès refusé à cette demande' });
                 return;
             }
 
-            successResponse(res, demande, 'Demande récupérée avec succès');
+            // E2: dépôt staff see the quantities of a demande, not its prices.
+            successResponse(res, redactForRole(req.user?.role, demande, PRODUCT_MONEY_KEYS), 'Demande récupérée avec succès');
         } catch (error: any) {
             console.error('[DemandeController] Error:', error);
             res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -188,7 +236,7 @@ export class DemandeController {
                 return;
             }
 
-            if (existing.created_by_user_id !== userId && userRole !== 'admin') {
+            if (existing.created_by_user_id !== userId && !isSupervisor(userRole)) {
                 res.status(403).json({ success: false, error: 'Vous ne pouvez modifier que vos propres demandes en brouillon' });
                 return;
             }
@@ -219,7 +267,7 @@ export class DemandeController {
                 return;
             }
 
-            if (existing.created_by_user_id !== userId && userRole !== 'admin') {
+            if (existing.created_by_user_id !== userId && !isSupervisor(userRole)) {
                 res.status(403).json({ success: false, error: 'Vous ne pouvez envoyer que vos propres demandes' });
                 return;
             }
@@ -252,10 +300,13 @@ export class DemandeController {
                 return;
             }
 
-            if (userRole !== 'admin') {
+            if (!isSupervisor(userRole)) {
                 const depotAccess = await getUserLocationRole(userId!, existing.depot_id);
                 if (depotAccess === 'none') {
-                    res.status(403).json({ success: false, error: 'Seul le personnel du dépôt concerné peut décider' });
+                    res.status(403).json({
+                        success: false,
+                        error: 'Seuls le personnel du dépôt concerné, le gérant et l’administrateur peuvent décider de cette demande.',
+                    });
                     return;
                 }
             }
@@ -299,12 +350,12 @@ export class DemandeController {
                 return;
             }
 
-            if (userRole !== 'admin') {
+            if (!isSupervisor(userRole)) {
                 const depotAccess = await getUserLocationRole(userId!, existing.depot_id);
                 if (depotAccess === 'none') {
-                    res.status(403).json({ 
-                        success: false, 
-                        error: 'Seul le personnel du dépôt peut exécuter les transferts' 
+                    res.status(403).json({
+                        success: false,
+                        error: 'Seuls le personnel du dépôt concerné, le gérant et l’administrateur peuvent exécuter ce transfert.',
                     });
                     return;
                 }
@@ -337,7 +388,7 @@ export class DemandeController {
                 return;
             }
 
-            if (userRole !== 'admin') {
+            if (!isSupervisor(userRole)) {
                 const magasinAccess = await getUserLocationRole(userId!, existing.magasin_id);
                 if (magasinAccess === 'none') {
                     res.status(403).json({ 
@@ -370,8 +421,8 @@ export class DemandeController {
                 return;
             }
 
-            // Only creator or admin can cancel
-            if (existing.created_by_user_id !== userId && userRole !== 'admin') {
+            // Only the creator or a supervisor (admin, manager) can cancel
+            if (existing.created_by_user_id !== userId && !isSupervisor(userRole)) {
                 res.status(403).json({ success: false, error: 'Vous ne pouvez annuler que vos propres demandes' });
                 return;
             }
@@ -413,7 +464,7 @@ export class DemandeController {
                 search as string | undefined
             );
 
-            successResponse(res, stock, 'Stock dépôt récupéré avec succès');
+            successResponse(res, redactForRole(req.user?.role, stock, PRODUCT_MONEY_KEYS), 'Stock dépôt récupéré avec succès');
         } catch (error: any) {
             console.error('[DemandeController] Error:', error);
             res.status(500).json({ success: false, error: 'Erreur serveur' });

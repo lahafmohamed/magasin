@@ -1,114 +1,91 @@
-import React from 'react';
-import { CheckCircle2, CircleDashed, XCircle, Circle, Plus, type LucideIcon } from 'lucide-react';
-import { Button } from './ui/button';
-import { formatFCFA } from '../utils/format';
+import { Card, CardContent } from './ui/card';
+import { Money } from './ui/money';
+import { cn } from '@/lib/utils';
+import { formatPercent, toNumber } from '../utils/format';
+
+/** Rangée libellé à gauche / montant à droite sur téléphone, colonne au-delà. */
+const ITEM = 'flex min-w-0 items-baseline justify-between gap-3 sm:block';
+const AMOUNT = 'text-sm font-medium sm:mt-0.5 sm:text-base';
 
 interface PaymentStatusBarProps {
-  montantPaye: number;
-  remainingDue: number;
-  total: number;
-  statut: 'payee' | 'partielle' | 'en_attente' | 'annulee';
-  onAddPayment?: () => void;
+  montantPaye: number | string | null | undefined;
+  remainingDue: number | string | null | undefined;
+  total: number | string | null | undefined;
+  className?: string;
 }
 
-type StatusConfig = {
-  textColor: string;
-  barColor: string;
-  label: string;
-  Icon: LucideIcon;
-};
-
-export const PaymentStatusBar: React.FC<PaymentStatusBarProps> = ({
-  montantPaye,
-  remainingDue,
-  total,
-  statut,
-  onAddPayment,
-}) => {
-  const montantPayeNum = parseFloat(montantPaye as any) || 0;
-  const remainingDueNum = parseFloat(remainingDue as any) || 0;
-  const totalNum = parseFloat(total as any) || 0;
-
-  const percentage = totalNum > 0 ? (montantPayeNum / totalNum) * 100 : 0;
-
-  const getStatusConfig = (): StatusConfig => {
-    switch (statut) {
-      case 'payee':
-        return { textColor: 'text-success-700', barColor: 'bg-success-500', label: 'Payée', Icon: CheckCircle2 };
-      case 'partielle':
-        return { textColor: 'text-warning-700', barColor: 'bg-warning-500', label: 'Partielle', Icon: CircleDashed };
-      case 'annulee':
-        return { textColor: 'text-danger-700', barColor: 'bg-danger-500', label: 'Annulée', Icon: XCircle };
-      default:
-        return { textColor: 'text-danger-700', barColor: 'bg-danger-500', label: 'Non payée', Icon: Circle };
-    }
-  };
-
-  const cfg = getStatusConfig();
-  const StatusIcon = cfg.Icon;
-
-  if (statut === 'annulee') {
-    return (
-      <div className="mb-4 flex items-center gap-2 rounded-md border border-danger-200 bg-danger-50 p-3 text-sm text-danger-800">
-        <StatusIcon className="h-5 w-5 shrink-0" />
-        <span className="font-semibold">Facture {cfg.label}</span>
-      </div>
-    );
-  }
+/**
+ * Avancement du paiement d'une facture : payé, reste dû, barre de progression.
+ *
+ * Le statut en mots est porté par la pastille de l'en-tête de page : la carte
+ * ne le répète plus (« Partiellement payée » au-dessus de « Statut : Partielle »).
+ * « Enregistrer un paiement » est l'action principale de l'en-tête, plus un
+ * petit bouton perdu dans la carte.
+ *
+ * Un seul état, une seule teinte : la barre reste dans la teinte « info » tant
+ * que la facture n'est pas soldée et ne passe au vert qu'à 100 % ; le reste dû
+ * est mis en avant par la graisse, pas par le rouge (la pastille bleue, la
+ * barre verte et le montant rouge disaient la même chose en trois couleurs).
+ */
+export function PaymentStatusBar({ montantPaye, remainingDue, total, className }: PaymentStatusBarProps) {
+  const paid = toNumber(montantPaye) ?? 0;
+  const due = Math.max(0, toNumber(remainingDue) ?? 0);
+  const totalNum = toNumber(total) ?? 0;
+  const percentage = totalNum > 0 ? Math.min(100, Math.max(0, (paid / totalNum) * 100)) : 0;
+  const percentLabel = `${formatPercent(Math.floor(percentage))} payé`;
+  const settled = percentage >= 100;
 
   return (
-    <div className="mb-4 rounded-md border bg-card shadow-sm">
-      <div className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <StatusIcon className={`h-5 w-5 ${cfg.textColor}`} />
-            <span className={`font-semibold text-base ${cfg.textColor}`}>
-              Statut: {cfg.label}
-            </span>
-          </div>
-          {onAddPayment && statut !== 'payee' && (
-            <Button size="sm" onClick={onAddPayment} className="gap-1.5">
-              <Plus className="h-4 w-4" />
-              Enregistrer un paiement
-            </Button>
-          )}
+    <Card className={className}>
+      <CardContent inset="standalone" className="space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <h2 className="text-base font-medium leading-snug">Paiement</h2>
+          <p className="text-sm text-muted-foreground tabular-nums">{percentLabel}</p>
         </div>
 
-        <div className="mb-3">
-          <div className="flex justify-between text-sm mb-1">
-            <span className="text-muted-foreground">Progression du paiement</span>
-            <span className="font-medium num">{percentage.toFixed(0)}%</span>
-          </div>
+        <div
+          className="h-2 w-full overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-label="Avancement du paiement"
+          aria-valuenow={Math.floor(percentage)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuetext={percentLabel}
+        >
+          {/* `transform` et non `width` : l'avancement s'anime sans recalcul de la mise en page. */}
           <div
-            className="w-full bg-muted rounded-full h-2 overflow-hidden"
-            role="progressbar"
-            aria-valuenow={Math.round(percentage)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label={`Progression du paiement : ${percentage.toFixed(0)}%`}
-          >
-            <div
-              className={`h-full transition-all duration-500 ${cfg.barColor}`}
-              style={{ width: `${percentage}%` }}
-            />
-          </div>
+            className={cn(
+              'h-full w-full origin-left rounded-full transition-transform duration-500 ease-out motion-reduce:transition-none',
+              settled ? 'bg-success-600' : 'bg-info-600'
+            )}
+            style={{ transform: `scaleX(${percentage / 100})` }}
+          />
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <div className="text-xs text-muted-foreground">Total</div>
-            <div className="font-semibold text-base num">{formatFCFA(totalNum)}</div>
+        {/* Sous 640 px, une rangée libellé / montant par valeur : trois montants
+            de sept chiffres côte à côte se collaient (« 1 788 000 FCFA1 788 000
+            FCFA0 FCFA ») et se lisaient comme un seul nombre. */}
+        <dl className="grid gap-2 sm:grid-cols-3 sm:gap-4">
+          <div className={ITEM}>
+            <dt className="text-xs text-muted-foreground">Total</dt>
+            <dd className={AMOUNT}>
+              <Money value={totalNum} />
+            </dd>
           </div>
-          <div>
-            <div className="text-xs text-success-700">Payé</div>
-            <div className="font-semibold text-base text-success-700 num">{formatFCFA(montantPayeNum)}</div>
+          <div className={ITEM}>
+            <dt className="text-xs text-muted-foreground">Payé</dt>
+            <dd className={AMOUNT}>
+              <Money value={paid} />
+            </dd>
           </div>
-          <div>
-            <div className="text-xs text-danger-700">Reste dû</div>
-            <div className="font-semibold text-base text-danger-700 num">{formatFCFA(remainingDueNum)}</div>
+          <div className={ITEM}>
+            <dt className="text-xs text-muted-foreground">Reste dû</dt>
+            <dd className={AMOUNT}>
+              <Money value={due} emphasis={due > 0} />
+            </dd>
           </div>
-        </div>
-      </div>
-    </div>
+        </dl>
+      </CardContent>
+    </Card>
   );
-};
+}

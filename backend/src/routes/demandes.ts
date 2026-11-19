@@ -12,7 +12,9 @@ router.use(authenticate);
 // Role sets (previously expressed via the permissions.ts ROLE_PERMISSIONS matrix,
 // now inlined as plain role gates — the single authz mechanism across the app).
 const CAN_CREATE = ['admin', 'manager', 'magasin_staff', 'caissier'];
-const CAN_EDIT_OWN = ['admin', 'magasin_staff']; // update / send / cancel / close
+// Managers act like admin on demandes (decision 2026-10-23): a manager who can
+// create one must also be able to send, edit, cancel and close it.
+const CAN_EDIT_OWN = ['admin', 'manager', 'magasin_staff']; // update / send / cancel / close
 const CAN_DECIDE = ['admin', 'manager', 'depot_staff']; // decide / execute
 const CAN_VIEW_DEPOT_STOCK = ['admin', 'manager', 'depot_staff', 'magasin_staff', 'viewer'];
 

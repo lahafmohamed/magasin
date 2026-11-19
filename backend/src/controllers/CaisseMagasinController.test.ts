@@ -110,6 +110,36 @@ describe('Caisse magasin API (Integration)', () => {
     expect(parseFloat(mvt.solde_apres)).toBe(13000); // 15000 - 2000
   });
 
+  it('U-03: the active session states the cash the drawer should hold, non-cash apart', async () => {
+    // Mobile money never enters the drawer: before U-03 the headline
+    // « Solde théorique » added it, so every till check showed a false gap.
+    const mm = await request(app)
+      .post(`/api/caisse/${sessionId}/mouvement-divers`)
+      .set(auth())
+      .send({
+        type: 'encaissement',
+        categorie: 'autre_entree',
+        montant: 4000,
+        methode_paiement: 'orange_money',
+        libelle: 'Entrée Orange Money test',
+      });
+    expect(mm.status).toBeLessThan(300);
+
+    const res = await request(app).get(`/api/caisse/session-active?magasin_id=${magasinId}`).set(auth());
+    expect(res.status).toBe(200);
+    expect(res.body.data).toMatchObject({
+      expected_cash: 13000, // 10 000 fond + 5 000 apport − 2 000 retrait
+      especes_encaissees: 5000,
+      especes_decaissees: 2000,
+      hors_especes_encaissees: 4000,
+      hors_especes_decaissees: 0,
+      solde_theorique: 17000, // legacy, all methods
+    });
+    const parMethode = new Map(res.body.data.par_methode.map((p: any) => [p.methode_paiement, p]));
+    expect(parMethode.get('espece')).toMatchObject({ total_encaissements: 5000, total_decaissements: 2000, nb: 2 });
+    expect(parMethode.get('orange_money')).toMatchObject({ total_encaissements: 4000, total_decaissements: 0, nb: 1 });
+  });
+
   it('rejects a source-linked categorie on the divers endpoint (Zod)', async () => {
     const res = await request(app)
       .post(`/api/caisse/${sessionId}/mouvement-divers`)
@@ -143,6 +173,37 @@ describe('Caisse magasin API (Integration)', () => {
     expect(data.statut).toBe('cloturee');
     expect(parseFloat(data.expected_cash)).toBe(13000);
     expect(parseFloat(data.ecart)).toBe(0);
+  });
+
+  it('historique « du … au … » the same day includes the sessions opened that day', async () => {
+    // date_ouverture is a timestamp: `<= 'YYYY-MM-DD'` stopped at midnight and
+    // dropped every session opened on the « au » day.
+    const { rows } = await pool.query(
+      `SELECT to_char(date_ouverture, 'YYYY-MM-DD') AS jour FROM sessions_caisse WHERE id = $1`,
+      [sessionId]
+    );
+    const jour = rows[0].jour;
+
+    const res = await request(app)
+      .get('/api/caisse/historique')
+      .set(auth())
+      .query({ magasin_id: magasinId, from: jour, to: jour });
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((s: any) => s.id)).toContain(sessionId);
+    expect(res.body.pagination.total).toBe(res.body.data.length);
+
+    const veille = await request(app)
+      .get('/api/caisse/historique')
+      .set(auth())
+      .query({ magasin_id: magasinId, to: '2000-01-01' });
+    expect(veille.body.data.map((s: any) => s.id)).not.toContain(sessionId);
+
+    const invalid = await request(app)
+      .get('/api/caisse/historique')
+      .set(auth())
+      .query({ magasin_id: magasinId, to: '23/10/2026' });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toBe('Date invalide : utilisez le format AAAA-MM-JJ.');
   });
 
   it('rejects mouvements on a closed session', async () => {

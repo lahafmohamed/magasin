@@ -221,13 +221,15 @@ export class StockLocationService extends BaseService<StockLocationRecord> {
    * Get products with stock for a location (optimized for cart selection)
    */
   async getProductsWithStock(locationId: number, search?: string, limit?: number): Promise<any[]> {
+    // A deleted product is no longer offered (transfer picker), even with
+    // stock left at the location.
     let query = `
       SELECT spl.id, spl.produit_id, spl.quantite,
              p.nom as produit_nom, p.reference, p.prix_vente,
              spl.quantite as quantite_disponible
       FROM stock_par_location spl
       JOIN produits p ON spl.produit_id = p.id
-      WHERE spl.location_id = $1 AND spl.quantite > 0
+      WHERE spl.location_id = $1 AND spl.quantite > 0 AND p.deleted_at IS NULL
     `;
     const params: any[] = [locationId];
 

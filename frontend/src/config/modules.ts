@@ -15,12 +15,22 @@
  * direct par URL. Les chemins doivent correspondre à ceux déclarés dans
  * `navConfig.tsx` et `App.tsx`.
  */
+export type ModuleCategorie =
+  | 'Ventes'
+  | 'Caisse'
+  | 'Stock'
+  | 'Achats'
+  | 'Contacts'
+  | 'Équipe'
+  | 'Gestion'
+  | 'Administration';
+
 export interface ModuleDefinition {
   key: string;
   label: string;
   description: string;
-  /** Regroupement affiché dans les paramètres (reprend les sections du menu). */
-  categorie: 'Ventes' | 'Achats' | 'Contacts' | 'Stock' | 'Finance' | 'Administration';
+  /** Regroupement affiché dans les paramètres (reprend les rubriques du menu). */
+  categorie: ModuleCategorie;
   /** Routes couvertes par ce module. La première sert de route « principale ». */
   paths: string[];
   /**
@@ -44,7 +54,7 @@ export const MODULES: ModuleDefinition[] = [
   {
     key: 'devis',
     label: 'Devis',
-    description: 'Proformas transformables en bon de livraison ou en facture.',
+    description: 'Devis à transformer en bon de livraison ou en facture.',
     categorie: 'Ventes',
     paths: ['/devis'],
   },
@@ -65,7 +75,7 @@ export const MODULES: ModuleDefinition[] = [
   {
     key: 'avoirs',
     label: 'Avoirs',
-    description: 'Notes de crédit : retours, erreurs de facturation, remises.',
+    description: 'Crédits accordés à vos clients : retours, erreurs de facturation et remises.',
     categorie: 'Ventes',
     paths: ['/avoirs'],
   },
@@ -80,8 +90,8 @@ export const MODULES: ModuleDefinition[] = [
   },
   {
     key: 'reapprovisionnement',
-    label: 'Réapprovisionnement',
-    description: 'Suggestions d\'achat pour les produits sous leur seuil minimum.',
+    label: 'Suggestions d’achat',
+    description: 'Produits sous leur stock minimum, à commander aux fournisseurs.',
     categorie: 'Achats',
     paths: ['/reapprovisionnement'],
   },
@@ -89,13 +99,13 @@ export const MODULES: ModuleDefinition[] = [
     key: 'receptions',
     label: 'Réceptions',
     description: 'Entrée en stock des marchandises reçues du fournisseur.',
-    categorie: 'Achats',
+    categorie: 'Stock',
     paths: ['/receptions'],
   },
   {
     key: 'factures-fournisseur',
-    label: 'Factures fournisseurs',
-    description: 'Ce que vous devez à vos fournisseurs, et leur règlement.',
+    label: 'Factures fournisseur',
+    description: 'Ce que vous devez à vos fournisseurs, et leur paiement.',
     categorie: 'Achats',
     paths: ['/factures-fournisseur'],
   },
@@ -113,13 +123,13 @@ export const MODULES: ModuleDefinition[] = [
     key: 'relances',
     label: 'Relances clients',
     description: 'File de recouvrement des impayés, par ancienneté de créance.',
-    categorie: 'Contacts',
+    categorie: 'Ventes',
     paths: ['/relances'],
   },
   {
     key: 'analyse-clients',
     label: 'Analyse clients',
-    description: 'Classement des clients par chiffre d\'affaires.',
+    description: 'Classement des clients par chiffre d’affaires.',
     categorie: 'Contacts',
     paths: ['/clients/analytics'],
   },
@@ -127,14 +137,14 @@ export const MODULES: ModuleDefinition[] = [
     key: 'employes',
     label: 'Employés',
     description: 'Fiches du personnel et commissions sur ventes.',
-    categorie: 'Contacts',
+    categorie: 'Équipe',
     paths: ['/employes'],
   },
   {
     key: 'paie',
     label: 'Paie',
     description: 'Cycles de paie, bulletins, cotisations CNPS et ITS.',
-    categorie: 'Contacts',
+    categorie: 'Équipe',
     paths: ['/paie'],
   },
 
@@ -148,6 +158,20 @@ export const MODULES: ModuleDefinition[] = [
     verrouille: true,
   },
   {
+    key: 'etiquettes',
+    label: 'Étiquettes',
+    description: 'Codes-barres à coller sur les articles : planche A4 ou imprimante d’étiquettes.',
+    categorie: 'Stock',
+    paths: ['/etiquettes'],
+  },
+  {
+    key: 'inventaire-physique',
+    label: 'Inventaire physique',
+    description: 'Compter le stock d’un emplacement, puis ajuster les écarts en une fois.',
+    categorie: 'Stock',
+    paths: ['/inventaire-physique'],
+  },
+  {
     key: 'emplacements',
     label: 'Emplacements',
     description: 'Gérer plusieurs magasins et dépôts. Inutile sur un point de vente unique.',
@@ -157,13 +181,13 @@ export const MODULES: ModuleDefinition[] = [
   {
     key: 'transferts',
     label: 'Transferts',
-    description: 'Déplacer du stock d\'un emplacement à un autre.',
+    description: 'Déplacer du stock d’un emplacement à un autre.',
     categorie: 'Stock',
     paths: ['/stock-transfers'],
   },
   {
     key: 'demandes-reappro',
-    label: 'Demandes de réappro',
+    label: 'Demandes de réapprovisionnement',
     description: 'Un magasin demande du stock au dépôt, qui approuve et exécute.',
     categorie: 'Stock',
     paths: ['/demandes'],
@@ -172,14 +196,14 @@ export const MODULES: ModuleDefinition[] = [
     key: 'affectations',
     label: 'Affectations',
     description: 'Attribuer des emplacements aux utilisateurs.',
-    categorie: 'Stock',
+    categorie: 'Administration',
     paths: ['/affectations-locations'],
   },
   {
     key: 'valorisation',
     label: 'Valorisation du stock',
-    description: 'Ce que vaut le stock au prix d\'achat et à la revente.',
-    categorie: 'Stock',
+    description: 'Ce que vaut le stock au prix d’achat et à la revente.',
+    categorie: 'Gestion',
     paths: ['/stock-valuation'],
   },
 
@@ -188,42 +212,49 @@ export const MODULES: ModuleDefinition[] = [
     key: 'caisse',
     label: 'Caisse',
     description: 'Ouverture, mouvements et clôture de la caisse du magasin.',
-    categorie: 'Finance',
+    categorie: 'Caisse',
     paths: ['/caisse', '/caisse/historique'],
+  },
+  {
+    key: 'vente-comptoir',
+    label: 'Vente comptoir',
+    description: 'Écran de caisse rapide : scan, encaissement, monnaie rendue et ticket 80 mm.',
+    categorie: 'Caisse',
+    paths: ['/vente-comptoir'],
   },
   {
     key: 'depenses',
     label: 'Dépenses',
-    description: 'Sorties d\'argent hors achats fournisseurs.',
-    categorie: 'Finance',
+    description: 'Sorties d’argent hors achats fournisseurs.',
+    categorie: 'Caisse',
     paths: ['/depenses'],
   },
   {
     key: 'tresorerie',
     label: 'Trésorerie',
     description: 'Encaissements et décaissements prévus sur les semaines à venir.',
-    categorie: 'Finance',
+    categorie: 'Gestion',
     paths: ['/tresorerie'],
   },
   {
     key: 'audit-caisse',
     label: 'Audit caisse',
-    description: 'Rapprochement des encaissements espèces avec les sessions de caisse.',
-    categorie: 'Finance',
+    description: 'Rapprochement des encaissements en espèces avec les sessions de caisse.',
+    categorie: 'Caisse',
     paths: ['/caisse/audit'],
   },
   {
     key: 'comptabilite',
     label: 'Comptabilité',
     description: 'Écritures, grand-livre, balance, plan comptable et saisie manuelle (OHADA).',
-    categorie: 'Finance',
+    categorie: 'Gestion',
     paths: ['/general-ledger', '/comptabilite'],
   },
   {
     key: 'rapports',
     label: 'Rapports',
-    description: 'Chiffre d\'affaires, marges, créances clients.',
-    categorie: 'Finance',
+    description: 'Chiffre d’affaires, marges, créances clients.',
+    categorie: 'Gestion',
     paths: ['/reporting'],
   },
 
@@ -238,26 +269,28 @@ export const MODULES: ModuleDefinition[] = [
   },
   {
     key: 'journal-audit',
-    label: "Journal d'audit",
+    label: 'Journal d’audit',
     description: 'Historique des modifications faites dans le programme.',
     categorie: 'Administration',
     paths: ['/admin/audit'],
   },
   {
     key: 'parametres-finance',
-    label: 'Paramètres paie & achats',
+    label: 'Paramètres paie et achats',
     description: 'Taux CNPS/ITS et tolérances de rapprochement fournisseur.',
     categorie: 'Administration',
     paths: ['/admin/parametres-finance'],
   },
 ];
 
-export const CATEGORIES_MODULES = [
+export const CATEGORIES_MODULES: readonly ModuleCategorie[] = [
   'Ventes',
+  'Caisse',
+  'Stock',
   'Achats',
   'Contacts',
-  'Stock',
-  'Finance',
+  'Équipe',
+  'Gestion',
   'Administration',
 ] as const;
 

@@ -3,7 +3,7 @@ import { TiersController } from '../controllers/TiersController';
 import pool from '../db/connection';
 import { authenticate, authorize } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
-import { createTiersSchema, updateTiersSchema, createCompensationSchema, recordAcompteSchema } from '../validation/schemas';
+import { createTiersSchema, updateTiersSchema, createCompensationSchema, recordAcompteSchema, recomputeAllocationsSchema } from '../validation/schemas';
 
 const router = Router();
 router.use(authenticate);
@@ -11,9 +11,12 @@ router.use(authenticate);
 // List & search
 router.get('/', TiersController.getAll);
 router.get('/search', TiersController.search);
+// Walk-in client « Client comptoir » (code PASS) — must precede '/:id'
+router.get('/comptoir', TiersController.getComptoir);
 
-// CRUD
-router.post('/', authorize(['admin', 'manager']), validateBody(createTiersSchema), TiersController.create);
+// CRUD — caissier/magasin_staff create clients only, without credit terms (D4,
+// enforced in TiersController.create)
+router.post('/', authorize(['admin', 'manager', 'caissier', 'magasin_staff']), validateBody(createTiersSchema), TiersController.create);
 router.get('/:id', TiersController.getById);
 router.put('/:id', authorize(['admin', 'manager']), validateBody(updateTiersSchema), TiersController.update);
 router.delete('/:id', authorize(['admin']), TiersController.delete);
@@ -77,7 +80,9 @@ router.get('/:id/acomptes-client/disponibles', async (req, res) => {
 router.get('/:id/compensations', TiersController.getCompensations);
 router.post('/:id/compensation', authorize(['admin', 'manager']), validateBody(createCompensationSchema), TiersController.createCompensation);
 
-// FIFO recompute (admin)
+// Payment re-spread (admin): one client, or every client once after the E1
+// deploy (simulation unless `appliquer: true`) — see ClientAllocationService.
+router.post('/recompute-allocations', authorize(['admin']), validateBody(recomputeAllocationsSchema), TiersController.recomputeAllAllocations);
 router.post('/:id/recompute-allocation', authorize(['admin']), TiersController.recomputeAllocation);
 
 export default router;

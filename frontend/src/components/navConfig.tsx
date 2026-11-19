@@ -1,159 +1,203 @@
-import {
-  LayoutDashboard,
-  Package,
-  Users,
-  FileText,
-  TrendingUp,
-  ShoppingCart,
-  Truck,
-  MapPin,
-  ArrowLeftRight,
-  FileBarChart,
-  BookOpen,
-  UserCheck,
-  FilePlus,
-  FileCheck,
-  FileX,
-  Wallet,
-  Receipt,
-  ClipboardList,
-  PackageSearch,
-  Settings2,
-  ShieldCheck,
-  Landmark,
-  LineChart,
-  History,
-  Undo2,
-  PhoneCall,
-  Building2,
-} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../lib/AuthContext';
 import { useModules } from '../lib/ModulesContext';
+import {
+  canAccessPath,
+  findRoute,
+  type AppRole,
+  type AppRoutePath,
+} from '../config/routeAccess';
 
 export interface NavItem {
   path: string;
   label: string;
-  icon: any;
+  icon: LucideIcon;
 }
 
+export type NavGroupId =
+  | 'caisse'
+  | 'ventes'
+  | 'stock'
+  | 'achats'
+  | 'contacts'
+  | 'equipe'
+  | 'gestion'
+  | 'administration';
+
 export interface NavCategory {
+  id: NavGroupId;
   label: string;
-  icon: any;
+  icon: LucideIcon;
   items: NavItem[];
 }
 
-/** Standalone top entry, rendered above the grouped categories. */
+interface NavEntry {
+  path: AppRoutePath;
+  /** Libellé de menu quand il diffère du nom de la page (« Demandes »). */
+  label?: string;
+  /**
+   * Rôles qui peuvent ouvrir la page mais pour qui l'entrée de menu serait
+   * hors sujet (le caissier crée une demande sans pouvoir l'envoyer). La
+   * route reste ouverte.
+   */
+  hiddenFor?: readonly AppRole[];
+}
+
+function routeOf(path: AppRoutePath) {
+  const route = findRoute(path);
+  if (!route) throw new Error(`Route inconnue dans le menu : ${path}`);
+  return route;
+}
+
+/** Entrée isolée au-dessus des rubriques. */
 export const DASHBOARD_ITEM: NavItem = {
   path: '/',
-  label: 'Tableau de bord',
-  icon: LayoutDashboard,
+  label: routeOf('/').label,
+  icon: routeOf('/').icon,
 };
 
 /**
- * Role-filtered navigation model. Single source of truth shared by the
- * desktop sidebar and the mobile drawer.
+ * Rubriques du menu, par métier (et non par module technique). Les rôles ne
+ * sont pas répétés ici : ils viennent de `config/routeAccess.ts`, donc une
+ * entrée n'apparaît que pour qui peut l'ouvrir.
+ */
+const NAV_GROUPS: Record<NavGroupId, { label: string; entries: readonly NavEntry[] }> = {
+  caisse: {
+    label: 'Caisse',
+    entries: [
+      { path: '/vente-comptoir' },
+      { path: '/caisse' },
+      { path: '/depenses' },
+      { path: '/caisse/historique' },
+      { path: '/caisse/audit' },
+    ],
+  },
+  ventes: {
+    label: 'Ventes',
+    entries: [
+      { path: '/factures' },
+      { path: '/devis' },
+      { path: '/bons-livraison' },
+      { path: '/retours' },
+      { path: '/avoirs' },
+      { path: '/relances' },
+    ],
+  },
+  stock: {
+    label: 'Stock',
+    entries: [
+      { path: '/inventaire' },
+      { path: '/etiquettes' },
+      { path: '/inventaire-physique' },
+      { path: '/demandes', label: 'Demandes', hiddenFor: ['caissier'] },
+      { path: '/receptions' },
+      { path: '/stock-transfers', label: 'Transferts' },
+      { path: '/stock-locations' },
+    ],
+  },
+  achats: {
+    label: 'Achats',
+    entries: [
+      { path: '/commandes' },
+      { path: '/reapprovisionnement' },
+      { path: '/factures-fournisseur' },
+    ],
+  },
+  contacts: {
+    label: 'Contacts',
+    entries: [{ path: '/tiers' }, { path: '/clients/analytics' }],
+  },
+  equipe: {
+    label: 'Équipe',
+    entries: [{ path: '/employes' }, { path: '/paie' }],
+  },
+  gestion: {
+    label: 'Gestion',
+    entries: [
+      { path: '/tresorerie' },
+      { path: '/general-ledger' },
+      { path: '/reporting' },
+      { path: '/stock-valuation' },
+    ],
+  },
+  administration: {
+    label: 'Administration',
+    entries: [
+      { path: '/admin/users' },
+      { path: '/affectations-locations' },
+      { path: '/settings' },
+      { path: '/admin/parametres-finance' },
+      { path: '/admin/audit' },
+    ],
+  },
+};
+
+const MANAGEMENT_ORDER: readonly NavGroupId[] = [
+  'ventes',
+  'caisse',
+  'stock',
+  'achats',
+  'contacts',
+  'equipe',
+  'gestion',
+  'administration',
+];
+
+/**
+ * Ordre des rubriques par rôle : le premier métier de la journée en tête.
+ * La caissière commence par la caisse, le dépôt par le stock.
+ */
+export const GROUP_ORDER: Record<AppRole, readonly NavGroupId[]> = {
+  caissier: ['caisse', 'ventes', 'stock'],
+  magasin_staff: ['ventes', 'caisse', 'stock'],
+  // E2 (2026-10-24) : les achats sont des montants, réservés aux responsables ;
+  // le dépôt réceptionne depuis « Stock › Réceptions ».
+  depot_staff: ['stock'],
+  manager: MANAGEMENT_ORDER,
+  admin: MANAGEMENT_ORDER,
+  viewer: ['stock'],
+};
+
+/** Icône du premier élément d'une rubrique — sert d'icône à la rubrique. */
+function groupIcon(entries: readonly NavEntry[]): LucideIcon {
+  return routeOf(entries[0].path).icon;
+}
+
+/**
+ * Menu d'un rôle, sans tenir compte des modules désactivés. Fonction pure,
+ * testée : chaque entrée doit être ouvrable par le rôle.
+ */
+export function buildNavCategories(
+  role: AppRole | null | undefined,
+  isPathActive: (path: string) => boolean = () => true
+): NavCategory[] {
+  if (!role) return [];
+  const order = GROUP_ORDER[role] ?? [];
+  return order
+    .map((id) => {
+      const group = NAV_GROUPS[id];
+      const items: NavItem[] = group.entries
+        .filter(
+          (entry) =>
+            canAccessPath(entry.path, role) &&
+            !entry.hiddenFor?.includes(role) &&
+            isPathActive(entry.path)
+        )
+        .map((entry) => {
+          const route = routeOf(entry.path);
+          return { path: entry.path, label: entry.label ?? route.label, icon: route.icon };
+        });
+      return { id, label: group.label, icon: groupIcon(group.entries), items };
+    })
+    .filter((cat) => cat.items.length > 0);
+}
+
+/**
+ * Menu filtré par rôle et par modules actifs. Source unique partagée par la
+ * barre latérale, le tiroir mobile, la recherche globale et les liens rapides.
  */
 export function useNavCategories(): NavCategory[] {
-  const { hasRole } = useAuth();
+  const { user } = useAuth();
   const { estCheminActif } = useModules();
-
-  const isAdminOrManager = hasRole('admin', 'manager');
-  const isDepotStaff = hasRole('depot_staff');
-  const isMagasinStaff = hasRole('magasin_staff');
-  const isCaissier = hasRole('caissier');
-
-  return [
-    // Ventes: magasin_staff, caissier, admin, manager
-    ...((isAdminOrManager || isMagasinStaff || isCaissier) ? [{
-      label: 'Ventes',
-      icon: FileText,
-      items: [
-        { path: '/factures', label: 'Factures', icon: FileText },
-        { path: '/devis', label: 'Devis', icon: FilePlus },
-        { path: '/bons-livraison', label: 'Bons de Livraison', icon: FileCheck },
-        ...((isAdminOrManager) ? [
-          { path: '/retours', label: 'Retours clients', icon: Undo2 },
-          { path: '/avoirs', label: 'Avoirs', icon: FileX },
-        ] : []),
-      ],
-    }] : []),
-
-    // Achats: depot_staff, admin, manager
-    ...((isAdminOrManager || isDepotStaff) ? [{
-      label: 'Achats',
-      icon: ShoppingCart,
-      items: [
-        { path: '/commandes', label: 'Commandes', icon: ShoppingCart },
-        { path: '/reapprovisionnement', label: 'Réapprovisionnement', icon: PackageSearch },
-        { path: '/receptions', label: 'Réceptions', icon: Truck },
-        { path: '/factures-fournisseur', label: 'Factures fournisseurs', icon: FileBarChart },
-      ],
-    }] : []),
-
-    // Contacts (tiers): admin, manager only
-    ...((isAdminOrManager) ? [{
-      label: 'Contacts',
-      icon: Users,
-      items: [
-        { path: '/tiers', label: 'Contacts', icon: UserCheck },
-        { path: '/relances', label: 'Relances clients', icon: PhoneCall },
-        { path: '/clients/analytics', label: 'Analyse clients', icon: LineChart },
-        { path: '/employes', label: 'Employés', icon: UserCheck },
-        { path: '/paie', label: 'Paie', icon: UserCheck },
-      ],
-    }] : []),
-
-    // Stock
-    {
-      label: 'Stock',
-      icon: Package,
-      items: [
-        { path: '/inventaire', label: 'Inventaire', icon: Package },
-        ...((isAdminOrManager || isDepotStaff) ? [
-          { path: '/stock-locations', label: 'Emplacements', icon: MapPin },
-          { path: '/stock-transfers', label: 'Transferts', icon: ArrowLeftRight },
-          { path: '/demandes', label: 'Demandes Réappro', icon: ClipboardList },
-        ] : []),
-        ...((isMagasinStaff || isCaissier) ? [
-          { path: '/demandes', label: 'Demandes Réappro', icon: ClipboardList },
-        ] : []),
-        ...((isAdminOrManager) ? [
-          { path: '/affectations-locations', label: 'Affectations', icon: UserCheck },
-          { path: '/stock-valuation', label: 'Valorisation', icon: TrendingUp },
-        ] : []),
-      ],
-    },
-
-    // Finance
-    {
-      label: 'Finance',
-      icon: Wallet,
-      items: [
-        ...((isAdminOrManager || isCaissier || isMagasinStaff) ? [{ path: '/caisse', label: 'Caisse', icon: Wallet }] : []),
-        ...((isAdminOrManager || isCaissier || isMagasinStaff) ? [{ path: '/depenses', label: 'Dépenses', icon: Receipt }] : []),
-        ...((isAdminOrManager) ? [
-          { path: '/tresorerie', label: 'Trésorerie', icon: Landmark },
-          { path: '/caisse/audit', label: 'Audit caisse', icon: ShieldCheck },
-          { path: '/general-ledger', label: 'Comptabilité', icon: BookOpen },
-          { path: '/reporting', label: 'Rapports', icon: TrendingUp },
-        ] : []),
-      ],
-    },
-
-    // Admin: admin only
-    ...((hasRole('admin')) ? [{
-      label: 'Admin',
-      icon: ShieldCheck,
-      items: [
-        { path: '/admin/users', label: 'Utilisateurs', icon: Users },
-        { path: '/admin/audit', label: "Journal d'audit", icon: History },
-        { path: '/settings', label: 'Paramètres entreprise', icon: Building2 },
-        { path: '/admin/parametres-finance', label: 'Paramètres paie & achats', icon: Settings2 },
-      ],
-    }] : []),
-  ]
-    // Les modules désactivés dans les paramètres disparaissent du menu, et une
-    // rubrique vidée de toutes ses entrées disparaît avec elles.
-    .map(cat => ({ ...cat, items: cat.items.filter(item => estCheminActif(item.path)) }))
-    .filter(cat => cat.items.length > 0);
+  return buildNavCategories(user?.role as AppRole | undefined, estCheminActif);
 }

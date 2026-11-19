@@ -63,8 +63,9 @@ describe('SupplierAllocationService', () => {
       335000,
       'virement',
       '2026-07-20',
-      'ACOF-AUTO-207-35',
-      "Affectation automatique de l'acompte fournisseur #207",
+      // CPG2-02: the deposit's number in words, no ids behind « # », typographic apostrophe.
+      'Acompte fournisseur n° 207',
+      'Acompte fournisseur n° 207 déduit automatiquement (factures les plus anciennes d’abord)',
       1,
       'acof-auto:207:35',
       3,

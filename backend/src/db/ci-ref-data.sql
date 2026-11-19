@@ -73,6 +73,55 @@ SELECT pg_catalog.setval('public.roles_id_seq', 6, true);
 
 
 --
+-- Data for Name: categories_depenses (same set as migration 103 / production;
+-- without it a freshly provisioned database cannot record any expense)
+--
+
+INSERT INTO public.categories_depenses (code, nom, description) VALUES
+  ('LOYER', 'Loyer', 'Loyer et charges locatives'),
+  ('SALAIRE', 'Salaires', 'Salaires et charges sociales'),
+  ('TRANSPORT', 'Transport', 'Frais de transport et livraison'),
+  ('FOURNI', 'Fournitures', 'Fournitures de bureau et matériel'),
+  ('ELECTRI', 'Électricité / Eau', 'Factures eau et électricité'),
+  ('TELECOM', 'Téléphone / Internet', 'Abonnements télécom et internet'),
+  ('REPAS', 'Repas / Restauration', 'Repas professionnels'),
+  ('ENTRET', 'Entretien', 'Entretien et réparations'),
+  ('PUBLICI', 'Publicité', 'Dépenses marketing et publicité'),
+  ('DIVERS', 'Divers', 'Autres dépenses non classifiées')
+ON CONFLICT (code) DO NOTHING;
+
+
+--
+-- Data for Name: tiers — « Client comptoir » (same row as migration 104).
+-- Walk-in sales: NouvelleFacture preselects it for the caissier role and
+-- GET /api/tiers/comptoir finds it by its stable code PASS.
+--
+
+INSERT INTO public.tiers (code, raison_sociale, est_client, est_fournisseur, credit_max, delai_paiement, notes) VALUES
+  ('PASS', 'Client comptoir', true, false, 0.00, 'immediat', 'Client de passage pour les ventes au comptoir.')
+ON CONFLICT (code) DO NOTHING;
+
+
+--
+-- Data for Name: payroll_cotisations / payroll_bareme_its (same defaults as
+-- migrations 081 and 105; without them a freshly provisioned database
+-- computes every payslip with no CNPS and no ITS). Rates must be checked
+-- against current law; they are editable from Paramètres paie & achats.
+--
+
+INSERT INTO public.payroll_cotisations (code, libelle, taux_salarial, taux_patronal, plafond) VALUES
+  ('CNPS_RET', 'CNPS Retraite', 0.0630, 0.0770, 1647315.00)
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO public.payroll_bareme_its (ordre, tranche_min, tranche_max, taux) VALUES
+  (1, 0.00, 75000.00, 0.0000),
+  (2, 75000.00, 240000.00, 0.1600),
+  (3, 240000.00, 800000.00, 0.2100),
+  (4, 800000.00, 2400000.00, 0.2400),
+  (5, 2400000.00, NULL, 0.3200);
+
+
+--
 -- PostgreSQL database dump complete
 --
 

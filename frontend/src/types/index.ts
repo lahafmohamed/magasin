@@ -82,11 +82,34 @@ export interface Paiement {
   source?: 'direct' | 'acompte_application' | 'reversal';
   mouvement_caisse_id?: number | null;
   session_caisse_id?: number | null;
+  /** Faux quand le serveur refuserait la suppression (acompte, caisse ou période clôturée). */
+  supprimable?: boolean;
+  suppression_bloquee?: string | null;
+}
+
+/**
+ * E1-R1 : argent d'un paiement qui règle une autre facture que celle où il a
+ * été enregistré (données ré-imputées, facture annulée). Vu depuis une page de
+ * facture : l'autre facture, le montant et le paiement d'origine.
+ */
+export interface PaiementReport {
+  facture_id: number;
+  numero_facture: string;
+  montant: number | string;
+  paiement_id: number;
+  methode_paiement: string;
+  date_paiement: string;
 }
 
 export interface FactureComplete extends Facture {
   lignes?: FactureLigne[];
   paiements?: Paiement[];
+  /** Paiements de cette facture qui règlent d'autres factures (elle était déjà soldée ou est annulée). */
+  excedent_reporte?: PaiementReport[];
+  /** Argent reçu des paiements d'autres factures. */
+  recu_par_report?: PaiementReport[];
+  /** Part des paiements de cette facture qui ne règle aucune facture. */
+  excedent_non_affecte?: number | string;
   origine?: {
     devis_id?: number;
     numero_devis?: string;
@@ -136,34 +159,35 @@ export interface StatsDashboard {
   alertes_stock: number;
 }
 
-import { Banknote, CreditCard, ScrollText, Landmark, CircleDollarSign, Wallet, Smartphone, type LucideIcon } from 'lucide-react';
-import type { PaymentMethod } from '../utils/paymentMethod';
+import { Banknote, CreditCard, ScrollText, Landmark, HandCoins, Wallet, Smartphone, type LucideIcon } from 'lucide-react';
+import { PAYMENT_METHOD_LABELS, type PaymentMethod } from '../utils/paymentMethod';
 
 /**
  * Display metadata for every method a payment row can carry.
  *
  * Covers all eight selectable methods plus `acompte`, which is display-only:
  * it labels a payment sourced from an advance application and is not something
- * a user can pick. Build selectable option lists from `PAYMENT_METHODS` in
- * utils/paymentMethod, not from this map's keys.
+ * a user can pick. Build selectable option lists from `PAYMENT_METHOD_OPTIONS`
+ * in utils/paymentMethod, not from this map's keys.
  *
- * Pas de couleur ici : ce fut un temps une pastille par méthode, jamais lue par
- * aucun rendu, qui faisait doublon avec la palette catégorielle de DepensesV2.
- * Une méthode de paiement se distingue par son libellé et son icône.
+ * Libellés repris de `PAYMENT_METHOD_LABELS` (source unique). Couleur : un mode
+ * de paiement se distingue par son libellé et son icône ; en étiquette, `<Tag
+ * hue={paymentMethodHue(m)}>`. Pas d'icône « $ » pour un produit en FCFA
+ * (acompte : HandCoins, plus CircleDollarSign).
  */
 export const METHODES_PAIEMENT: Record<
   PaymentMethod | 'acompte',
   { label: string; Icon: LucideIcon }
 > = {
-  espece: { label: 'Espèces', Icon: Banknote },
-  carte: { label: 'Carte', Icon: CreditCard },
-  cheque: { label: 'Chèque', Icon: ScrollText },
-  virement: { label: 'Virement', Icon: Landmark },
-  acompte: { label: 'Acompte', Icon: CircleDollarSign },
-  mobile_money: { label: 'Mobile Money', Icon: Smartphone },
-  wave: { label: 'Wave', Icon: Smartphone },
-  orange_money: { label: 'Orange Money', Icon: Smartphone },
-  mtn_money: { label: 'MTN Money', Icon: Smartphone },
+  espece: { label: PAYMENT_METHOD_LABELS.espece, Icon: Banknote },
+  carte: { label: PAYMENT_METHOD_LABELS.carte, Icon: CreditCard },
+  cheque: { label: PAYMENT_METHOD_LABELS.cheque, Icon: ScrollText },
+  virement: { label: PAYMENT_METHOD_LABELS.virement, Icon: Landmark },
+  acompte: { label: PAYMENT_METHOD_LABELS.acompte, Icon: HandCoins },
+  mobile_money: { label: PAYMENT_METHOD_LABELS.mobile_money, Icon: Smartphone },
+  wave: { label: PAYMENT_METHOD_LABELS.wave, Icon: Smartphone },
+  orange_money: { label: PAYMENT_METHOD_LABELS.orange_money, Icon: Smartphone },
+  mtn_money: { label: PAYMENT_METHOD_LABELS.mtn_money, Icon: Smartphone },
 };
 
 export const FALLBACK_PAIEMENT_ICON: LucideIcon = Wallet;

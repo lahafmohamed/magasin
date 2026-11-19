@@ -41,6 +41,13 @@ export interface DemandeFilters {
     statut?: string;
     /** Any-of status filter (depot staff default to the actionable states). */
     statuts?: string[];
+    /** Statuses never shown (depot staff never see a store's drafts). */
+    exclude_statuts?: string[];
+    /**
+     * Free text, word by word: demande number, store or depot (name or code),
+     * creator (username or full name).
+     */
+    search?: string;
     magasin_id?: number;
     depot_id?: number;
     /** Restrict to a set of stores — a user's assigned magasins. */
@@ -89,6 +96,25 @@ export class DemandeService {
 
         if (options.statut) add(`d.statut = $${params.length + 1}`, options.statut);
         if (options.statuts?.length) add(`d.statut = ANY($${params.length + 1})`, options.statuts);
+        if (options.exclude_statuts?.length) {
+            add(`d.statut <> ALL($${params.length + 1})`, options.exclude_statuts);
+        }
+
+        // Join-free predicates: the count query has no joins.
+        const words = (options.search ?? '').trim().split(/\s+/).filter(Boolean);
+        for (const word of words) {
+            const p = `$${params.length + 1}`;
+            add(
+                `(d.numero ILIKE ${p}
+                  OR EXISTS (SELECT 1 FROM stock_locations l
+                             WHERE l.id IN (d.magasin_id, d.depot_id)
+                               AND (l.nom ILIKE ${p} OR COALESCE(l.code, '') ILIKE ${p}))
+                  OR EXISTS (SELECT 1 FROM utilisateurs u
+                             WHERE u.id = d.created_by_user_id
+                               AND (u.username ILIKE ${p} OR COALESCE(u.nom_complet, '') ILIKE ${p})))`,
+                `%${word}%`
+            );
+        }
         if (options.magasin_id) add(`d.magasin_id = $${params.length + 1}`, options.magasin_id);
         if (options.magasin_ids?.length) add(`d.magasin_id = ANY($${params.length + 1})`, options.magasin_ids);
         if (options.depot_id) add(`d.depot_id = $${params.length + 1}`, options.depot_id);
@@ -200,7 +226,7 @@ export class DemandeService {
              FROM demandes_reapprovisionnement_history h
              LEFT JOIN utilisateurs u ON h.user_id = u.id
              WHERE h.demande_id = $1
-             ORDER BY h.timestamp DESC`,
+             ORDER BY h.timestamp DESC, h.id DESC`,
             [id]
         );
 
@@ -214,6 +240,17 @@ export class DemandeService {
     // ============================================
     // COMMANDS - State Machine
     // ============================================
+
+    /**
+     * Declare who performs the transition for the history trigger
+     * (`log_demande_state_change`, migration 108): transaction-local, so it
+     * never leaks to the next user of the pooled connection.
+     */
+    private async declareActeur(client: any, userId?: number | null): Promise<void> {
+        await client.query(`SELECT set_config('hitek.acteur_id', $1, true)`, [
+            userId ? String(userId) : '',
+        ]);
+    }
 
     async create(input: CreateDemandeInput): Promise<{ id: number; numero: string }> {
         const client = await pool.connect();
@@ -398,6 +435,7 @@ export class DemandeService {
 
         try {
             await client.query('BEGIN');
+            await this.declareActeur(client, userId);
 
             const { rows } = await client.query(
                 `UPDATE demandes_reapprovisionnement
@@ -442,6 +480,7 @@ export class DemandeService {
 
         try {
             await client.query('BEGIN');
+            await this.declareActeur(client, input.user_id);
 
             // Lock demande
             const { rows: demandeRows } = await client.query(
@@ -565,6 +604,10 @@ export class DemandeService {
 
         try {
             await client.query('BEGIN');
+            // The en_cours and livree steps are written by the stock_transfers
+            // trigger, before executed_by_user_id is set: the declared actor is
+            // what credits them to the executor (migration 108).
+            await this.declareActeur(client, userId);
 
             // Lock demande
             const { rows: demandeRows } = await client.query(
@@ -657,6 +700,13 @@ export class DemandeService {
             for (const [pid, row] of depotByProduit) {
                 runningDepot.set(pid, parseInt((row as any).quantite, 10));
             }
+            // Product names for the insufficient-stock message: the depot user
+            // must learn WHICH product is short, not an internal id.
+            const { rows: nomRows } = await client.query(
+                'SELECT id, nom FROM produits WHERE id = ANY($1::int[])',
+                [ligneProduitIds]
+            );
+            const nomByProduit = new Map<number, string>(nomRows.map((r: any) => [Number(r.id), r.nom]));
 
             const tlProduits: number[] = [];
             const tlQuantites: number[] = [];
@@ -665,9 +715,10 @@ export class DemandeService {
             for (const ligne of effectiveLines) {
                 const available = runningDepot.get(ligne.produit_id) ?? 0;
                 if (available < ligne.quantite) {
+                    const nom = nomByProduit.get(ligne.produit_id) ?? `n° ${ligne.produit_id}`;
                     throw businessError(422,
-                        `Stock dépôt insuffisant pour le produit ${ligne.produit_id}: ` +
-                        `disponible ${available}, demandé ${ligne.quantite}`
+                        `Stock du dépôt insuffisant pour « ${nom} » : ` +
+                        `${available} disponible(s), ${ligne.quantite} demandé(s).`
                     );
                 }
                 runningDepot.set(ligne.produit_id, available - ligne.quantite);
@@ -702,15 +753,51 @@ export class DemandeService {
             // transferred value arrives with the goods (costed stock-in).
             // cmp is unaffected by the decrement above, so reading it from the
             // lock pass matches the old per-line re-read.
+            //
+            // K-M2: one stock movement out of the depot and one into the shop
+            // per line, like a manual transfer (StockTransferService.complete).
+            // Without them « Historique du stock » skipped the main depot→shop
+            // flow: the shop balance jumped between two sales and the depot
+            // loss had no line at all.
+            const raison = `Transfert ${numeroTransfer} — demande ${demande.numero}`;
+            const depotLevel = new Map<number, number>();
+            for (const [pid, row] of depotByProduit) {
+                depotLevel.set(pid, parseInt((row as any).quantite, 10));
+            }
+            const mvtProduits: number[] = [];
+            const mvtQuantites: number[] = [];
+            const mvtAvant: number[] = [];
+            const mvtApres: number[] = [];
+            const mvtLocations: number[] = [];
             for (const ligne of effectiveLines) {
+                const depotAvant = depotLevel.get(ligne.produit_id) ?? 0;
+                depotLevel.set(ligne.produit_id, depotAvant - ligne.quantite);
+                mvtProduits.push(ligne.produit_id);
+                mvtQuantites.push(-ligne.quantite);
+                mvtAvant.push(depotAvant);
+                mvtApres.push(depotAvant - ligne.quantite);
+                mvtLocations.push(demande.depot_id);
+
                 const depotCmp = Number((depotByProduit.get(ligne.produit_id) as any)?.cmp ?? 0);
-                await costedStockIn(client, {
+                const stockIn = await costedStockIn(client, {
                     produitId: ligne.produit_id,
                     locationId: demande.magasin_id,
                     quantite: ligne.quantite,
                     unitCost: depotCmp > 0 ? depotCmp : null,
                 });
+                mvtProduits.push(ligne.produit_id);
+                mvtQuantites.push(ligne.quantite);
+                mvtAvant.push(stockIn.stockAvant);
+                mvtApres.push(stockIn.stockApres);
+                mvtLocations.push(demande.magasin_id);
             }
+            await client.query(
+                `INSERT INTO mouvements_stock
+                   (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id, transfer_id)
+                 SELECT unnest($1::int[]), 'transfert', unnest($2::int[]), unnest($3::int[]), unnest($4::int[]),
+                        $5, $6, unnest($7::int[]), $8`,
+                [mvtProduits, mvtQuantites, mvtAvant, mvtApres, raison, numeroTransfer, mvtLocations, transfertId]
+            );
 
             // Delivered quantities (one statement — demande_ligne ids are unique)
             await client.query(
@@ -772,6 +859,7 @@ export class DemandeService {
 
         try {
             await client.query('BEGIN');
+            await this.declareActeur(client, userId);
 
             const { rows } = await client.query(
                 `UPDATE demandes_reapprovisionnement
@@ -817,6 +905,7 @@ export class DemandeService {
 
         try {
             await client.query('BEGIN');
+            await this.declareActeur(client, userId);
 
             // Can only cancel in brouillon or envoyee
             const { rows: checkRows } = await client.query(
@@ -834,8 +923,8 @@ export class DemandeService {
                 throw businessError(409, 'Une demande ne peut être annulée qu\'en état brouillon ou envoyée');
             }
 
-            // Ownership: only the creator or an admin may cancel.
-            if (role !== 'admin' && current.created_by_user_id !== userId) {
+            // Ownership: only the creator or a supervisor (admin, manager) may cancel.
+            if (role !== 'admin' && role !== 'manager' && current.created_by_user_id !== userId) {
                 throw businessError(403, 'Vous ne pouvez annuler que vos propres demandes', 'FORBIDDEN');
             }
 

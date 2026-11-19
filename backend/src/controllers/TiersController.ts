@@ -5,7 +5,12 @@ import { CompensationService } from '../services/CompensationService';
 import { acompteService } from '../services/AcompteService';
 import { pdfService } from '../services/PDFService';
 import { SupplierAllocationService } from '../services/SupplierAllocationService';
-import { businessStatusOf } from '../utils/errors';
+import { businessStatusOf, respondWithError } from '../utils/errors';
+import { AuthRequest } from '../middleware/auth';
+import { logAudit } from '../middleware/audit';
+
+/** Roles that may create contacts, but only clients without credit terms (D4). */
+const CLIENT_ONLY_CREATOR_ROLES = ['caissier', 'magasin_staff'];
 
 export class TiersController {
 
@@ -32,7 +37,7 @@ export class TiersController {
     try {
       const id = parseInt(req.params.id);
       const tiers = await tiersService.getById(id);
-      if (!tiers) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
+      if (!tiers) { res.status(404).json({ success: false, error: 'Contact introuvable' }); return; }
       res.json({ success: true, data: tiers });
     } catch (err: any) {
       console.error('TiersController:', err);
@@ -40,17 +45,75 @@ export class TiersController {
     }
   }
 
+  /**
+   * Create a contact.
+   *
+   * Decision D4 (2026-10-23): `caissier` and `magasin_staff` may create a
+   * CLIENT from the sales forms (TiersPicker « Créer le client »). For them the
+   * contact is always client-only, without credit terms: asking for a supplier
+   * or for credit (plafond > 0, délai autre qu'immédiat) is refused with 403 —
+   * those stay with the gérant/administrateur.
+   */
   static async create(req: Request, res: Response): Promise<void> {
     try {
-      const tiers = await tiersService.create(req.body);
-      res.status(201).json({ success: true, data: tiers });
-    } catch (err: any) {
-      if (err.message?.includes('au moins un rôle')) {
-        res.status(422).json({ success: false, error: err.message });
-      } else {
-        console.error('TiersController.create:', err);
-        res.status(500).json({ success: false, error: 'Erreur serveur' });
+      const user = (req as AuthRequest).user;
+      let input = req.body;
+
+      if (user && CLIENT_ONLY_CREATOR_ROLES.includes(user.role)) {
+        if (input.est_fournisseur === true) {
+          res.status(403).json({
+            success: false,
+            error: 'Vous pouvez créer un client, pas un fournisseur. La création d’un fournisseur est réservée au gérant.',
+          });
+          return;
+        }
+        const delai = typeof input.delai_paiement === 'string' ? input.delai_paiement.trim() : '';
+        if (Number(input.credit_max ?? 0) > 0 || (delai !== '' && delai !== 'immediat')) {
+          res.status(403).json({
+            success: false,
+            error: 'Le plafond de crédit et le délai de paiement d’un client sont fixés par le gérant.',
+          });
+          return;
+        }
+        input = { ...input, est_client: true, est_fournisseur: false, credit_max: 0, delai_paiement: delai || undefined };
       }
+
+      const tiers = await tiersService.create(input);
+
+      await logAudit({
+        utilisateur_id: user?.id ?? null,
+        action: 'create',
+        table_name: 'tiers',
+        record_id: tiers.id,
+        req,
+        new_values: {
+          raison_sociale: tiers.raison_sociale,
+          est_client: tiers.est_client,
+          est_fournisseur: tiers.est_fournisseur,
+          credit_max: tiers.credit_max,
+        },
+      });
+
+      res.status(201).json({ success: true, data: tiers, message: 'Contact créé' });
+    } catch (err: any) {
+      respondWithError(res, err, 'TiersController.create', 'Erreur serveur');
+    }
+  }
+
+  /** GET /tiers/comptoir — the walk-in client (code PASS), 404 when none. */
+  static async getComptoir(_req: Request, res: Response): Promise<void> {
+    try {
+      const tiers = await tiersService.getComptoir();
+      if (!tiers) {
+        res.status(404).json({
+          success: false,
+          error: 'Aucun client comptoir n’est configuré. Créez un client « Client comptoir » ou demandez-le à l’administrateur.',
+        });
+        return;
+      }
+      res.json({ success: true, data: tiers });
+    } catch (err: any) {
+      respondWithError(res, err, 'TiersController.getComptoir', 'Erreur serveur');
     }
   }
 
@@ -58,11 +121,10 @@ export class TiersController {
     try {
       const id = parseInt(req.params.id);
       const tiers = await tiersService.update(id, req.body);
-      if (!tiers) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
+      if (!tiers) { res.status(404).json({ success: false, error: 'Contact introuvable' }); return; }
       res.json({ success: true, data: tiers });
     } catch (err: any) {
-      console.error('TiersController:', err);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
+      respondWithError(res, err, 'TiersController.update', 'Erreur serveur');
     }
   }
 
@@ -70,8 +132,8 @@ export class TiersController {
     try {
       const id = parseInt(req.params.id);
       const ok = await tiersService.softDelete(id);
-      if (!ok) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
-      res.json({ success: true, message: 'Tiers supprimé' });
+      if (!ok) { res.status(404).json({ success: false, error: 'Contact introuvable' }); return; }
+      res.json({ success: true, message: 'Contact supprimé' });
     } catch (err: any) {
       console.error('TiersController:', err);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -95,7 +157,7 @@ export class TiersController {
       const id = parseInt(req.params.id);
       const { from, to } = req.query;
       const compte = await tiersService.getCompte(id, { from: from as string, to: to as string });
-      if (!compte) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
+      if (!compte) { res.status(404).json({ success: false, error: 'Contact introuvable' }); return; }
       res.json({ success: true, data: compte });
     } catch (err: any) {
       console.error('TiersController:', err);
@@ -108,7 +170,7 @@ export class TiersController {
       const id = parseInt(req.params.id);
       const { from, to } = req.query;
       const releve = await tiersService.getReleveDetaille(id, { from: from as string, to: to as string });
-      if (!releve) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
+      if (!releve) { res.status(404).json({ success: false, error: 'Contact introuvable' }); return; }
       res.json({ success: true, data: releve });
     } catch (err: any) {
       console.error('TiersController:', err);
@@ -142,8 +204,8 @@ export class TiersController {
       let tiers;
       if (role === 'client') tiers = await tiersService.promouvoirEnClient(id);
       else if (role === 'fournisseur') tiers = await tiersService.promouvoirEnFournisseur(id);
-      else { res.status(422).json({ success: false, error: 'Rôle invalide: client ou fournisseur' }); return; }
-      if (!tiers) { res.status(404).json({ success: false, error: 'Tiers introuvable' }); return; }
+      else { res.status(422).json({ success: false, error: 'Rôle invalide : choisissez client ou fournisseur.' }); return; }
+      if (!tiers) { res.status(404).json({ success: false, error: 'Contact introuvable' }); return; }
       res.json({ success: true, data: tiers });
     } catch (err: any) {
       console.error('TiersController:', err);
@@ -172,7 +234,7 @@ export class TiersController {
     } catch (err: any) {
       const status = businessStatusOf(err);
       if (status) {
-        res.status(status).json({ success: false, error: err.message });
+        res.status(status).json({ success: false, error: err.message, ...(err.code ? { code: err.code } : {}) });
         return;
       }
       console.error('TiersController acompte:', err);
@@ -204,7 +266,7 @@ export class TiersController {
     } catch (err: any) {
       const status = businessStatusOf(err);
       if (status) {
-        res.status(status).json({ success: false, error: err.message });
+        res.status(status).json({ success: false, error: err.message, ...(err.code ? { code: err.code } : {}) });
         return;
       }
       console.error('TiersController acompte:', err);
@@ -254,11 +316,68 @@ export class TiersController {
         res.json({ success: true, data: result });
         return;
       }
-      const result = await ClientAllocationService.recomputeClientAllocations(tiersId);
-      res.json({ success: true, data: result });
+      // Same safe engine as the global re-spread: every payment back on its own
+      // invoice (E1), and no available deposit spent as a side effect (D3).
+      const report = await ClientAllocationService.reallocateClient(tiersId, {
+        apply: true,
+        acceptEcart: true,
+        userId: (req as AuthRequest).user?.id ?? null,
+      });
+      if (report.statut === 'erreur') {
+        res.status(500).json({ success: false, error: report.erreur });
+        return;
+      }
+      // E1-R1: say where the surplus of a payment beyond its invoice goes.
+      const reportes = ClientAllocationService.describeReports(report.paiements_reportes);
+      res.json({
+        success: true,
+        data: report,
+        message: (report.factures.length > 0
+          ? `Paiements réimputés : ${report.factures.length} facture(s) mise(s) à jour.`
+          : 'Paiements vérifiés : aucune facture ne change.') + (reportes ? ` ${reportes}` : ''),
+      });
     } catch (err: any) {
       console.error('TiersController:', err);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
+  /**
+   * POST /api/tiers/recompute-allocations (admin) — one-time E1 re-spread of
+   * every client: each payment back on the invoice it was recorded on, account
+   * totals unchanged. Simulation unless `appliquer: true`; a client whose total
+   * paid would change is reported and left alone unless `accepter_ecarts: true`.
+   */
+  static async recomputeAllAllocations(req: Request, res: Response): Promise<void> {
+    try {
+      const apply = req.body?.appliquer === true;
+      const acceptEcart = req.body?.accepter_ecarts === true;
+      const report = await ClientAllocationService.reallocateAllClients({
+        apply,
+        acceptEcart,
+        userId: (req as AuthRequest).user?.id ?? null,
+        tiersId: req.body?.tiers_id ? Number(req.body.tiers_id) : undefined,
+      });
+      const ecarts = report.clients_ecart === 0
+        ? ''
+        : apply && acceptEcart
+          ? ` Dont ${report.clients_ecart} client(s) dont le total payé ou le crédit d’acompte a changé.`
+          : ` ${report.clients_ecart} client(s) dont le total payé ou le crédit d’acompte changerait : non modifié(s), à vérifier.`;
+      const erreurs = report.clients_erreur > 0
+        ? ` ${report.clients_erreur} client(s) en erreur : non modifié(s).`
+        : '';
+      // E1-R1: payments beyond their invoice, listed per client in `details[].paiements_reportes`.
+      const reportes = report.paiements_reportes === 0
+        ? ''
+        : report.paiements_reportes === 1
+          ? ' 1 paiement dépasse la facture sur laquelle il a été enregistré : son surplus est reporté (détail par client).'
+          : ` ${report.paiements_reportes} paiements dépassent la facture sur laquelle ils ont été enregistrés : leur surplus est reporté (détail par client).`;
+      const message = apply
+        ? `Réimputation appliquée : ${report.clients_modifies} client(s), ${report.factures_modifiees} facture(s) mise(s) à jour.${ecarts}${erreurs}${reportes}`
+        : `Simulation : ${report.clients_modifies} client(s) et ${report.factures_modifiees} facture(s) changeraient. Rien n’a été modifié.${ecarts}${erreurs}${reportes}`;
+      res.json({ success: true, data: report, message });
+    } catch (err: unknown) {
+      respondWithError(res, err, 'TiersController.recomputeAllAllocations', 'Erreur serveur');
     }
   }
 }

@@ -17,7 +17,7 @@ export const loginSchema = z.object({
 
 export const registerSchema = z.object({
   username: z.string().min(3, 'Username doit avoir au moins 3 caractères').max(100),
-  email: z.string().email('Email invalide').optional().or(z.literal('')),
+  email: z.string().email('Adresse e-mail invalide.').optional().or(z.literal('')),
   // Enforce the same strength policy as the controller (was a weak min(6)).
   password: z.string().refine(isStrongPassword, PASSWORD_POLICY_MESSAGE),
   nom_complet: z.string().max(255).optional().or(z.literal('')),
@@ -73,6 +73,7 @@ export const updateProduitSchema = z.object({
 export const adjustStockSchema = z.object({
   quantite: z.coerce.number().int().refine(val => val !== 0, 'La quantité ne peut pas être zéro'),
   location_id: z.coerce.number().int().positive('Location ID invalide').optional(),
+  raison: z.string().max(500).optional().or(z.literal('')),
 });
 
 export const stockMovementSchema = z.object({
@@ -87,10 +88,10 @@ export const stockMovementSchema = z.object({
 // Tiers schemas (unified clients + fournisseurs)
 // ============================================
 export const createTiersSchema = z.object({
-  raison_sociale: z.string().min(1, 'Raison sociale requise').max(255),
+  raison_sociale: z.string().trim().min(1, 'Saisissez le nom ou la raison sociale.').max(255),
   prenom: z.string().max(100).optional().or(z.literal('')),
   telephone: z.string().max(20).optional().or(z.literal('')),
-  email: z.string().email('Email invalide').max(255).optional().or(z.literal('')),
+  email: z.string().email('Adresse e-mail invalide.').max(255).optional().or(z.literal('')),
   adresse: z.string().max(1000).optional().or(z.literal('')),
   nif: z.string().max(50).optional().or(z.literal('')),
   rccm: z.string().max(50).optional().or(z.literal('')),
@@ -101,14 +102,14 @@ export const createTiersSchema = z.object({
   delai_livraison: z.coerce.number().int().nonnegative().optional(),
   notes: z.string().max(2000).optional().or(z.literal('')),
 }).refine(d => d.est_client || d.est_fournisseur, {
-  message: 'Un tiers doit avoir au moins un rôle (est_client ou est_fournisseur)',
+  message: 'Cochez au moins un rôle : client ou fournisseur.',
 });
 
 export const updateTiersSchema = z.object({
   raison_sociale: z.string().min(1).max(255).optional(),
   prenom: z.string().max(100).optional().or(z.literal('')),
   telephone: z.string().max(20).optional().or(z.literal('')),
-  email: z.string().email('Email invalide').max(255).optional().or(z.literal('')),
+  email: z.string().email('Adresse e-mail invalide.').max(255).optional().or(z.literal('')),
   adresse: z.string().max(1000).optional().or(z.literal('')),
   nif: z.string().max(50).optional().or(z.literal('')),
   rccm: z.string().max(50).optional().or(z.literal('')),
@@ -177,7 +178,53 @@ export const createPaiementSchema = z.object({
   notes: z.string().max(1000).optional().or(z.literal('')),
   session_caisse_id: z.coerce.number().int().positive().optional(),
   idempotency_key: z.string().max(255).optional(),
+  // D3 : un paiement enregistre exactement `montant`. Les acomptes du client ne
+  // sont imputés que sur demande explicite (`appliquer_acomptes: true`) ou via
+  // POST /acomptes/:id/apply. `skip_acompte_application` est conservé pour les
+  // clients d'API existants ; c'est désormais le comportement par défaut.
+  appliquer_acomptes: z.boolean().optional(),
   skip_acompte_application: z.boolean().optional(),
+});
+
+// ============================================
+// Étiquettes : codes-barres internes (lot 3, migration 110)
+// ============================================
+export const genererCodesBarresSchema = z.object({
+  produit_ids: z
+    .array(z.coerce.number().int().positive())
+    .min(1, 'Choisissez au moins un produit.')
+    .max(500, '500 produits au plus à la fois.'),
+});
+
+// ============================================
+// Vente comptoir (facture + encaissement en une transaction)
+// ============================================
+export const venteComptoirSchema = z.object({
+  tiers_id: z.coerce.number().int().positive().optional(),
+  location_id: z.coerce.number().int().positive().optional(),
+  lignes: z
+    .array(
+      z.object({
+        produit_id: z.coerce.number().int().positive(),
+        quantite: z.coerce.number().int('Quantité entière attendue.').positive('Quantité supérieure à 0 attendue.'),
+        prix_unitaire: z.coerce.number().positive('Prix supérieur à 0 attendu.'),
+      })
+    )
+    .min(1, 'Ajoutez au moins un article avant d’encaisser.')
+    .max(500, 'Une vente comptoir ne peut pas dépasser 500 lignes.'),
+  paiements: z
+    .array(
+      z.object({
+        methode_paiement: paymentMethodEnum,
+        montant: z.coerce.number().positive('Montant supérieur à 0 attendu.').optional(),
+        reference: z.string().max(100).optional(),
+      })
+    )
+    .min(1, 'Choisissez un mode de paiement.')
+    .max(4, 'Quatre modes de paiement au plus par vente.'),
+  especes_recues: z.coerce.number().nonnegative().max(1_000_000_000).optional(),
+  idempotency_key: z.string().min(8).max(200).optional(),
+  notes: z.string().max(1000).optional(),
 });
 
 // ============================================
@@ -359,7 +406,7 @@ export const companySettingsSchema = z.object({
   nom: z.string().min(1, 'Nom requis').max(100, 'Nom max 100 caractères').optional(),
   adresse: z.string().max(500).nullable().optional().or(z.literal('')),
   telephone: z.string().max(50).nullable().optional().or(z.literal('')),
-  email: z.string().email('Email invalide').max(100).nullable().optional().or(z.literal('')),
+  email: z.string().email('Adresse e-mail invalide.').max(100).nullable().optional().or(z.literal('')),
   site_web: z.string().max(100).nullable().optional().or(z.literal('')),
   nif: z.string().max(50).nullable().optional().or(z.literal('')),
   rc: z.string().max(50).nullable().optional().or(z.literal('')),
@@ -374,6 +421,15 @@ export const companySettingsSchema = z.object({
   modules_desactives: z
     .array(z.string().regex(/^[a-z0-9-]{1,50}$/, 'Clé de module invalide'))
     .max(200, 'Trop de modules désactivés')
+    .optional(),
+  // Profil métier (migration 109) : mêmes valeurs que la contrainte CHECK.
+  type_activite: z
+    .enum(['general', 'informatique', 'habillement', 'libre_service'], { error: 'Type d’activité inconnu.' })
+    .optional(),
+  ticket_message: z
+    .string()
+    .max(300, 'Le message du ticket ne doit pas dépasser 300 caractères.')
+    .nullable()
     .optional(),
 });
 
@@ -436,6 +492,20 @@ export const applyAvoirToFactureSchema = z.object({
   montant: z.coerce.number().positive().optional(),
 });
 
+// POST /avoirs/:id/rembourser — pay a valid, unused credit note back (E3).
+export const rembourserAvoirSchema = z.object({
+  methode_paiement: paymentMethodEnum,
+  notes: z.string().max(1000, 'Note trop longue (1 000 caractères maximum).').optional().or(z.literal('')),
+  reference: z.string().max(100, 'Référence trop longue (100 caractères maximum).').optional().or(z.literal('')),
+});
+
+// POST /tiers/recompute-allocations — one-time E1 re-spread (simulation by default).
+export const recomputeAllocationsSchema = z.object({
+  appliquer: z.boolean().optional(),
+  accepter_ecarts: z.boolean().optional(),
+  tiers_id: z.coerce.number().int().positive().optional(),
+});
+
 // PUT /paiements/:id — partial update; rewrites amount then recomputes FIFO.
 export const updatePaiementSchema = z.object({
   montant: z.coerce.number().positive('Montant doit être positif').optional(),
@@ -473,13 +543,13 @@ export const adminCreateUserSchema = z.object({
   username: z.string().min(1, 'Username requis').max(50),
   password: strongPassword,
   role_id: z.coerce.number().int().positive('role_id requis'),
-  email: z.string().email('Email invalide').optional().or(z.literal('')),
+  email: z.string().email('Adresse e-mail invalide.').optional().or(z.literal('')),
   nom_complet: z.string().max(200).optional().or(z.literal('')),
   location_ids: z.array(z.coerce.number().int().positive()).optional(),
 });
 
 export const adminUpdateUserSchema = z.object({
-  email: z.string().email('Email invalide').optional().or(z.literal('')),
+  email: z.string().email('Adresse e-mail invalide.').optional().or(z.literal('')),
   nom_complet: z.string().max(200).optional().or(z.literal('')),
   role_id: z.coerce.number().int().positive().optional(),
   actif: z.boolean().optional(),
@@ -570,7 +640,7 @@ export const createEmployeSchema = z.object({
   date_embauche: z.string().min(1, "Date d'embauche requise"),
   date_naissance: z.string().max(40).optional().or(z.literal('')),
   telephone: z.string().max(20).optional().or(z.literal('')),
-  email: z.string().email('Email invalide').max(255).optional().or(z.literal('')),
+  email: z.string().email('Adresse e-mail invalide.').max(255).optional().or(z.literal('')),
   adresse: z.string().max(1000).optional().or(z.literal('')),
   salaire_base: z.coerce.number().nonnegative('Salaire invalide').optional(),
   commission_taux: z.coerce.number().nonnegative('Taux de commission invalide').max(100, 'Taux de commission max 100%').optional(),
@@ -631,6 +701,25 @@ export const updateCotisationSchema = z.object({
   taux_salarial: z.coerce.number().min(0).max(100).optional(),
   taux_patronal: z.coerce.number().min(0).max(100).optional(),
   plafond: z.number().nonnegative().nullable().optional(),
+  actif: z.boolean().optional(),
+});
+
+// POST /payroll/config/cotisations (U-11). Rates are FRACTIONS like the stored
+// values: 0.063 = 6,3 % (the Paramètres page converts from percent).
+const tauxFraction = z.coerce.number()
+  .min(0, 'Le taux ne peut pas être négatif.')
+  .max(1, 'Le taux est une fraction : 0,063 pour 6,3 %.');
+
+export const createCotisationSchema = z.object({
+  code: z.string().trim()
+    .min(2, 'Saisissez un code (2 caractères au moins).')
+    .max(20, 'Le code fait 20 caractères au plus.')
+    .regex(/^[A-Za-z0-9_]+$/, 'Le code ne contient que des lettres, des chiffres et « _ ».')
+    .transform((v) => v.toUpperCase()),
+  libelle: z.string().trim().min(2, 'Saisissez le libellé de la cotisation.').max(120),
+  taux_salarial: tauxFraction,
+  taux_patronal: tauxFraction,
+  plafond: z.coerce.number().positive('Le plafond doit être supérieur à 0.').nullable().optional(),
   actif: z.boolean().optional(),
 });
 

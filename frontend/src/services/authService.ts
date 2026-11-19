@@ -1,5 +1,6 @@
 import axios, { AxiosError } from 'axios';
 import type { User, LoginInput, AuthResponse, ApiResponse } from '../types/auth';
+import { isCredentialError } from '../utils/errors';
 
 const api = axios.create({
   baseURL: '/api',
@@ -7,13 +8,30 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// Response interceptor: only force logout on a real auth failure (401).
+function forgetCachedUser() {
+  try {
+    localStorage.removeItem('auth_user');
+  } catch {
+    /* stockage indisponible */
+  }
+}
+
+/**
+ * Déconnexion forcée sur une vraie perte de session (401) — mais pas sur un
+ * identifiant ou un mot de passe mal saisi : `/auth/login` et le « mot de
+ * passe actuel incorrect » de `/auth/change-password` répondent aussi 401.
+ * Avant, une faute de frappe rechargeait la page de connexion (formulaire
+ * vidé, sans explication) et déconnectait le nouvel employé en plein
+ * changement de mot de passe obligatoire.
+ */
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('auth_user');
-      window.location.href = '/login';
+    if (error.response?.status === 401 && !isCredentialError(error)) {
+      forgetCachedUser();
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
@@ -25,7 +43,11 @@ export const authService = {
     // user object for UX rehydration on reload.
     const { data } = await api.post('/auth/login', input);
     if (data.success && data.data?.user) {
-      localStorage.setItem('auth_user', JSON.stringify(data.data.user));
+      try {
+        localStorage.setItem('auth_user', JSON.stringify(data.data.user));
+      } catch {
+        /* stockage indisponible : la session reste portée par le cookie */
+      }
     }
     return data;
   },
@@ -33,7 +55,7 @@ export const authService = {
   logout: async () => {
     // Revoke the session + clear the cookie server-side, then drop the cached user.
     try { await api.post('/auth/logout'); } catch { /* ignore */ }
-    localStorage.removeItem('auth_user');
+    forgetCachedUser();
   },
 
   getCurrentUser: async (): Promise<User> => {

@@ -4,7 +4,8 @@ import { logger } from '../utils/logger';
 import { businessError } from '../utils/errors';
 import { caisseMagasinService } from './CaisseMagasinService';
 import { checkPeriodIsOpen } from './PeriodService';
-import { PaymentMethod } from '../utils/paymentMethods';
+import { PaymentMethod, isPaymentMethod, paymentMethodPhrase } from '../utils/paymentMethods';
+import { mouvementLibelle } from '../utils/caisseLibelle';
 
 export interface CreateDepenseInputV2 {
   magasin_id: number;
@@ -132,7 +133,7 @@ export class DepenseServiceV2 {
           methode_paiement: 'espece',
           reference_type: 'depense',
           reference_id: depenseId,
-          libelle: `Dépense ${numeroDepense} - ${categorieNom}`,
+          libelle: mouvementLibelle(`Dépense ${numeroDepense}`, categorieNom),
           user_id: cree_par
         });
 
@@ -202,7 +203,7 @@ export class DepenseServiceV2 {
       // Check permission
       const canAccess = await this.canAccessMagasin(userId, userRole, existing.magasin_id);
       if (!canAccess) {
-        throw businessError(403, 'Accès refusé - vous ne pouvez pas modifier cette dépense');
+        throw businessError(403, 'Accès refusé : vous ne pouvez pas modifier cette dépense.');
       }
 
       // If linked to closed session, reject
@@ -229,7 +230,7 @@ export class DepenseServiceV2 {
             methode_paiement: 'espece',
             reference_type: 'depense',
             reference_id: id,
-            libelle: `Correction dépense ${existing.numero_depense} - ancien montant`,
+            libelle: `Correction de la dépense ${existing.numero_depense} — ancien montant`,
             user_id: input.modifie_par
           });
 
@@ -242,7 +243,7 @@ export class DepenseServiceV2 {
             methode_paiement: 'espece',
             reference_type: 'depense',
             reference_id: id,
-            libelle: `Dépense ${existing.numero_depense} - montant corrigé`,
+            libelle: `Dépense ${existing.numero_depense} — montant corrigé`,
             user_id: input.modifie_par
           });
 
@@ -262,7 +263,7 @@ export class DepenseServiceV2 {
           methode_paiement: 'espece',
           reference_type: 'depense',
           reference_id: id,
-          libelle: `Annulation caisse - dépense ${existing.numero_depense} passée en ${newMethode}`,
+          libelle: `Dépense ${existing.numero_depense} désormais payée ${isPaymentMethod(newMethode) ? paymentMethodPhrase(newMethode) : 'par un autre mode de paiement'} : sortie de caisse annulée`,
           user_id: input.modifie_par
         });
 
@@ -286,7 +287,7 @@ export class DepenseServiceV2 {
           methode_paiement: 'espece',
           reference_type: 'depense',
           reference_id: id,
-          libelle: `Dépense ${existing.numero_depense} - mode de paiement changé en espèces`,
+          libelle: `Dépense ${existing.numero_depense} désormais payée en espèces`,
           user_id: input.modifie_par
         });
 
@@ -394,7 +395,7 @@ export class DepenseServiceV2 {
       // Check permission
       const canAccess = await this.canAccessMagasin(userId, userRole, expense.magasin_id);
       if (!canAccess) {
-        throw businessError(403, 'Accès refusé - vous ne pouvez pas supprimer cette dépense');
+        throw businessError(403, 'Accès refusé : vous ne pouvez pas supprimer cette dépense.');
       }
 
       // Check if linked to closed session
@@ -412,7 +413,7 @@ export class DepenseServiceV2 {
           methode_paiement: 'espece',
           reference_type: 'depense',
           reference_id: id,
-          libelle: `Annulation dépense ${expense.numero_depense}`,
+          libelle: `Annulation de la dépense ${expense.numero_depense}`,
           user_id: userId
         });
       }

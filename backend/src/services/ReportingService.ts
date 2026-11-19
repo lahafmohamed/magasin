@@ -594,11 +594,13 @@ export class ReportingService {
   }> {
     const [lowStock, overdueInvoices, pendingOrders] = await Promise.all([
       pool.query(
-        `SELECT p.id, p.nom, p.reference, p.stock, p.stock_min,
-                COALESCE(l.nom, 'Principal') as location_nom
+        // produits has no location_id: stock is per location in stock_par_location
+        // and p.stock is their sum (trg_sync_produits_stock). The old join on
+        // p.location_id made the whole endpoint 500 on every canonical schema.
+        `SELECT p.id, p.nom, p.reference, p.stock, p.stock_min
          FROM produits p
-         LEFT JOIN stock_locations l ON p.location_id = l.id
          WHERE p.stock <= p.stock_min AND p.stock_min > 0
+           AND p.deleted_at IS NULL
          ORDER BY (p.stock_min - p.stock) DESC
          LIMIT 20`
       ),

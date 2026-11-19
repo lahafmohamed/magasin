@@ -1,75 +1,180 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useForm, useFieldArray, useWatch, Controller } from 'react-hook-form';
+import { useForm, useFieldArray, useWatch, Controller, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { devisService, stockLocationService, ventesService, tiersService } from '@/services/api';
+import { toast } from 'sonner';
+import { AlertTriangle, Package, X } from 'lucide-react';
+import { devisService, tiersService, ventesService } from '@/services/api';
+import { TiersPicker, type TiersPickerValue } from '@/components/TiersPicker';
+import { ProductCombobox } from '@/components/ProductCombobox';
+import { NumericField } from '@/components/NumericField';
+import { DocumentLines, type DocumentLineColumn } from '@/components/DocumentLines';
+import {
+  DocumentFormShell,
+  DraftNotice,
+  MarginSummary,
+  SummaryItem,
+  SummaryList,
+} from '@/components/DocumentFormShell';
+import {
+  InlineNotice,
+  SalesLocationField,
+  SalesProductOption,
+  type SalesSearchProduct,
+} from '@/components/SalesFormParts';
+import { defaultLocationId, useLocationStock, useSalesLocations } from '@/components/useSalesStock';
 import { useDraft } from '@/hooks/useDraft';
-import { TiersPicker } from '@/components/TiersPicker';
-import { Tiers, Produit } from '@/types';
+import { useOptionalAuth } from '@/lib/AuthContext';
+import { PageShell } from '@/components/ui/page-shell';
+import { PageLoading } from '@/components/ui/loading';
+import { QueryErrorState } from '@/components/ui/query-state';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { DatePicker } from '@/components/ui/date-picker';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { DatePicker } from '@/components/ui/date-picker';
+import { DocumentTotals } from '@/components/ui/document-totals';
+import { DocumentCode } from '@/components/ui/document-code';
 import { EmptyState } from '@/components/ui/empty-state';
 import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
-import { ArrowLeft, Check, FileText, Search, ShoppingCart, X } from 'lucide-react';
-import { formatFCFA as formatXOF } from '@/utils/format';
-import { toast } from 'sonner';
-import { getValidSalePrice } from '@/utils/salesPrice';
+import { Label } from '@/components/ui/label';
+import { Money } from '@/components/ui/money';
+import { RequiredMark } from '@/components/ui/required-mark';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 import { getErrorMessage } from '@/utils/errors';
+import { formatDate, formatNumber, formatPercent, toNumber } from '@/utils/format';
+import {
+  computeSalesTotals,
+  getValidSalePrice,
+  isBelowCost,
+  saleDisabledReason,
+} from '@/utils/salesPrice';
+import { SALES_MESSAGES as M, lineFieldLabel, plural } from '@/validation/salesForms';
 
-interface StockLocation {
-  id: number;
-  code: string;
-  nom: string;
-  est_principal: boolean;
-}
-
-interface StockLevel {
-  produit_id: number;
-  quantite_disponible: number;
-}
-
-// --- zod schema -----------------------------------------------------------
-// Required (matches the original handleSubmit guards): a client must be
-// selected and at least one line item with quantité > 0 / prix > 0.
-// location_id, date_validite and notes are optional, exactly like before
-// (the payload sent them as `value || undefined`).
 const ligneSchema = z.object({
   produit_id: z.number(),
   produit_nom: z.string(),
   produit_reference: z.string(),
-  quantite: z.number().int().min(1, 'Quantité invalide'),
-  prix_unitaire: z.number().positive('Le prix doit être supérieur à zéro'),
+  quantite: z.number({ error: M.quantity }).int(M.quantityInteger).min(1, M.quantity),
+  prix_unitaire: z.number({ error: M.price }).positive(M.price),
   prix_revient: z.number(),
   stock_dispo: z.number(),
 });
 
 const devisSchema = z.object({
-  client: z.custom<Tiers | null>((v) => v != null, 'Veuillez sélectionner un client'),
+  client: z.custom<TiersPickerValue | null>((v) => v != null, { error: M.clientRequired }),
   location_id: z.number().nullable(),
   date_validite: z.string(),
   notes: z.string(),
-  lignes: z.array(ligneSchema).min(1, 'Veuillez ajouter au moins un produit'),
+  lignes: z.array(ligneSchema).min(1, M.linesRequired),
 });
 
 type DevisFormValues = z.infer<typeof devisSchema>;
+type LigneDevis = z.infer<typeof ligneSchema>;
+
+/** Ligne de devis renvoyée par `GET /devis/:id`. */
+interface DevisLigneApi {
+  produit_id: number;
+  produit_nom?: string | null;
+  produit_reference?: string | null;
+  reference?: string | null;
+  description?: string | null;
+  quantite: number | string;
+  prix_unitaire: number | string;
+  prix_revient?: number | string | null;
+}
+
+const ID = {
+  client: 'devis-client',
+  search: 'devis-produit-search',
+  searchHint: 'devis-produit-aide',
+  lignes: 'devis-lignes',
+  location: 'devis-location',
+  validite: 'devis-validite',
+  validiteHint: 'devis-validite-aide',
+  notes: 'devis-notes',
+  quantite: (i: number) => `devis-ligne-${i}-quantite`,
+  prix: (i: number) => `devis-ligne-${i}-prix`,
+};
+
+/** Colonnes des lignes : tableau quand la colonne du formulaire a la place, cartes sinon (`DocumentLines`). */
+const LINE_COLUMNS: DocumentLineColumn[] = [
+  { id: 'produit', header: 'Produit', mobile: 'title', cellClassName: 'min-w-[11rem]' },
+  { id: 'quantite', header: 'Quantité', mobile: 'field', headClassName: 'text-right', cellClassName: 'text-right' },
+  {
+    id: 'prix',
+    header: 'Prix unitaire',
+    mobile: 'field',
+    headClassName: 'text-right',
+    cellClassName: 'min-w-[9rem] text-right',
+  },
+  { id: 'stock', header: 'Stock', numeric: true, mobile: 'field', mobileAlign: 'start' },
+  { id: 'total', header: 'Total', numeric: true, mobile: 'field' },
+  {
+    id: 'retirer',
+    header: 'Retirer',
+    srOnlyHeader: true,
+    mobile: 'action',
+    headClassName: 'w-10',
+    cellClassName: 'px-1',
+  },
+];
+
+function firstErrorId(errors: FieldErrors<DevisFormValues>, lineCount: number): string | null {
+  if (errors.client) return ID.client;
+  for (let i = 0; i < lineCount; i++) {
+    const le = errors.lignes?.[i];
+    if (le?.quantite) return ID.quantite(i);
+    if (le?.prix_unitaire) return ID.prix(i);
+  }
+  if (errors.lignes?.message || errors.lignes?.root?.message) return ID.search;
+  return null;
+}
+
+function focusById(id: string | null) {
+  if (!id) return;
+  window.setTimeout(() => document.getElementById(id)?.focus(), 0);
+}
+
+function clientName(c: TiersPickerValue): string {
+  return `${c.raison_sociale}${c.prenom ? ` ${c.prenom}` : ''}`;
+}
+
+/** Date `yyyy-MM-dd` d'une valeur d'API (date seule ou horodatage). */
+function toDateInput(value: unknown): string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : '';
+}
+
+/** Sans date choisie, le serveur rend le devis valable 30 jours à partir de sa création. */
+const DEFAULT_VALIDITY_DAYS = 30;
+
+function defaultValidityDate(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + DEFAULT_VALIDITY_DAYS);
+  return d;
+}
+
+const EMPTY_VALUES: DevisFormValues = {
+  client: null,
+  location_id: null,
+  date_validite: '',
+  notes: '',
+  lignes: [],
+};
 
 export default function NouveauDevis() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEdit = !!id;
+  const auth = useOptionalAuth();
+  const canSeeCost = !!auth?.hasRole('admin', 'manager');
+  const clientTitleId = useId();
 
-  // Local-only search / UI state (does not feed the payload directly).
-  const [produits, setProduits] = useState<Produit[]>([]);
-  const [produitSearch, setProduitSearch] = useState('');
-  const [showProduitDropdown, setShowProduitDropdown] = useState(false);
-  const [editLoading, setEditLoading] = useState(false);
-  const [locations, setLocations] = useState<StockLocation[]>([]);
-  const [locationStockMap, setLocationStockMap] = useState<Record<number, number>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [lineAnnounce, setLineAnnounce] = useState('');
+  const [editState, setEditState] = useState<'idle' | 'loading' | 'ready' | 'error'>(isEdit ? 'loading' : 'idle');
+  const [editError, setEditError] = useState<unknown>(null);
+  const [numeroDevis, setNumeroDevis] = useState<string | null>(null);
 
   const {
     control,
@@ -79,25 +184,28 @@ export default function NouveauDevis() {
     getValues,
     watch,
     reset,
-    formState: { errors, isSubmitting, isDirty },
+    formState: { errors, isDirty, isSubmitted },
   } = useForm<DevisFormValues>({
     resolver: zodResolver(devisSchema),
-    defaultValues: {
-      client: null,
-      location_id: null,
-      date_validite: '',
-      notes: '',
-      lignes: [],
-    },
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
+    shouldFocusError: false,
+    defaultValues: EMPTY_VALUES,
   });
 
-  // --- Draft autosave + unsaved-changes guard (create mode only) -----------
+  const { fields, append, remove } = useFieldArray({ control, name: 'lignes' });
+
+  // --- Brouillon (création seulement) ------------------------------------------
   const { draft, save, clear, hasDraft } = useDraft<DevisFormValues>('devis:new');
-  const [showDraftBanner, setShowDraftBanner] = useState(!isEdit && hasDraft);
+  const [showDraftBanner, setShowDraftBanner] = useState(
+    () => !isEdit && hasDraft && Array.isArray(draft?.lignes) && draft.lignes.length > 0
+  );
 
   useEffect(() => {
     if (isEdit) return;
-    const sub = watch((v) => save(v as DevisFormValues));
+    const sub = watch((values, { name, type }) => {
+      if (type === 'change' || name?.startsWith('lignes')) save(values as DevisFormValues);
+    });
     return () => sub.unsubscribe();
   }, [watch, save, isEdit]);
 
@@ -112,590 +220,504 @@ export default function NouveauDevis() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
 
-  const { fields, append, remove, replace } = useFieldArray({ control, name: 'lignes' });
-
-  // Live values for computed totals / margins and effect dependencies.
-  const selectedClient = useWatch({ control, name: 'client' });
+  const client = useWatch({ control, name: 'client' });
   const selectedLocationId = useWatch({ control, name: 'location_id' });
-  const watchedLignes = useWatch({ control, name: 'lignes' }) ?? [];
+  const dateValidite = useWatch({ control, name: 'date_validite' });
+  const watchedLignes = useWatch({ control, name: 'lignes' });
+  const lignes = useMemo(() => (watchedLignes ?? []) as LigneDevis[], [watchedLignes]);
+
+  const sales = useSalesLocations((list) =>
+    setValue('location_id', defaultLocationId(list, getValues('location_id')))
+  );
+  const stock = useLocationStock(selectedLocationId);
+
+  const syncLineStock = useCallback(() => {
+    if (stock.state !== 'ready') return;
+    getValues('lignes').forEach((ligne, i) => {
+      const available = stock.stockMap[ligne.produit_id] ?? 0;
+      if (ligne.stock_dispo !== available) setValue(`lignes.${i}.stock_dispo`, available);
+    });
+  }, [stock.stockMap, stock.state, getValues, setValue]);
 
   useEffect(() => {
-    const loadMagasins = async () => {
-      try {
-        const response = await ventesService.getLocations();
-        const magasins: StockLocation[] = response.data || response;
-        setLocations(magasins);
-        const defaultMagasin = magasins.find((m) => m.est_principal) || magasins[0];
-        if (defaultMagasin) {
-          setValue('location_id', defaultMagasin.id);
-        } else {
-          toast.error('Aucun magasin actif disponible pour les devis');
-        }
-      } catch (err) {
-        toast.error(getErrorMessage(err, 'Impossible de charger les magasins'));
-      }
-    };
+    syncLineStock();
+  }, [syncLineStock]);
 
-    void loadMagasins();
-  }, [setValue]);
-
-  useEffect(() => {
-    if (!selectedLocationId) return;
-    const loadLocationStock = async () => {
-      try {
-        const response = await stockLocationService.getStockLevels(selectedLocationId);
-        const levels: StockLevel[] = response.data || response;
-        const nextMap: Record<number, number> = {};
-        for (const level of levels) {
-          nextMap[level.produit_id] = Number(level.quantite_disponible || 0);
-        }
-        setLocationStockMap(nextMap);
-      } catch (err) {
-        toast.error(getErrorMessage(err, 'Impossible de charger le stock du magasin'));
-      }
-    };
-    void loadLocationStock();
-  }, [selectedLocationId]);
-
-  useEffect(() => {
-    if (!selectedLocationId) return;
-    const current = getValues('lignes');
-    if (current.length === 0) return;
-    replace(
-      current.map((ligne) => ({
-        ...ligne,
-        stock_dispo: locationStockMap[ligne.produit_id] ?? ligne.stock_dispo,
-      })),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationStockMap, selectedLocationId]);
-
-  useEffect(() => {
-    if (!isEdit || !id) return;
-    const load = async () => {
-      try {
-        setEditLoading(true);
-        const res = await devisService.getById(Number(id));
-        const devis = res?.data || res;
-        if (devis.tiers_id) {
-          const tiersRes = await tiersService.getById(devis.tiers_id);
-          setValue('client', tiersRes?.data || tiersRes);
-        }
-        setValue('location_id', devis.location_id || null);
-        setValue('date_validite', devis.date_validite || '');
-        setValue('notes', devis.notes || '');
-        if (Array.isArray(devis.lignes)) {
-          replace(
-            devis.lignes.map((l: any) => ({
-              produit_id: l.produit_id,
-              produit_nom: l.produit_nom || '',
-              produit_reference: l.reference || '',
-              quantite: l.quantite,
-              prix_unitaire: Number(l.prix_unitaire),
-              prix_revient: Number(l.prix_revient || 0),
-              stock_dispo: Number(l.stock_dispo || 0),
-            })),
-          );
-        }
-      } catch (err) {
-        toast.error(getErrorMessage(err, 'Impossible de charger le devis'));
-        navigate('/devis');
-      } finally {
-        setEditLoading(false);
-      }
-    };
-    void load();
+  // --- Modification : chargement du devis -------------------------------------
+  const loadDevis = useCallback(async () => {
+    if (!id) return;
+    setEditState('loading');
+    setEditError(null);
+    try {
+      const devis = await devisService.getById(Number(id));
+      const tiers = devis?.tiers_id ? await tiersService.getById(devis.tiers_id) : null;
+      const lignesApi: DevisLigneApi[] = Array.isArray(devis?.lignes) ? devis.lignes : [];
+      reset({
+        client: tiers ?? null,
+        location_id: devis?.location_id ?? getValues('location_id'),
+        date_validite: toDateInput(devis?.date_validite),
+        notes: devis?.notes ?? '',
+        lignes: lignesApi.map((l) => ({
+          produit_id: Number(l.produit_id),
+          produit_nom: l.produit_nom || l.description || '',
+          produit_reference: l.produit_reference || l.reference || '',
+          quantite: toNumber(l.quantite) ?? 1,
+          prix_unitaire: toNumber(l.prix_unitaire) ?? 0,
+          prix_revient: toNumber(l.prix_revient ?? null) ?? 0,
+          stock_dispo: 0,
+        })),
+      });
+      setNumeroDevis(devis?.numero_devis ?? null);
+      setEditState('ready');
+      window.setTimeout(syncLineStock, 0);
+    } catch (err) {
+      setEditError(err);
+      setEditState('error');
+    }
+    // Rechargé seulement quand on change de devis.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   useEffect(() => {
-    if (produitSearch.length >= 2) {
-      ventesService
-        .searchFuzzy(produitSearch, 20, selectedLocationId || undefined)
-        .then((data) => {
-          setProduits(Array.isArray(data) ? data : []);
-        })
-        .catch(() => setProduits([]));
-    } else {
-      setProduits([]);
-    }
-  }, [produitSearch, selectedLocationId]);
+    void loadDevis();
+  }, [loadDevis]);
 
-  const addProduit = (produit: Produit) => {
-    const prixVente = getValidSalePrice(produit.prix_vente);
-    if (prixVente === null) {
-      toast.error(
-        'Prix de vente non renseigné. Corrigez la fiche produit avant de continuer.'
-      );
-      return;
-    }
+  // --- Produits ----------------------------------------------------------------
+  const searchProducts = useCallback(
+    async (q: string): Promise<SalesSearchProduct[]> => {
+      const rows = await ventesService.searchFuzzy(q, 20, selectedLocationId ?? undefined);
+      return Array.isArray(rows) ? (rows as SalesSearchProduct[]) : [];
+    },
+    [selectedLocationId]
+  );
 
+  const addProduit = (p: SalesSearchProduct) => {
+    const prixVente = getValidSalePrice(p.prix_vente);
+    if (prixVente === null) return;
     const current = getValues('lignes');
-    if (current.some((l) => l.produit_id === produit.id)) {
-      toast.warning('Ce produit est déjà dans le devis');
+    const existing = current.findIndex((l) => l.produit_id === p.id);
+    if (existing >= 0) {
+      // Même produit scanné deux fois : une unité de plus, comme sur la facture.
+      const qty = current[existing].quantite;
+      setValue(`lignes.${existing}.quantite`, (Number.isFinite(qty) ? qty : 0) + 1, {
+        shouldDirty: true,
+        shouldValidate: isSubmitted,
+      });
       return;
     }
-
-    const prixAchat = parseFloat(produit.prix_achat as any) || 0;
-    const fallbackStock =
-      typeof produit.stock === 'string' ? parseInt(produit.stock, 10) : Number(produit.stock || 0);
-    const stock = selectedLocationId
-      ? locationStockMap[produit.id] ?? fallbackStock
-      : fallbackStock;
-
-    append({
-      produit_id: produit.id,
-      produit_nom: produit.nom,
-      produit_reference: produit.reference,
-      quantite: 1,
-      prix_unitaire: prixVente,
-      prix_revient: prixAchat,
-      stock_dispo: stock,
-    });
-    setProduitSearch('');
-    setProduits([]);
-    setShowProduitDropdown(false);
-  };
-
-  // Douchette code-barres : un code scanné est unique, donc une correspondance
-  // exacte est sans ambiguïté — la ligne est ajoutée sans clic supplémentaire.
-  useEffect(() => {
-    const scanned = produitSearch.trim();
-    if (!scanned) return;
-    const match = produits.find((p) => p.code_barre && p.code_barre === scanned);
-    if (match) {
-      setProduits([]);
-      addProduit(match);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [produits, produitSearch]);
-
-  const updateQuantite = (index: number, quantite: number) => {
-    setValue(`lignes.${index}.quantite`, quantite, { shouldValidate: true, shouldDirty: true });
-  };
-
-  const updatePrix = (index: number, prix: number) => {
-    setValue(`lignes.${index}.prix_unitaire`, prix, { shouldValidate: true, shouldDirty: true });
+    append(
+      {
+        produit_id: p.id,
+        produit_nom: p.nom,
+        produit_reference: p.reference ?? '',
+        quantite: 1,
+        prix_unitaire: prixVente,
+        prix_revient: toNumber(p.prix_achat) ?? 0,
+        stock_dispo: stock.stockOf(p.id, p.stock),
+      },
+      { shouldFocus: false }
+    );
   };
 
   const removeLigne = (index: number) => {
+    const nom = getValues(`lignes.${index}.produit_nom`);
     remove(index);
+    setLineAnnounce(`${nom} retiré du devis.`);
+    document.getElementById(ID.search)?.focus();
   };
 
-  // Identical math: montant total = Σ (quantité × prix_unitaire).
-  const total = watchedLignes.reduce((sum, l) => sum + l.quantite * l.prix_unitaire, 0);
+  const totals = useMemo(() => computeSalesTotals(lignes), [lignes]);
+
+  // --- Envoi -------------------------------------------------------------------
+  const onInvalid = (errs: FieldErrors<DevisFormValues>) => focusById(firstErrorId(errs, fields.length));
 
   const onValid = async (values: DevisFormValues) => {
+    if (!values.client) return;
+    // Le serveur lit `date_validite` (le champ `valid_until` envoyé jusqu'ici
+    // était ignoré : la date choisie ne s'enregistrait jamais).
+    const payload: Parameters<typeof devisService.create>[0] = {
+      tiers_id: values.client.id,
+      location_id: values.location_id ?? undefined,
+      lignes: values.lignes.map((l) => ({
+        produit_id: l.produit_id,
+        quantite: l.quantite,
+        prix_unitaire: l.prix_unitaire,
+      })),
+      date_validite: values.date_validite || undefined,
+      notes: values.notes.trim() || undefined,
+    };
+    setSubmitting(true);
     try {
-      const payload = {
-        tiers_id: values.client!.id,
-        location_id: values.location_id || undefined,
-        lignes: values.lignes.map((l) => ({
-          produit_id: l.produit_id,
-          quantite: l.quantite,
-          prix_unitaire: l.prix_unitaire,
-        })),
-        valid_until: values.date_validite || undefined,
-        notes: values.notes || undefined,
-      };
-
       if (isEdit && id) {
         await devisService.update(Number(id), payload);
-        toast.success('Devis modifié avec succès');
+        toast.success(numeroDevis ? `Devis ${numeroDevis} enregistré` : 'Devis enregistré');
+        navigate(`/devis/${id}`, { replace: true });
       } else {
-        await devisService.create(payload);
+        const result = await devisService.create(payload);
         clear();
-        toast.success('Devis créé avec succès');
+        toast.success(result?.numero_devis ? `Devis ${result.numero_devis} créé` : 'Devis créé');
+        navigate(result?.id ? `/devis/${result.id}` : '/devis', { replace: true, state: { justCreated: true } });
       }
-      navigate('/devis');
     } catch (error) {
-      toast.error(getErrorMessage(error, 'Erreur lors de la sauvegarde du devis'));
+      toast.error(getErrorMessage(error, 'Impossible d’enregistrer le devis. Réessayez.'));
+      setSubmitting(false);
     }
   };
 
-  if (editLoading) {
+  const restoreDraft = () => {
+    if (draft) {
+      reset(
+        {
+          client: draft.client ?? null,
+          location_id: draft.location_id ?? getValues('location_id'),
+          date_validite: draft.date_validite ?? '',
+          notes: draft.notes ?? '',
+          lignes: Array.isArray(draft.lignes) ? draft.lignes : [],
+        },
+        { keepDefaultValues: true }
+      );
+      window.setTimeout(syncLineStock, 0);
+    }
+    setShowDraftBanner(false);
+  };
+
+  const discardDraft = () => {
+    clear();
+    setShowDraftBanner(false);
+  };
+
+  // --- Rendu -------------------------------------------------------------------
+  const pageTitle = isEdit ? (numeroDevis ? `Modifier le devis ${numeroDevis}` : 'Modifier le devis') : 'Nouveau devis';
+  const backTo = isEdit && id ? `/devis/${id}` : '/devis';
+
+  if (isEdit && editState !== 'ready') {
     return (
-      <div className="p-3 sm:p-6 w-full space-y-6">
-        <div className="flex items-center gap-4">
-          <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Retour
-          </Button>
-          <h1 className="text-3xl font-bold tracking-tight">Chargement du devis…</h1>
-        </div>
-      </div>
+      <PageShell title={pageTitle} backTo={backTo} width="wide">
+        {editState === 'error' ? (
+          <Card>
+            <QueryErrorState
+              error={editError}
+              title="Impossible de charger le devis"
+              onRetry={() => void loadDevis()}
+            />
+          </Card>
+        ) : (
+          <PageLoading message="Chargement du devis…" />
+        )}
+      </PageShell>
     );
   }
 
+  const location = sales.locations.find((l) => l.id === selectedLocationId) ?? null;
   const lignesError = errors.lignes?.message ?? errors.lignes?.root?.message;
 
+  const summary = (
+    <>
+      <SummaryList>
+        <SummaryItem label="Client">
+          {client ? clientName(client) : <span className="font-normal text-muted-foreground">Non choisi</span>}
+        </SummaryItem>
+        {location && <SummaryItem label="Emplacement">{location.nom}</SummaryItem>}
+        {/* Sans date choisie : la date que le serveur appliquera, atténuée. */}
+        <SummaryItem label="Valable jusqu’au">
+          {dateValidite ? (
+            formatDate(dateValidite)
+          ) : (
+            <span className="font-normal text-muted-foreground">{isEdit ? '—' : formatDate(defaultValidityDate())}</span>
+          )}
+        </SummaryItem>
+        <SummaryItem label="Produits" numeric>
+          {totals.lines === 0
+            ? '—'
+            : `${plural(totals.lines, 'ligne', 'lignes')} · ${plural(totals.units, 'unité', 'unités')}`}
+        </SummaryItem>
+      </SummaryList>
+      <DocumentTotals
+        className="mt-0 w-full pt-2 sm:w-full"
+        aria-label="Total du devis"
+        total={{ label: 'Total', value: totals.total }}
+      />
+      {/* Marge seulement une fois une ligne saisie : « 0 FCFA » de marge sur un devis vide ne dit rien. */}
+      {canSeeCost && totals.lines > 0 && (
+        <MarginSummary margin={totals.margin} cost={totals.cost} marginPct={totals.marginPct} />
+      )}
+    </>
+  );
+
   return (
-    <div className="p-3 sm:p-6 w-full space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Retour
-        </Button>
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <FileText className="h-8 w-8" />
-            {isEdit ? 'Modifier le devis' : 'Nouveau devis'}
-          </h1>
-          <p className="text-muted-foreground mt-1">{isEdit ? 'Modifiez le devis client' : 'Créez un nouveau devis client'}</p>
-        </div>
-      </div>
+    <DocumentFormShell
+      title={pageTitle}
+      description="Le devis ne bloque pas le stock. Confirmez-le ensuite pour créer le bon de livraison."
+      backTo={backTo}
+      backLabel={isEdit ? (numeroDevis ? `Devis ${numeroDevis}` : 'Devis') : undefined}
+      onSubmit={handleSubmit(onValid, onInvalid)}
+      notice={showDraftBanner ? <DraftNotice onRestore={restoreDraft} onDiscard={discardDraft} /> : null}
+      summary={summary}
+      total={totals.total}
+      submitLabel={isEdit ? 'Enregistrer le devis' : 'Créer le devis'}
+      submittingLabel={isEdit ? 'Enregistrement du devis…' : 'Création du devis…'}
+      submitting={submitting}
+    >
+      {/* Client */}
+      <Card>
+        <CardHeader>
+          <CardTitle id={clientTitleId}>
+            Client
+            <RequiredMark />
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Controller
+            control={control}
+            name="client"
+            render={({ field, fieldState }) => (
+              <TiersPicker
+                ref={field.ref}
+                id={ID.client}
+                role="client"
+                value={field.value}
+                onChange={field.onChange}
+                aria-labelledby={clientTitleId}
+                {...fieldErrorProps(ID.client, fieldState.error)}
+              />
+            )}
+          />
+          <FieldError id={ID.client}>{errors.client?.message}</FieldError>
+        </CardContent>
+      </Card>
 
-      <form onSubmit={handleSubmit(onValid)} className="space-y-6">
-        {showDraftBanner && (
-          <div className="rounded-lg border bg-muted/50 p-3 text-sm flex items-center justify-between gap-3">
-            <span>Un brouillon non enregistré a été récupéré.</span>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  if (draft) reset(draft);
-                  setShowDraftBanner(false);
-                }}
-              >
-                Restaurer
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  clear();
-                  setShowDraftBanner(false);
-                }}
-              >
-                Ignorer
-              </Button>
-            </div>
+      {/* Produits */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Produits
+            <RequiredMark />
+          </CardTitle>
+          <CardDescription id={ID.searchHint}>
+            Scannez un code-barres ou tapez au moins 2 caractères, puis Entrée pour ajouter le produit
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor={ID.search}>Ajouter un produit</Label>
+            <ProductCombobox<SalesSearchProduct>
+              id={ID.search}
+              search={searchProducts}
+              searchKey={selectedLocationId}
+              onSelect={addProduit}
+              describedBy={[ID.searchHint, lignesError ? `${ID.lignes}-error` : null].filter(Boolean).join(' ')}
+              aria-invalid={lignesError ? true : undefined}
+              getDisabledReason={saleDisabledReason}
+              addedMessage={(p) => `${p.nom} ajouté au devis.`}
+              noResultsHint="Seuls les produits en stock sont proposés. Vérifiez l’orthographe ou le code-barres."
+              renderOption={(p, { disabledReason }) => (
+                <SalesProductOption product={p} stock={stock.stockOf(p.id, p.stock)} disabledReason={disabledReason} />
+              )}
+            />
+            <FieldError id={ID.lignes}>{lignesError}</FieldError>
           </div>
-        )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Client<span className="text-destructive"> *</span></CardTitle>
-            <CardDescription>Sélectionnez le client</CardDescription>
-          </CardHeader>
-          <CardContent>
+          {/* Un seul magasin : rien ici, le récapitulatif le nomme. Plusieurs : la
+              liste vient après la recherche, sans couper la consigne de son champ. */}
+          <SalesLocationField
+            id={ID.location}
+            label="Emplacement de vente"
+            locations={sales.locations}
+            state={sales.state}
+            error={sales.error}
+            onRetry={() => void sales.reload()}
+            value={selectedLocationId}
+            onChange={(locationId) => setValue('location_id', locationId, { shouldDirty: true })}
+          />
+          {stock.state === 'error' && selectedLocationId && (
+            <InlineNotice tone="warning" onRetry={() => void stock.reload()}>
+              Stock de l’emplacement indisponible : les quantités affichées sont celles de tous les emplacements.
+            </InlineNotice>
+          )}
+
+          <p role="status" className="sr-only">
+            {lineAnnounce}
+          </p>
+
+          {/* La consigne est déjà sous le titre de la carte : l'état vide ne la répète pas. */}
+          {fields.length === 0 ? (
+            <div className="rounded-md bg-muted/40">
+              <EmptyState compact icon={Package} title="Aucun produit sur le devis" />
+            </div>
+          ) : (
+            <DocumentLines
+              label="Lignes du devis"
+              columns={LINE_COLUMNS}
+              rows={fields.map((field, index) => {
+                const l = (lignes[index] ?? field) as LigneDevis;
+                const lineErrors = errors.lignes?.[index];
+                const qty = Number.isFinite(l.quantite) ? l.quantite : 0;
+                const price = Number.isFinite(l.prix_unitaire) ? l.prix_unitaire : 0;
+                const lineTotal = qty * price;
+                const marginAbs = qty * (price - l.prix_revient);
+                const marginPct = price > 0 ? ((price - l.prix_revient) / price) * 100 : null;
+                const belowCost = isBelowCost(l);
+                const overstock = qty > l.stock_dispo;
+                return {
+                  key: field.id,
+                  cells: {
+                    produit: (
+                      <>
+                        <p className="font-medium">{l.produit_nom}</p>
+                        {l.produit_reference && (
+                          <DocumentCode className="block text-xs text-muted-foreground">{l.produit_reference}</DocumentCode>
+                        )}
+                        {overstock && (
+                          <p className="mt-1 flex items-start gap-1 text-xs text-warning-700">
+                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                            Stock insuffisant dans cet emplacement pour le livrer aujourd’hui.
+                          </p>
+                        )}
+                        {belowCost && (
+                          <p className="mt-1 flex items-start gap-1 text-xs text-warning-700">
+                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                            {canSeeCost
+                              ? 'Prix inférieur au prix de revient.'
+                              : 'Prix inférieur au prix de revient : demandez l’accord d’un gérant avant d’enregistrer.'}
+                          </p>
+                        )}
+                      </>
+                    ),
+                    quantite: (
+                      <>
+                        <Controller
+                          control={control}
+                          name={`lignes.${index}.quantite`}
+                          render={({ field: f }) => (
+                            <NumericField
+                              ref={f.ref}
+                              id={ID.quantite(index)}
+                              mode="integer"
+                              value={f.value}
+                              onValueChange={f.onChange}
+                              onBlur={f.onBlur}
+                              aria-label={lineFieldLabel('Quantité', l.produit_nom)}
+                              {...fieldErrorProps(ID.quantite(index), lineErrors?.quantite)}
+                              containerClassName="w-full group-data-[layout=table]/lines:ms-auto group-data-[layout=table]/lines:w-20"
+                              className="h-9 group-data-[layout=table]/lines:h-8"
+                            />
+                          )}
+                        />
+                        <FieldError id={ID.quantite(index)} className="group-data-[layout=table]/lines:max-w-[10rem]">
+                          {lineErrors?.quantite?.message}
+                        </FieldError>
+                      </>
+                    ),
+                    prix: (
+                      <>
+                        <Controller
+                          control={control}
+                          name={`lignes.${index}.prix_unitaire`}
+                          render={({ field: f }) => (
+                            <NumericField
+                              ref={f.ref}
+                              id={ID.prix(index)}
+                              mode="decimal"
+                              value={f.value}
+                              onValueChange={f.onChange}
+                              onBlur={f.onBlur}
+                              aria-label={lineFieldLabel('Prix unitaire', l.produit_nom)}
+                              {...fieldErrorProps(ID.prix(index), lineErrors?.prix_unitaire)}
+                              containerClassName="w-full group-data-[layout=table]/lines:ms-auto group-data-[layout=table]/lines:w-32"
+                              className="h-9 group-data-[layout=table]/lines:h-8"
+                            />
+                          )}
+                        />
+                        <FieldError id={ID.prix(index)}>{lineErrors?.prix_unitaire?.message}</FieldError>
+                        {canSeeCost && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Prix de revient : <Money value={l.prix_revient} />
+                          </p>
+                        )}
+                      </>
+                    ),
+                    stock: (
+                      <span className={overstock ? 'font-medium text-warning-700' : undefined}>
+                        {formatNumber(l.stock_dispo)}
+                      </span>
+                    ),
+                    total: (
+                      <>
+                        <Money value={lineTotal} className="font-medium" />
+                        {canSeeCost && marginPct !== null && (
+                          <span
+                            className={cn(
+                              'mt-1 block text-xs',
+                              marginAbs < 0 ? 'font-medium text-danger-700' : 'text-muted-foreground'
+                            )}
+                          >
+                            Marge {formatPercent(marginPct, 1)}
+                          </span>
+                        )}
+                      </>
+                    ),
+                    retirer: (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-muted-foreground hover:text-danger-700 group-data-[layout=table]/lines:h-8 group-data-[layout=table]/lines:w-8"
+                        aria-label={`Retirer ${l.produit_nom} du devis`}
+                        title="Retirer du devis"
+                        onClick={() => removeLigne(index)}
+                      >
+                        <X className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    ),
+                  },
+                };
+              })}
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Informations complémentaires : la validité */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Informations complémentaires</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="max-w-sm space-y-1.5">
+            <Label htmlFor={ID.validite}>Date de validité</Label>
             <Controller
               control={control}
-              name="client"
+              name="date_validite"
               render={({ field }) => (
-                <TiersPicker
-                  role="client"
+                <DatePicker
+                  id={ID.validite}
                   value={field.value}
                   onChange={field.onChange}
-                  {...fieldErrorProps('devis-client', errors.client)}
+                  aria-describedby={ID.validiteHint}
                 />
               )}
             />
-            <FieldError id="devis-client" className="mt-1.5">{errors.client?.message}</FieldError>
-          </CardContent>
-        </Card>
+            <p id={ID.validiteHint} className="text-xs text-muted-foreground">
+              Sans date, le devis est valable {DEFAULT_VALIDITY_DAYS} jours
+            </p>
+          </div>
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShoppingCart className="h-5 w-5" />
-              Produits
-            </CardTitle>
-            <CardDescription>Ajoutez les produits au devis</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {locations.length > 1 && (
-              <div className="max-w-xs">
-                <Label
-                  htmlFor="devis-location"
-                  className="text-xs text-muted-foreground block mb-1.5 font-normal"
-                >
-                  Magasin (stock)
-                </Label>
-                <Controller
-                  control={control}
-                  name="location_id"
-                  render={({ field }) => (
-                    <Select
-                      value={field.value ? String(field.value) : ''}
-                      onValueChange={(v) => field.onChange(parseInt(v, 10))}
-                    >
-                      <SelectTrigger id="devis-location" className="w-full" aria-label="Magasin (stock)">
-                        <SelectValue placeholder="Choisir un magasin" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {locations.map((l) => (
-                          <SelectItem key={l.id} value={String(l.id)}>
-                            {l.nom} ({l.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-              </div>
-            )}
-
-            <Label
-              htmlFor="devis-produit-search"
-              className="text-xs text-muted-foreground block mb-1.5 font-normal"
-            >
-              Rechercher un produit
+      {/* Notes : leur propre carte, comme sur la facture, le bon de livraison et l'avoir. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <Label htmlFor={ID.notes} className="text-base">
+              Notes
             </Label>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                id="devis-produit-search"
-                className="w-full pl-10 pr-3 py-2.5 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="Rechercher un produit par nom, référence ou code-barres…"
-                value={produitSearch}
-                onChange={(e) => {
-                  setProduitSearch(e.target.value);
-                  setShowProduitDropdown(true);
-                }}
-                onFocus={() => setShowProduitDropdown(true)}
-                onBlur={() => setTimeout(() => setShowProduitDropdown(false), 150)}
-              />
-              {showProduitDropdown && produitSearch.length >= 2 && produits.length === 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-popover border rounded-lg shadow-lg">
-                  <EmptyState
-                    icon={Search}
-                    title={`Aucun produit ne correspond à « ${produitSearch} »`}
-                    description="Essayez une autre orthographe ou vérifiez le stock du magasin sélectionné."
-                    className="py-6"
-                  />
-                </div>
-              )}
-              {showProduitDropdown && produits.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-popover border rounded-lg shadow-lg overflow-hidden max-h-80 overflow-y-auto">
-                  {produits.map((p) => {
-                    const prixVente = getValidSalePrice(p.prix_vente);
-                    const prixManquant = prixVente === null;
-                    const apiStock =
-                      typeof p.stock === 'string' ? parseInt(p.stock, 10) : Number(p.stock || 0);
-                    const stock = selectedLocationId
-                      ? locationStockMap[p.id] ?? apiStock
-                      : apiStock;
-                    const stockMin =
-                      typeof p.stock_min === 'string'
-                        ? parseInt(p.stock_min, 10)
-                        : Number(p.stock_min || 0);
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        disabled={prixManquant}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          if (!prixManquant) addProduit(p);
-                        }}
-                        title={prixManquant ? 'Renseignez le prix de vente dans la fiche produit' : undefined}
-                        className={`flex items-center gap-3 w-full px-3 py-2.5 text-left border-b last:border-b-0 ${
-                          prixManquant
-                            ? 'cursor-not-allowed bg-destructive/5 opacity-70'
-                            : 'hover:bg-muted'
-                        }`}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">{p.nom}</div>
-                          <div className="text-xs text-muted-foreground font-mono">
-                            {p.reference} · stock: {stock}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm font-semibold font-mono">
-                            {prixManquant ? 'Prix non renseigné' : formatXOF(prixVente)}
-                          </div>
-                          <div
-                            className={`text-[11px] ${
-                              prixManquant || stock <= stockMin
-                                ? 'text-destructive'
-                                : 'text-success-600'
-                            }`}
-                          >
-                            {prixManquant
-                              ? 'Corriger dans l’inventaire'
-                              : stock <= stockMin
-                                ? 'Stock bas'
-                                : 'Disponible'}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {fields.length > 0 ? (
-              <div className="mt-4 border rounded-lg overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm tabular-nums">
-                    <thead className="bg-muted/50">
-                      <tr className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                        <th className="text-left font-semibold px-3 py-2.5">Produit</th>
-                        <th className="text-right font-semibold px-3 py-2.5 w-[150px]">Prix unitaire<span className="text-destructive"> *</span></th>
-                        <th className="text-center font-semibold px-3 py-2.5 w-[90px]">Qté<span className="text-destructive"> *</span></th>
-                        <th className="text-center font-semibold px-3 py-2.5 w-[80px]">Stock</th>
-                        <th className="text-right font-semibold px-3 py-2.5 w-[110px]">Marge</th>
-                        <th className="text-right font-semibold px-3 py-2.5 w-[120px]">Total</th>
-                        <th className="w-8 px-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {fields.map((field, index) => {
-                        const ligne = watchedLignes[index] ?? field;
-                        const lineTotal = ligne.quantite * ligne.prix_unitaire;
-                        const marginPct =
-                          ligne.prix_unitaire > 0
-                            ? ((ligne.prix_unitaire - ligne.prix_revient) / ligne.prix_unitaire) * 100
-                            : 0;
-                        const marginAbs = (ligne.prix_unitaire - ligne.prix_revient) * ligne.quantite;
-                        const belowCost = ligne.prix_revient > 0 && ligne.prix_unitaire < ligne.prix_revient;
-                        const overstock = ligne.quantite > ligne.stock_dispo;
-                        const prixError = errors.lignes?.[index]?.prix_unitaire?.message;
-                        const qteError = errors.lignes?.[index]?.quantite?.message;
-                        return (
-                          <tr key={field.id} className="border-t align-middle">
-                            <td className="px-3 py-3">
-                              <div className="font-medium">{ligne.produit_nom}</div>
-                              <div className="text-xs font-mono text-muted-foreground">
-                                {ligne.produit_reference}
-                              </div>
-                            </td>
-                            <td className="px-3 py-3 text-right">
-                              <input
-                                id={`devis-ligne-${index}-prix`}
-                                type="number" inputMode="decimal"
-                                min="0"
-                                step="0.01"
-                                {...fieldErrorProps(`devis-ligne-${index}-prix`, prixError)}
-                                value={ligne.prix_unitaire === 0 ? '' : ligne.prix_unitaire}
-                                onChange={(e) => {
-                                  const n = parseFloat(e.target.value);
-                                  updatePrix(index, Number.isNaN(n) ? 0 : n);
-                                }}
-                                className="w-28 px-2 py-1 text-right text-sm border rounded font-mono bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              />
-                              <div className="text-[10px] text-muted-foreground mt-1 flex justify-end items-baseline gap-1">
-                                <span className="uppercase tracking-wider">P. revient</span>
-                                <span className="font-mono">{formatXOF(ligne.prix_revient)}</span>
-                              </div>
-                              <FieldError id={`devis-ligne-${index}-prix`}>{prixError}</FieldError>
-                            </td>
-                            <td className="px-3 py-3 text-center">
-                              <input
-                                id={`devis-ligne-${index}-quantite`}
-                                type="number" inputMode="numeric"
-                                min="1"
-                                {...fieldErrorProps(`devis-ligne-${index}-quantite`, qteError)}
-                                value={ligne.quantite === 0 ? '' : ligne.quantite}
-                                onChange={(e) => {
-                                  const n = parseInt(e.target.value, 10);
-                                  updateQuantite(index, Number.isNaN(n) ? 0 : n);
-                                }}
-                                onBlur={(e) => {
-                                  if (!e.target.value || parseInt(e.target.value, 10) < 1) {
-                                    updateQuantite(index, 1);
-                                  }
-                                }}
-                                className="w-16 px-2 py-1 text-center text-sm border rounded font-mono bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              />
-                              <FieldError id={`devis-ligne-${index}-quantite`}>{qteError}</FieldError>
-                            </td>
-                            <td className={`px-3 py-3 text-center font-mono ${overstock ? 'text-destructive' : ''}`}>
-                              {ligne.stock_dispo}
-                            </td>
-                            <td className="px-3 py-3 text-right">
-                              <div
-                                className={`inline-flex flex-col items-end px-2 py-1 rounded font-mono text-xs font-semibold leading-tight ${
-                                  belowCost
-                                    ? 'bg-destructive/10 text-destructive'
-                                    : 'bg-success-500/10 text-success-700'
-                                }`}
-                              >
-                                <span>
-                                  {marginPct >= 0 ? '+' : ''}
-                                  {marginPct.toFixed(1)}%
-                                </span>
-                                <span className="text-[10px] font-medium opacity-80">
-                                  {marginAbs >= 0 ? '+' : '−'}
-                                  {formatXOF(Math.abs(marginAbs))}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-3 py-3 text-right font-mono font-semibold">
-                              {formatXOF(lineTotal)}
-                            </td>
-                            <td className="px-2 py-3 text-center">
-                              <button
-                                type="button"
-                                className="text-muted-foreground hover:text-destructive p-1"
-                                onClick={() => removeLigne(index)}
-                                aria-label="Retirer cette ligne"
-                                title="Retirer cette ligne"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-4 bg-muted/30 rounded-lg">
-                <EmptyState
-                  icon={ShoppingCart}
-                  title="Aucun article ajouté au devis"
-                  description="Recherchez un produit ci-dessus pour l'ajouter au devis."
-                  className="py-8"
-                />
-              </div>
-            )}
-            <FieldError id="devis-lignes">{lignesError}</FieldError>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Informations complémentaires</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="devis-validite">Date de validité</Label>
-              <Controller
-                control={control}
-                name="date_validite"
-                render={({ field }) => (
-                  <DatePicker id="devis-validite" value={field.value} onChange={field.onChange} />
-                )}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="devis-notes">Notes</Label>
-              <Textarea id="devis-notes" placeholder="Ajoutez une note…" {...register('notes')} />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6 flex items-center justify-between">
-            <div>
-              <p className="text-sm text-muted-foreground">Montant total estimé</p>
-              <p className="text-2xl font-bold">{formatXOF(total)}</p>
-            </div>
-            <Button type="submit" disabled={isSubmitting || editLoading || !selectedClient || fields.length === 0}>
-              <Check className="h-4 w-4 mr-2" />
-              {isSubmitting ? (isEdit ? 'Enregistrement…' : 'Création…') : (isEdit ? 'Enregistrer les modifications' : 'Créer le devis')}
-            </Button>
-          </CardContent>
-        </Card>
-      </form>
-    </div>
+          </CardTitle>
+          <CardDescription>Facultatif</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Textarea id={ID.notes} rows={3} {...register('notes')} />
+        </CardContent>
+      </Card>
+    </DocumentFormShell>
   );
 }

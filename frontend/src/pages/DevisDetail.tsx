@@ -1,194 +1,406 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { AlertCircle, ArrowLeft, FileCheck, Trash2, Printer, Download, Pencil, RefreshCw } from 'lucide-react';
+import { Download, FileCheck, FilePlus, FileText, Printer, Truck } from 'lucide-react';
 import { devisService } from '@/services/api';
-import { formatCurrency } from '@/utils/format';
+import { formatDate, formatNumber, toNumber } from '@/utils/format';
 import { getErrorMessage } from '@/utils/errors';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import StatusBadge from '@/components/StatusBadge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
+import { PageShell } from '@/components/ui/page-shell';
+import type { PageHeaderMenuAction } from '@/components/ui/page-header';
+import { QueryErrorState } from '@/components/ui/query-state';
+import { EmptyState } from '@/components/ui/empty-state';
+import { DocumentTotals } from '@/components/ui/document-totals';
+import { DocumentCode } from '@/components/ui/document-code';
+import { Money } from '@/components/ui/money';
+import { Tag } from '@/components/ui/tag';
 import { DocumentPrint } from '@/components/ui/print-layout';
 import { PrintPreview, usePrintFormat } from '@/components/ui/print-preview';
 import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
 import { PageLoading } from '@/components/ui/loading';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { useAuth } from '@/lib/AuthContext';
+import { useRouteAccess } from '@/hooks/useRouteAccess';
+
+interface DevisLigne {
+  id?: number;
+  produit_id?: number | null;
+  produit_nom?: string | null;
+  produit_reference?: string | null;
+  description?: string | null;
+  quantite: number | string;
+  prix_unitaire: number | string;
+  total_ligne?: number | string | null;
+  is_depot_only_history?: boolean;
+}
+
+interface DevisDetailData {
+  id: number;
+  numero_devis?: string | null;
+  statut: string;
+  tiers_id?: number | null;
+  client_nom?: string | null;
+  client_prenom?: string | null;
+  date_devis?: string | null;
+  date_validite?: string | null;
+  location_nom?: string | null;
+  notes?: string | null;
+  total?: number | string | null;
+  cree_par_nom?: string | null;
+  bl_id?: number | null;
+  bl_numero?: string | null;
+  facture_id?: number | null;
+  facture_numero?: string | null;
+  avoir_id?: number | null;
+  numero_avoir?: string | null;
+  lignes?: DevisLigne[];
+}
+
+/** Séparateur de la ligne d'en-tête : l'insécable garde « · » avec ce qui le précède, la ligne ne coupe qu'après. */
+const SEP = '\u00A0· ';
+/** Lien dans la ligne d'en-tête : souligné en permanence, le bleu seul se distingue mal du gris qui l'entoure (1,6:1). */
+const HEADER_LINK_CLASS =
+  'rounded-sm text-primary underline decoration-primary/40 underline-offset-4 transition-colors hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+const isEditable = (statut: string) => statut === 'brouillon' || statut === 'envoye';
+const isDeletable = (statut: string) => ['brouillon', 'envoye', 'refuse', 'annule'].includes(statut);
+
+const quantiteOf = (l: DevisLigne) => toNumber(l.quantite) ?? 0;
+const totalLigne = (l: DevisLigne) => toNumber(l.total_ligne) ?? quantiteOf(l) * (toNumber(l.prix_unitaire) ?? 0);
 
 export default function DevisDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const confirm = useConfirm();
+  const { user } = useAuth();
+  const canOpen = useRouteAccess();
+  const isAdmin = user?.role === 'admin';
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
-  const [devis, setDevis] = useState<any>(null);
+  const [devis, setDevis] = useState<DevisDetailData | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [showPrint, setShowPrint] = useState(false);
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [printFormat, setPrintFormat] = usePrintFormat();
-  const canConfirm = (statut: string) => ['brouillon', 'envoye'].includes(statut);
-  const downloadPDF = () => {
-    setShowPrint(true);
-    setTimeout(() => window.print(), 300);
-  };
+
+  const fetchDevis = useCallback(async (): Promise<DevisDetailData | null> => {
+    const data = (await devisService.getById(Number(id))) as DevisDetailData | { data?: DevisDetailData } | null;
+    if (data && 'data' in data && data.data) return data.data;
+    return (data as DevisDetailData | null) ?? null;
+  }, [id]);
 
   const load = useCallback(async () => {
     if (!id) return;
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-      const data = await devisService.getById(Number(id));
-      setDevis(data?.data || data);
+      setDevis(await fetchDevis());
     } catch (err) {
       setDevis(null);
       setError(err);
-      toast.error(getErrorMessage(err, 'Impossible de charger ce devis'));
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, fetchDevis]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
 
-  const total = useMemo(() => {
-    if (!devis?.lignes || !Array.isArray(devis.lignes)) return devis?.total || 0;
-    return devis.lignes.reduce(
-      (sum: number, l: any) => sum + Number(l.quantite || 0) * Number(l.prix_unitaire || 0),
-      0
-    );
-  }, [devis]);
-
-  const handleConfirm = async () => {
-    if (!devis?.id) return;
-
+  const changeStatut = async (statut: 'accepte' | 'refuse' | 'annule', success: (d: DevisDetailData | null) => void) => {
+    if (!devis) return;
+    setActionLoading(true);
     try {
-      setActionLoading(true);
-      await devisService.updateStatut(Number(devis.id), 'accepte');
-      toast.success('Devis confirmé et bon de livraison généré');
-      setShowConfirmDialog(false);
-      const refreshed = await devisService.getById(Number(devis.id));
-      setDevis(refreshed?.data || refreshed);
+      await devisService.updateStatut(devis.id, statut);
+      const refreshed = await fetchDevis().catch(() => null);
+      if (refreshed) setDevis(refreshed);
+      else await load();
+      success(refreshed);
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur lors de la confirmation'));
+      toast.error(getErrorMessage(err, 'Impossible de mettre à jour le devis. Réessayez.'));
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const numero = devis?.numero_devis || (devis ? `n° ${devis.id}` : '');
+  const clientNom = devis ? `${devis.client_nom ?? ''} ${devis.client_prenom ?? ''}`.trim() || '—' : '—';
+
+  const handleConfirm = async () => {
+    if (!devis) return;
+    const ok = await confirm({
+      title: `Confirmer le devis ${numero} ?`,
+      description: `Un bon de livraison sera créé pour ${clientNom} et le devis ne pourra plus être modifié.`,
+      confirmLabel: 'Confirmer le devis',
+    });
+    if (!ok) return;
+    await changeStatut('accepte', (refreshed) => {
+      const blId = refreshed?.bl_id;
+      toast.success(
+        refreshed?.bl_numero
+          ? `Devis ${numero} confirmé : bon de livraison ${refreshed.bl_numero} créé`
+          : `Devis ${numero} confirmé : bon de livraison créé`,
+        blId
+          ? { action: { label: 'Ouvrir le bon de livraison', onClick: () => navigate(`/bons-livraison/${blId}`) } }
+          : undefined
+      );
+    });
+  };
+
+  const handleRefuse = async () => {
+    if (!devis) return;
+    const ok = await confirm({
+      title: `Le client a refusé le devis ${numero} ?`,
+      description: 'Le devis passera au statut Refusé et ne pourra plus être confirmé ni modifié.',
+      confirmLabel: 'Marquer comme refusé',
+    });
+    if (!ok) return;
+    await changeStatut('refuse', () => toast.success(`Devis ${numero} marqué comme refusé`));
+  };
+
+  const handleCancel = async () => {
+    if (!devis) return;
+    const ok = await confirm({
+      title: `Annuler le devis ${numero} ?`,
+      description: 'Le devis passera au statut Annulé et ne pourra plus être confirmé ni modifié. Aucun stock n’est concerné.',
+      confirmLabel: 'Annuler le devis',
+      cancelLabel: 'Garder le devis',
+      destructive: true,
+    });
+    if (!ok) return;
+    await changeStatut('annule', () => toast.success(`Devis ${numero} annulé`));
   };
 
   const handleDelete = async () => {
-    if (!devis?.id) return;
-
+    if (!devis) return;
+    const ok = await confirm({
+      title: `Supprimer le devis ${numero} ?`,
+      description: 'Le devis sera supprimé définitivement. Aucun stock ni paiement n’est concerné.',
+      confirmLabel: 'Supprimer le devis',
+      destructive: true,
+    });
+    if (!ok) return;
+    setActionLoading(true);
     try {
-      setActionLoading(true);
-      await devisService.delete(Number(devis.id));
-      toast.success('Devis supprimé');
+      await devisService.delete(devis.id);
+      toast.success(`Devis ${numero} supprimé`);
       navigate('/devis');
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur lors de la suppression'));
+      toast.error(getErrorMessage(err, 'Impossible de supprimer le devis. Réessayez.'));
     } finally {
       setActionLoading(false);
     }
   };
 
-  if (loading) {
-    return <PageLoading message="Chargement du devis…" />;
+  if (loading && !devis) {
+    return (
+      <PageShell title="Devis" backTo="/devis" width="wide">
+        <PageLoading message="Chargement du devis…" />
+      </PageShell>
+    );
   }
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 text-center" role="alert">
-        <AlertCircle className="h-12 w-12 text-destructive opacity-80" />
-        <div className="space-y-1">
-          <h2 className="text-xl font-bold">Échec du chargement</h2>
-          <p className="text-muted-foreground">{getErrorMessage(error, 'Impossible de charger ce devis')}</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => navigate('/devis')}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Retour aux devis
-          </Button>
-          <Button onClick={load} className="gap-2">
-            <RefreshCw className="h-4 w-4" />
-            Réessayer
-          </Button>
-        </div>
-      </div>
+      <PageShell title="Devis" backTo="/devis" width="wide">
+        <Card>
+          <QueryErrorState error={error} title="Impossible de charger le devis" onRetry={() => void load()} />
+        </Card>
+      </PageShell>
     );
   }
 
   if (!devis) {
     return (
-      <div className="p-6 space-y-4">
-        <Button variant="outline" onClick={() => navigate('/devis')}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Retour aux devis
-        </Button>
+      <PageShell title="Devis introuvable" backTo="/devis" width="wide">
         <Card>
-          <CardContent className="pt-6">Devis introuvable</CardContent>
+          <EmptyState
+            icon={FilePlus}
+            title="Devis introuvable"
+            description="Il a peut-être été supprimé"
+            action={
+              <Link to="/devis" className={buttonVariants({ variant: 'outline' })}>
+                Retour aux devis
+              </Link>
+            }
+          />
         </Card>
-      </div>
+      </PageShell>
     );
   }
 
-  return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="outline" onClick={() => navigate('/devis')}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Retour
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold">{devis.numero_devis || `Devis #${devis.id}`}</h1>
-          <p className="text-muted-foreground">Client: {devis.client_nom || devis.tiers_id || '-'}</p>
-        </div>
-        <div className="ml-auto flex gap-2">
-          <Button variant="outline" onClick={() => setShowPrint(true)}>
-            <Printer className="h-4 w-4 mr-2" />
-            Imprimer
-          </Button>
-          <Button variant="outline" onClick={downloadPDF}>
-            <Download className="h-4 w-4 mr-2" />
-            Télécharger PDF
-          </Button>
-          {canConfirm(devis.statut) && (
-            <Button variant="outline" onClick={() => navigate(`/devis/${devis.id}/edit`)}>
-              <Pencil className="h-4 w-4 mr-2" />
-              Modifier
-            </Button>
-          )}
-          {canConfirm(devis.statut) && (
-            <Button onClick={() => setShowConfirmDialog(true)} disabled={actionLoading}>
-              <FileCheck className="h-4 w-4 mr-2" />
-              Confirmer
-            </Button>
-          )}
-          <Button variant="destructive" onClick={() => setShowDeleteDialog(true)} disabled={actionLoading}>
-            <Trash2 className="h-4 w-4 mr-2" />
-            Supprimer
-          </Button>
-        </div>
-      </div>
+  const lignes = Array.isArray(devis.lignes) ? devis.lignes : [];
+  const total = lignes.length > 0 ? lignes.reduce((sum, l) => sum + totalLigne(l), 0) : toNumber(devis.total) ?? 0;
+  const editable = isEditable(devis.statut);
 
+  // Client, date, validité et emplacement tiennent sur la ligne d'en-tête :
+  // plus de carte « Informations » qui la répétait.
+  const headerLine = (
+    <>
+      {devis.tiers_id && canOpen(`/tiers/${devis.tiers_id}`) ? (
+        <Link to={`/tiers/${devis.tiers_id}`} className={HEADER_LINK_CLASS}>
+          {clientNom}
+        </Link>
+      ) : (
+        clientNom
+      )}
+      {SEP}
+      <span className="whitespace-nowrap">{formatDate(devis.date_devis)}</span>
+      {devis.date_validite && (
+        <>
+          {SEP}
+          <span className="whitespace-nowrap">valable jusqu’au {formatDate(devis.date_validite)}</span>
+        </>
+      )}
+      {devis.location_nom && (
+        <>
+          {SEP}
+          <span className="sr-only">Emplacement{'\u00A0'}: </span>
+          {devis.location_nom}
+        </>
+      )}
+    </>
+  );
+
+  // Une seule action principale : confirmer tant que c'est possible, puis
+  // ouvrir le document suivant de la chaîne (U-25).
+  let primaryAction: ReactNode = undefined;
+  if (editable) {
+    primaryAction = (
+      <Button size="touch" onClick={() => void handleConfirm()} disabled={actionLoading} className="gap-2">
+        <FileCheck className="h-4 w-4" aria-hidden="true" />
+        Confirmer le devis
+      </Button>
+    );
+  } else if (devis.facture_id && canOpen(`/factures/${devis.facture_id}`)) {
+    // Devis facturé : plus rien à faire ici, le lien vers la facture n'est pas
+    // une action à mettre en avant (bouton encadré, comme sur le bon de livraison).
+    primaryAction = (
+      <Link
+        to={`/factures/${devis.facture_id}`}
+        className={buttonVariants({ variant: 'outline', size: 'touch', className: 'gap-2' })}
+      >
+        <FileText className="h-4 w-4" aria-hidden="true" />
+        Ouvrir la facture
+      </Link>
+    );
+  } else if (devis.bl_id && canOpen(`/bons-livraison/${devis.bl_id}`)) {
+    primaryAction = (
+      <Link to={`/bons-livraison/${devis.bl_id}`} className={buttonVariants({ size: 'touch', className: 'gap-2' })}>
+        <Truck className="h-4 w-4" aria-hidden="true" />
+        Ouvrir le bon de livraison
+      </Link>
+    );
+  }
+
+  const downloadPdf = async () => {
+    try {
+      await devisService.downloadPdf(devis.id, devis.numero_devis || undefined);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Impossible de télécharger le PDF du devis. Réessayez.'));
+    }
+  };
+
+  const moreActions: Array<PageHeaderMenuAction | false> = [
+    editable && { label: 'Modifier le devis', to: `/devis/${devis.id}/edit` },
+    { label: 'Télécharger le PDF', icon: Download, onSelect: () => void downloadPdf() },
+    editable && { label: 'Marquer comme refusé par le client', onSelect: () => void handleRefuse(), disabled: actionLoading },
+    editable && { label: 'Annuler le devis', destructive: true, onSelect: () => void handleCancel(), disabled: actionLoading },
+    isAdmin &&
+      isDeletable(devis.statut) && {
+        label: 'Supprimer le devis',
+        destructive: true,
+        onSelect: () => void handleDelete(),
+        disabled: actionLoading,
+      },
+  ];
+
+  const table = (
+    <Table aria-label={`Produits du devis ${numero}`}>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Produit</TableHead>
+          <TableHead numeric>Quantité</TableHead>
+          <TableHead numeric>Prix unitaire</TableHead>
+          <TableHead numeric>Total</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {lignes.map((ligne, idx) => (
+          <TableRow key={ligne.id ?? idx}>
+            <TableCell className="font-medium">
+              {ligne.produit_nom || ligne.description || `Produit n° ${ligne.produit_id ?? '—'}`}
+              {ligne.produit_reference && (
+                <DocumentCode className="block text-xs font-normal text-muted-foreground">
+                  {ligne.produit_reference}
+                </DocumentCode>
+              )}
+              {ligne.is_depot_only_history && (
+                <Tag className="mt-1" title="Ce produit n’a plus de stock en magasin : il était disponible au dépôt lors du devis.">
+                  Stock du dépôt
+                </Tag>
+              )}
+            </TableCell>
+            <TableCell numeric>{formatNumber(quantiteOf(ligne))}</TableCell>
+            <TableCell numeric>
+              <Money value={ligne.prix_unitaire} />
+            </TableCell>
+            <TableCell numeric className="font-medium">
+              <Money value={totalLigne(ligne)} />
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+
+  const cards = lignes.map((ligne, idx) => (
+    <DataCard
+      key={ligne.id ?? idx}
+      title={ligne.produit_nom || ligne.description || `Produit n° ${ligne.produit_id ?? '—'}`}
+      wrapTitle
+      titleAs="h3"
+    >
+      {ligne.produit_reference && (
+        <DataCardRow label="Référence" value={<DocumentCode>{ligne.produit_reference}</DocumentCode>} />
+      )}
+      <DataCardRow label="Quantité" value={formatNumber(quantiteOf(ligne))} numeric />
+      <DataCardRow label="Prix unitaire" value={<Money value={ligne.prix_unitaire} />} numeric />
+      <DataCardRow label="Total" value={<Money value={totalLigne(ligne)} className="font-medium" />} numeric />
+    </DataCard>
+  ));
+
+  return (
+    <PageShell
+      title={`Devis ${numero}`}
+      backTo="/devis"
+      width="wide"
+      meta={<StatusBadge type="devis" statut={devis.statut} size="md" />}
+      description={headerLine}
+      actions={
+        <Button variant="outline" size="touch" onClick={() => setShowPrint(true)} className="gap-2">
+          <Printer className="h-4 w-4" aria-hidden="true" />
+          Imprimer
+        </Button>
+      }
+      primaryAction={primaryAction}
+      moreActions={moreActions}
+    >
       <DocumentLifecycle
         steps={[
-          { label: 'Devis', numero: devis.numero_devis || `Devis #${devis.id}`, current: true },
+          { label: 'Devis', numero, current: true },
           {
             label: 'Bon de livraison',
-            numero: devis.bl_numero,
+            numero: devis.bl_numero ?? null,
             to: devis.bl_id ? `/bons-livraison/${devis.bl_id}` : null,
           },
           {
             label: 'Facture',
-            numero: devis.facture_numero,
+            numero: devis.facture_numero ?? null,
             to: devis.facture_id ? `/factures/${devis.facture_id}` : null,
           },
           {
@@ -201,131 +413,51 @@ export default function DevisDetail() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Détails</CardTitle>
-        </CardHeader>
-        <CardContent className="grid sm:grid-cols-2 gap-4 text-sm">
-          <p><strong>Date:</strong> {devis.date_devis ? new Date(devis.date_devis).toLocaleDateString('fr-FR') : '-'}</p>
-          <p><strong>Validité:</strong> {devis.date_validite ? new Date(devis.date_validite).toLocaleDateString('fr-FR') : '-'}</p>
-          <p className="flex items-center gap-2"><strong>Statut:</strong> {devis.statut ? <StatusBadge type="devis" statut={devis.statut} /> : '-'}</p>
-          <p><strong>Total:</strong> <span className="tabular-nums font-semibold">{formatCurrency(Number(total || 0))}</span></p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Lignes du devis</CardTitle>
+          <CardTitle>Produits</CardTitle>
+          <CardDescription>
+            {lignes.length} {lignes.length > 1 ? 'produits' : 'produit'}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {Array.isArray(devis.lignes) && devis.lignes.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Produit</TableHead>
-                  <TableHead>Qté</TableHead>
-                  <TableHead>Prix unitaire</TableHead>
-                  <TableHead>Total</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {devis.lignes.map((ligne: any, idx: number) => {
-                  const qte = Number(ligne.quantite || 0);
-                  const pu = Number(ligne.prix_unitaire || 0);
-                  return (
-                    <TableRow key={idx}>
-                      <TableCell>
-                        {ligne.produit_nom || ligne.produit_id}
-                        {(ligne as any).is_depot_only_history && (
-                          <span
-                            className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground"
-                            title="Cet article n'a plus de stock magasin — il était disponible en dépôt au moment de la création"
-                          >
-                            stock dépôt (historique)
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell>{qte}</TableCell>
-                      <TableCell>{formatCurrency(pu)}</TableCell>
-                      <TableCell>{formatCurrency(qte * pu)}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+          {lignes.length === 0 ? (
+            <EmptyState compact icon={FilePlus} title="Ce devis ne contient aucun produit" />
           ) : (
-            <p className="text-sm text-muted-foreground">Aucune ligne à afficher</p>
+            <ResponsiveTable table={table} cards={cards} />
           )}
+          <DocumentTotals aria-label="Total du devis" total={{ label: 'Total', value: total }} />
         </CardContent>
       </Card>
 
-      <PrintPreview
-        open={showPrint}
-        onOpenChange={setShowPrint}
-        format={printFormat}
-        onFormatChange={setPrintFormat}
-      >
+      {devis.notes && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Notes</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="whitespace-pre-wrap text-sm text-muted-foreground">{devis.notes}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      <PrintPreview open={showPrint} onOpenChange={setShowPrint} format={printFormat} onFormatChange={setPrintFormat}>
         <DocumentPrint
           format={printFormat}
           docType="devis"
           numero={devis.numero_devis || `S${String(devis.id).padStart(5, '0')}`}
           dateDoc={devis.date_devis}
           dateEcheance={devis.date_validite}
-          vendeur={devis.cree_par_nom || 'Administrator'}
-          clientNom={devis.client_nom}
-          lignes={Array.isArray(devis.lignes) ? devis.lignes : []}
+          vendeur={devis.cree_par_nom ?? undefined}
+          clientNom={devis.client_nom ?? undefined}
+          clientPrenom={devis.client_prenom ?? undefined}
+          lignes={lignes.map((l) => ({
+            produit_nom: l.produit_nom ?? undefined,
+            produit_reference: l.produit_reference ?? undefined,
+            description: l.description ?? undefined,
+            quantite: l.quantite,
+            prix_unitaire: l.prix_unitaire,
+          }))}
         />
       </PrintPreview>
-
-      {/* Confirm devis Dialog */}
-      <Dialog
-        open={showConfirmDialog}
-        onOpenChange={(open) => {
-          if (!actionLoading) setShowConfirmDialog(open);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Confirmer le devis</DialogTitle>
-            <DialogDescription>
-              Confirmer ce devis ? Cela générera automatiquement un bon de livraison.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowConfirmDialog(false)} disabled={actionLoading}>
-              Annuler
-            </Button>
-            <Button onClick={handleConfirm} disabled={actionLoading}>
-              <FileCheck className="h-4 w-4 mr-2" />
-              {actionLoading ? 'En cours…' : 'Confirmer'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete devis Dialog */}
-      <Dialog
-        open={showDeleteDialog}
-        onOpenChange={(open) => {
-          if (!actionLoading) setShowDeleteDialog(open);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Supprimer le devis</DialogTitle>
-            <DialogDescription>
-              Supprimer ce devis ? Cette action est irréversible.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteDialog(false)} disabled={actionLoading}>
-              Annuler
-            </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={actionLoading}>
-              <Trash2 className="h-4 w-4 mr-2" />
-              {actionLoading ? 'Suppression…' : 'Supprimer'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+    </PageShell>
   );
 }

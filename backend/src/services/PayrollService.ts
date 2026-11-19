@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { businessError } from '../utils/errors';
 
 export interface GenerateRunInput {
   periode: string; // 'YYYY-MM'
@@ -367,6 +368,41 @@ export class PayrollService {
        FROM payroll_bareme_its ORDER BY ordre ASC`
     );
     return { cotisations, baremes };
+  }
+
+  /**
+   * Create a cotisation (U-11): a fresh instance had none and no screen could
+   * add one. Code is unique (409 in French when taken).
+   */
+  async createCotisation(
+    input: { code: string; libelle: string; taux_salarial: number; taux_patronal: number; plafond?: number | null; actif?: boolean },
+    userId?: number | null,
+    req?: any
+  ): Promise<any> {
+    let row: any;
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO payroll_cotisations (code, libelle, taux_salarial, taux_patronal, plafond, actif)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, code, libelle, taux_salarial, taux_patronal, plafond, actif`,
+        [input.code, input.libelle, input.taux_salarial, input.taux_patronal, input.plafond ?? null, input.actif ?? true]
+      );
+      row = rows[0];
+    } catch (error: any) {
+      if (error?.code === '23505') {
+        throw businessError(409, `Une cotisation porte déjà le code ${input.code}.`);
+      }
+      throw error;
+    }
+    await logAudit({
+      utilisateur_id: userId ?? null,
+      action: 'create',
+      table_name: 'payroll_cotisations',
+      record_id: row.id,
+      req,
+      new_values: row,
+    });
+    return row;
   }
 
   /** Update a single cotisation row. */

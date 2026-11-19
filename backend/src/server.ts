@@ -2,8 +2,10 @@ import './middleware/patch-router';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
+import { extractToken, JWT_SECRET } from './middleware/auth';
 import produitsRoutes from './routes/produits';
 import tiersRoutes from './routes/tiers';
 import facturesRoutes from './routes/factures';
@@ -17,6 +19,7 @@ import caisseRoutes from './routes/caisse';
 import acomptesRoutes from './routes/acomptes';
 import stockLocationsRoutes from './routes/stock-locations';
 import stockTransfersRoutes from './routes/stock-transfers';
+import inventairesRoutes from './routes/inventaires';
 import userLocationAssignmentsRoutes from './routes/user-location-assignments';
 import demandesRoutes from './routes/demandes';
 import facturesFournisseurRoutes from './routes/factures-fournisseur';
@@ -58,10 +61,31 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-// Rate limiting
+// Rate limiting — ceilings are per instance via env (defaults unchanged).
+const envLimit = (name: string, fallback: number): number => {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+};
+
+// Signed-in traffic is counted per user, not per IP: every PC of a shop shares
+// one public IP, so a per-IP budget let one busy till (≈30 requests per
+// dashboard load) lock the whole shop out. Only a token whose signature
+// verifies picks the key — anything else is counted against the client IP.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 500, // limit each IP to 500 requests per windowMs
+  max: envLimit('RATE_LIMIT_MAX', 500), // per signed-in user, or per IP when anonymous
+  keyGenerator: (req) => {
+    const token = extractToken(req);
+    if (token) {
+      try {
+        const { id } = jwt.verify(token, JWT_SECRET as string, { algorithms: ['HS256'] }) as { id?: number };
+        if (id) return `user:${id}`;
+      } catch {
+        // invalid or expired token: fall through to the IP bucket
+      }
+    }
+    return `ip:${ipKeyGenerator(req.ip ?? '')}`;
+  },
   message: { success: false, error: 'Trop de requêtes, veuillez réessayer plus tard' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -70,9 +94,12 @@ const limiter = rateLimit({
 // Stricter rate limit for credential endpoints only (login/register).
 // Must NOT cover the rest of /api/auth: the SPA calls GET /me on every load,
 // so a blanket limiter locks users out after a few page refreshes.
+// Only failed attempts count: a shop's staff signing in all day from one IP
+// must not use up the budget meant to stop password guessing.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit auth attempts to 10 per 15 minutes
+  max: envLimit('AUTH_RATE_LIMIT_MAX', 10), // failed attempts per IP per 15 minutes
+  skipSuccessfulRequests: true,
   message: { success: false, error: 'Trop de tentatives de connexion, veuillez réessayer plus tard' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -110,6 +137,7 @@ app.use('/api/caisse', caisseRoutes);
 // ERP Modules
 app.use('/api/stock-locations', stockLocationsRoutes);
 app.use('/api/stock-transfers', stockTransfersRoutes);
+app.use('/api/inventaires', inventairesRoutes);
 app.use('/api/user-location-assignments', userLocationAssignmentsRoutes);
 app.use('/api/demandes', demandesRoutes);
 app.use('/api/factures-fournisseur', facturesFournisseurRoutes);

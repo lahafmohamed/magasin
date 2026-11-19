@@ -1,6 +1,7 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { businessError } from '../utils/errors';
 import { assertPositiveSalePrices, calculateTotals } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { ClientAllocationService } from './ClientAllocationService';
@@ -249,7 +250,7 @@ export class BonLivraisonService {
       }
 
       const { rows: devisRows } = await client.query(
-        `SELECT id, tiers_id, statut
+        `SELECT id, tiers_id, statut, location_id
          FROM devis
          WHERE id = $1
          FOR UPDATE`,
@@ -268,6 +269,12 @@ export class BonLivraisonService {
         throw new Error('Le tiers du bon de livraison doit correspondre au tiers du devis');
       }
 
+      // The BL ships from its devis' location unless the form names one — the
+      // same source as the BL created when a devis is confirmed. A manual BL
+      // used to keep location_id NULL, so delivery always drew on the
+      // principal location, whatever shop the devis was made in.
+      const effectiveLocationId: number | null = location_id || devisRows[0].location_id || null;
+
       // Generate BL number
       const numeroBL = await generateDocumentNumber('bl', client);
 
@@ -285,7 +292,7 @@ export class BonLivraisonService {
       // Insert delivery note
       const { rows: blResult } = await client.query(
         'INSERT INTO bons_livraison (numero_bl, tiers_id, devis_id, date_bl, sous_total, tva, total, notes, adresse_livraison, date_livraison_prevue, location_id, statut, cree_par) VALUES ($1, $2, $3, CURRENT_DATE, $4, 0, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
-        [numeroBL, tiers_id, devis_id, sousTotal, total, notes || null, adresse_livraison || null, date_livraison_prevue || null, location_id || null, 'valide', cree_par || null]
+        [numeroBL, tiers_id, devis_id, sousTotal, total, notes || null, adresse_livraison || null, date_livraison_prevue || null, effectiveLocationId, 'valide', cree_par || null]
       );
 
       const blId = blResult[0].id;
@@ -360,11 +367,11 @@ export class BonLivraisonService {
       );
 
       if (existingRows.length === 0) {
-        throw new Error('Bon de livraison non trouvé');
+        throw businessError(404, 'Bon de livraison introuvable.');
       }
 
       if (['facture', 'annule'].includes(existingRows[0].statut)) {
-        throw new Error('Cannot modify a delivery note that has been invoiced or cancelled');
+        throw businessError(409, 'Impossible de modifier un bon de livraison facturé ou annulé.');
       }
 
       const upd_tiers_id = input.tiers_id ?? input.client_id;
@@ -473,12 +480,15 @@ export class BonLivraisonService {
   async updateStatut(id: number, statut: string, req?: any): Promise<void> {
     const normalizedStatut = this.normalizeStatutInput(statut);
     const validStatuts = ['valide', 'livre', 'facture', 'annule'];
+    if (normalizedStatut === 'brouillon') {
+      throw businessError(400, 'Un bon de livraison ne revient pas en brouillon.');
+    }
     if (!validStatuts.includes(normalizedStatut)) {
-      throw new Error('Invalid statut');
+      throw businessError(400, 'Statut de bon de livraison inconnu.');
     }
 
     if (normalizedStatut === 'facture') {
-      throw new Error('Le statut facture est mis à jour automatiquement après conversion en facture');
+      throw businessError(400, 'Le statut « Facturé » est attribué automatiquement lors de la conversion en facture.');
     }
 
     const client = await pool.connect();
@@ -492,14 +502,14 @@ export class BonLivraisonService {
       );
 
       if (blRows.length === 0) {
-        throw new Error('Bon de livraison non trouvé');
+        throw businessError(404, 'Bon de livraison introuvable.');
       }
 
       const bl = blRows[0];
       const oldStatut = bl.statut;
 
       if (oldStatut === 'facture' || oldStatut === 'annule') {
-        throw new Error('Impossible de modifier le statut d\'un bon de livraison facturé ou annulé');
+        throw businessError(409, 'Impossible de modifier le statut d’un bon de livraison facturé ou annulé.');
       }
 
       if (bl.devis_id) {
@@ -509,11 +519,11 @@ export class BonLivraisonService {
         );
 
         if (devisRows.length === 0) {
-          throw new Error('Devis parent introuvable');
+          throw businessError(404, 'Devis d’origine introuvable.');
         }
 
         if (devisRows[0].statut === 'annule') {
-          throw new Error('Impossible de modifier ce bon de livraison: le devis parent est annulé');
+          throw businessError(409, 'Impossible de modifier ce bon de livraison : son devis est annulé.');
         }
       }
 
@@ -564,7 +574,9 @@ export class BonLivraisonService {
           }
 
           if (currentStock < qtyToDeduct) {
-            throw new Error(`Stock insuffisant pour le produit ID ${ligne.produit_id}. Stock disponible: ${currentStock}, requis: ${qtyToDeduct}`);
+            const { rows: nomRows } = await client.query('SELECT nom FROM produits WHERE id = $1', [ligne.produit_id]);
+            const nom = nomRows[0]?.nom ?? `n° ${ligne.produit_id}`;
+            throw businessError(409, `Stock insuffisant pour « ${nom} » : ${currentStock} disponible(s), ${qtyToDeduct} à livrer.`);
           }
 
           // Deduct

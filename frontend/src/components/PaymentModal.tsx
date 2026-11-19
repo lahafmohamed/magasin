@@ -1,29 +1,82 @@
-import React, { useState, useEffect } from 'react';
-import { AlertCircle } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { AlertCircle, Info, Lock } from 'lucide-react';
 import { METHODES_PAIEMENT } from '../types';
 import { MoneyInput } from './ui/money-input';
 import { Button } from './ui/button';
+import { DocumentCode } from './ui/document-code';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Spinner } from './ui/loading';
 import { Textarea } from './ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
-import { formatFCFA } from '../utils/format';
-import { getErrorMessage } from '../utils/errors';
-import type { PaymentMethod } from '../utils/paymentMethod';
+import { Money } from './ui/money';
+import { ChoiceGroup } from './ui/choice-chips';
+import { FieldError, fieldErrorProps } from './ui/field-error';
+import { RequiredMark } from './ui/required-mark';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
+import { formatCurrency, toNumber } from '../utils/format';
+import { getErrorCode, getErrorMessage } from '../utils/errors';
+import { PAYMENT_METHOD_OPTIONS, type PaymentMethod } from '../utils/paymentMethod';
+
+/** Ce que la fenêtre transmet à l'appelant, qui l'envoie tel quel à l'API. */
+export interface PaymentModalSubmit {
+  /** Montant saisi : c'est exactement ce qui sera enregistré (D3). */
+  montant: number;
+  methode_paiement: PaymentMethod;
+  reference?: string;
+  notes?: string;
+  /** Une clé par ouverture de la fenêtre : un double envoi n'encaisse qu'une fois. */
+  idempotency_key: string;
+}
+
+/** État de la caisse du magasin de la facture, vérifié à l'ouverture. */
+export type CashTillState = 'open' | 'closed' | 'unknown';
 
 interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (paiement: {
-    montant: number;
-    methode_paiement: PaymentMethod;
-    reference?: string;
-    notes?: string;
-  }) => Promise<void>;
+  /** Enregistre le paiement ; doit relancer l'erreur de l'API (`CAISSE_FERMEE`…) pour qu'elle s'affiche ici. */
+  onSubmit: (paiement: PaymentModalSubmit) => Promise<void>;
   remainingDue: number;
   total: number;
+  /** Numéro de la facture, repris dans la description de la fenêtre. */
+  numeroFacture?: string;
+  /**
+   * Acomptes encore disponibles du client (somme). Ils ne sont JAMAIS pris
+   * d'office : le paiement enregistre le montant saisi, rien d'autre (D3).
+   */
+  acomptesDisponibles?: number;
+  /**
+   * Caisse du magasin de la facture : `closed` affiche l'avertissement dès que
+   * « Espèces » est choisi ; `unknown` (non vérifiable) laisse le serveur
+   * trancher (`CAISSE_FERMEE`).
+   */
+  cashTill?: CashTillState;
+  /** Lien « Ouvrir la caisse » — absent quand le rôle ne peut pas ouvrir la page Caisse. */
+  caisseHref?: string | null;
 }
+
+const DEFAULT_ERROR = 'Impossible d’enregistrer le paiement. Vérifiez votre connexion puis réessayez.';
+
+const METHOD_OPTIONS = PAYMENT_METHOD_OPTIONS.map((o) => ({ ...o, icon: METHODES_PAIEMENT[o.value].Icon }));
+
+function newIdempotencyKey(): string {
+  const random =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  return `paiement-${random}`;
+}
+
+/** Montant arrondi au franc, en chiffres seuls (format attendu par `MoneyInput`). */
+const toDigits = (value: number) => String(Math.max(0, Math.round(value)));
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({
   isOpen,
@@ -31,176 +84,360 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   onSubmit,
   remainingDue,
   total,
+  numeroFacture,
+  acomptesDisponibles = 0,
+  cashTill = 'unknown',
+  caisseHref,
 }) => {
+  const due = Math.max(0, toNumber(remainingDue) ?? 0);
+  const totalNum = toNumber(total) ?? 0;
+
   const [montant, setMontant] = useState('');
-  const [methodePaiement, setMethodePaiement] = useState<PaymentMethod>('espece');
+  const [methode, setMethode] = useState<PaymentMethod>('espece');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
+  const [recu, setRecu] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [amountError, setAmountError] = useState<string | null>(null);
+  const [receivedError, setReceivedError] = useState<string | null>(null);
+  const [referenceError, setReferenceError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [closedByServer, setClosedByServer] = useState(false);
+
+  // Renouvelée à chaque ouverture (effet ci-dessous) : un double clic ou un
+  // renvoi après coupure réseau ne crée pas un second paiement.
+  const keyRef = useRef('');
+  const amountRef = useRef<HTMLInputElement>(null);
+  const receivedRef = useRef<HTMLInputElement>(null);
+  const referenceRef = useRef<HTMLInputElement>(null);
+  const tillNoteRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      setMontant(parseFloat(remainingDue as any).toFixed(0));
-      setMethodePaiement('espece');
-      setReference('');
-      setNotes('');
-      setError('');
-    }
-  }, [isOpen, remainingDue]);
+    if (!isOpen) return;
+    setMontant(toDigits(due));
+    setMethode('espece');
+    setReference('');
+    setNotes('');
+    setRecu('');
+    setAmountError(null);
+    setReceivedError(null);
+    setReferenceError(null);
+    setFormError(null);
+    setClosedByServer(false);
+    keyRef.current = newIdempotencyKey();
+  }, [isOpen, due]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
+  const needsReference = methode === 'cheque' || methode === 'virement';
+  const tillClosed = cashTill === 'closed' || closedByServer;
+  const showTillWarning = methode === 'espece' && tillClosed;
 
-    const montantNum = parseFloat(montant);
+  const montantNum = montant ? Number(montant) : 0;
+  const recuNum = recu ? Number(recu) : 0;
+  const change = recuNum - montantNum;
+  /** Espèces remises inférieures au paiement : le tiroir serait court à la clôture (P-M1). */
+  const cashShort = methode === 'espece' && recuNum > 0 && recuNum < montantNum;
 
-    if (isNaN(montantNum) || montantNum <= 0) {
-      setError('Le montant doit être supérieur à 0');
-      return;
-    }
-
-    if (montantNum > remainingDue) {
-      setError(`Le montant ne peut pas dépasser le reste dû (${formatFCFA(remainingDue)})`);
-      return;
-    }
-
-    if ((methodePaiement === 'cheque' || methodePaiement === 'virement') && !reference.trim()) {
-      setError(
-        methodePaiement === 'cheque'
-          ? 'Saisissez le numéro du chèque.'
-          : 'Saisissez la référence du virement.'
-      );
-      requestAnimationFrame(() => document.getElementById('payment-reference')?.focus());
-      return;
-    }
-
+  /** Envoie le paiement ; les erreurs de l'API restent affichées dans la fenêtre. */
+  const submit = async (amount: number) => {
     setLoading(true);
-
     try {
       await onSubmit({
-        montant: montantNum,
-        methode_paiement: methodePaiement,
+        montant: amount,
+        methode_paiement: methode,
         reference: reference.trim() || undefined,
         notes: notes.trim() || undefined,
+        idempotency_key: keyRef.current,
       });
-
       onClose();
     } catch (err) {
-      setError(getErrorMessage(err, "Une erreur est survenue lors de l'enregistrement du paiement"));
+      if (getErrorCode(err) === 'CAISSE_FERMEE') {
+        setClosedByServer(true);
+        requestAnimationFrame(() => tillNoteRef.current?.focus());
+      } else {
+        setFormError(getErrorMessage(err, DEFAULT_ERROR));
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSetFullAmount = () => {
-    setMontant(parseFloat(remainingDue as any).toFixed(0));
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (loading) return;
+    setFormError(null);
+
+    let nextAmountError: string | null = null;
+    if (!montant || !Number.isFinite(montantNum) || montantNum <= 0) {
+      nextAmountError = 'Saisissez un montant supérieur à 0 FCFA.';
+    } else if (montantNum > due + 0.005) {
+      nextAmountError = `Le montant dépasse le reste dû (${formatCurrency(due)}).`;
+    }
+    // Entrée dans « Montant reçu » ne doit jamais enregistrer plus que ce que
+    // le client a remis : le paiement est bloqué, la caissière choisit.
+    const nextReceivedError =
+      !nextAmountError && cashShort
+        ? `Le client a donné ${formatCurrency(recuNum)}, moins que le paiement de ${formatCurrency(montantNum)}.`
+        : null;
+    const nextReferenceError =
+      needsReference && !reference.trim()
+        ? methode === 'cheque'
+          ? 'Saisissez le numéro du chèque.'
+          : 'Saisissez la référence du virement.'
+        : null;
+
+    setAmountError(nextAmountError);
+    setReceivedError(nextReceivedError);
+    setReferenceError(nextReferenceError);
+    if (nextAmountError) {
+      requestAnimationFrame(() => amountRef.current?.focus());
+      return;
+    }
+    if (nextReceivedError) {
+      requestAnimationFrame(() => receivedRef.current?.focus());
+      return;
+    }
+    if (nextReferenceError) {
+      requestAnimationFrame(() => referenceRef.current?.focus());
+      return;
+    }
+
+    await submit(montantNum);
   };
 
-  const montantNum = parseFloat(montant);
-  const isAmountInvalid = isNaN(montantNum) || montantNum <= 0 || montantNum > remainingDue;
+  /** « Enregistrer 30 000 FCFA seulement » : le paiement prend la somme réellement remise. */
+  const recordReceivedOnly = () => {
+    if (loading || !(recuNum > 0) || recuNum > due + 0.005) return;
+    setMontant(toDigits(recuNum));
+    setAmountError(null);
+    setReceivedError(null);
+    setFormError(null);
+    void submit(recuNum);
+  };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open && !loading) onClose();
+      }}
+    >
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Enregistrer un paiement</DialogTitle>
+          <DialogDescription>
+            {numeroFacture && (
+              <>
+                Facture <DocumentCode>{numeroFacture}</DocumentCode> ·{' '}
+              </>
+            )}
+            Reste dû : {formatCurrency(due)}
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <Label htmlFor="payment-amount">Montant du paiement</Label>
-              <Button type="button" variant="outline" size="sm" onClick={handleSetFullAmount} className="h-7 text-xs">
-                Payer le reste ({formatFCFA(remainingDue)})
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setMontant(toDigits(due));
+                  setAmountError(null);
+                }}
+              >
+                Saisir le reste dû ({formatCurrency(due)})
               </Button>
             </div>
             <MoneyInput
               id="payment-amount"
+              ref={amountRef}
+              autoFocus
               value={montant}
               onChange={(v) => {
                 setMontant(v);
-                setError('');
+                setAmountError(null);
               }}
               placeholder="0"
-              aria-invalid={isAmountInvalid}
-              aria-describedby="payment-amount-help"
+              {...fieldErrorProps('payment-amount', amountError)}
+              aria-describedby={['payment-amount-help', amountError ? 'payment-amount-error' : null]
+                .filter(Boolean)
+                .join(' ')}
             />
-            <p id="payment-amount-help" className="text-xs text-muted-foreground num">
-              Total facture: {formatFCFA(total)} · Déjà payé: {formatFCFA(total - remainingDue)}
+            <p id="payment-amount-help" className="text-xs text-muted-foreground tabular-nums">
+              Total de la facture : {formatCurrency(totalNum)} · Déjà payé : {formatCurrency(Math.max(0, totalNum - due))}
             </p>
+            <FieldError id="payment-amount">{amountError}</FieldError>
           </div>
 
-          <div className="space-y-1.5">
-            <p className="text-sm font-medium">Méthode de paiement</p>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(METHODES_PAIEMENT)
-                .filter(([key]) => key !== 'acompte')
-                .map(([key, config]) => {
-                  const MethodIcon = config.Icon;
-                  const active = methodePaiement === key;
-                return (
-                  <Button
-                    key={key}
-                    type="button"
-                    variant={active ? 'default' : 'outline'}
-                    onClick={() => setMethodePaiement(key as any)}
-                    className="justify-start gap-2"
-                  >
-                    <MethodIcon className="h-4 w-4" />
-                    {config.label}
-                  </Button>
-                );
-              })}
+          {acomptesDisponibles > 0 && (
+            <div className="flex items-start gap-2 rounded-md border border-info-200 bg-info-50 p-3 text-sm text-info-800">
+              <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <p>
+                Ce client a {formatCurrency(acomptesDisponibles)} d’acompte disponible. Ce paiement ne l’utilise pas :
+                pour le déduire, utilisez « Appliquer » dans la carte « Acomptes disponibles ».
+              </p>
             </div>
-          </div>
+          )}
+
+          <ChoiceGroup
+            label="Mode de paiement"
+            value={methode}
+            onValueChange={(value) => {
+              setMethode(value);
+              setReferenceError(null);
+              setFormError(null);
+            }}
+            options={METHOD_OPTIONS}
+            layout="grid-2"
+            shape="tile"
+            size="touch"
+            // Sous 360 px, une colonne : « Orange Money » ne devient pas « Orange … ».
+            className="max-[359px]:[&_[role=radiogroup]]:grid-cols-1"
+            aria-describedby={showTillWarning ? 'payment-till-closed' : undefined}
+          />
+
+          {showTillWarning && (
+            <div
+              id="payment-till-closed"
+              ref={tillNoteRef}
+              tabIndex={-1}
+              role={closedByServer ? 'alert' : 'status'}
+              className="flex items-start gap-2 rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Lock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div className="space-y-1">
+                <p>La caisse est fermée : ouvrez-la pour encaisser des espèces.</p>
+                {caisseHref && (
+                  <Link
+                    to={caisseHref}
+                    className="inline-flex min-h-6 items-center font-medium underline underline-offset-4 hover:text-warning-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Ouvrir la caisse
+                  </Link>
+                )}
+              </div>
+            </div>
+          )}
+
+          {methode === 'espece' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="payment-received">
+                Montant reçu du client <span className="font-normal text-muted-foreground">(facultatif)</span>
+              </Label>
+              <MoneyInput
+                id="payment-received"
+                ref={receivedRef}
+                value={recu}
+                onChange={(v) => {
+                  setRecu(v);
+                  setReceivedError(null);
+                }}
+                placeholder="0"
+                {...fieldErrorProps('payment-received', receivedError)}
+                aria-describedby={
+                  receivedError ? 'payment-received-error' : recuNum > 0 ? 'payment-change' : undefined
+                }
+              />
+              {receivedError ? (
+                <div className="space-y-2">
+                  <FieldError id="payment-received">{receivedError}</FieldError>
+                  {recuNum <= due + 0.005 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="touch"
+                      onClick={recordReceivedOnly}
+                      disabled={loading}
+                    >
+                      Enregistrer {formatCurrency(recuNum)} seulement
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                recuNum > 0 &&
+                (change >= 0 ? (
+                  <p
+                    id="payment-change"
+                    role="status"
+                    className="flex flex-wrap items-baseline justify-between gap-x-3 rounded-md border bg-muted/40 px-3 py-2"
+                  >
+                    <span className="text-sm font-medium">À rendre</span>
+                    <Money value={change} emphasis className="text-2xl" />
+                  </p>
+                ) : (
+                  <p id="payment-change" role="status" className="text-sm">
+                    Il manque <Money value={-change} emphasis tone="danger" /> : réduisez le montant du paiement ou
+                    complétez la somme.
+                  </p>
+                ))
+              )}
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="payment-reference">
-              Référence {methodePaiement === 'cheque' || methodePaiement === 'virement' ? '(requis)' : '(optionnel)'}
+              {methode === 'cheque' ? (
+                <>
+                  Numéro du chèque
+                  <RequiredMark />
+                </>
+              ) : methode === 'virement' ? (
+                <>
+                  Référence du virement
+                  <RequiredMark />
+                </>
+              ) : (
+                <>
+                  Référence <span className="font-normal text-muted-foreground">(facultatif)</span>
+                </>
+              )}
             </Label>
             <Input
               id="payment-reference"
+              ref={referenceRef}
               type="text"
               value={reference}
               onChange={(e) => {
                 setReference(e.target.value);
-                setError('');
+                setReferenceError(null);
               }}
-              placeholder={
-                methodePaiement === 'cheque'
-                  ? 'N° du chèque'
-                  : methodePaiement === 'virement'
-                  ? 'Référence du virement'
-                  : ''
-              }
-              aria-required={methodePaiement === 'cheque' || methodePaiement === 'virement'}
+              placeholder={methode === 'cheque' ? 'Ex. : 0012345' : methode === 'virement' ? 'Ex. : VIR-2026-118' : ''}
+              aria-required={needsReference || undefined}
+              {...fieldErrorProps('payment-reference', referenceError)}
             />
+            <FieldError id="payment-reference">{referenceError}</FieldError>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="payment-notes">Notes (optionnel)</Label>
+            <Label htmlFor="payment-notes">
+              Notes <span className="font-normal text-muted-foreground">(facultatif)</span>
+            </Label>
             <Textarea
               id="payment-notes"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Ajouter des notes ou commentaires"
-              rows={3}
+              placeholder="Précision utile pour la caisse ou le client"
+              rows={2}
             />
           </div>
 
-          {error && (
-            <div className="flex items-start gap-2 rounded-md border border-danger-200 bg-danger-50 p-3 text-sm text-danger-800">
-              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-              <span>{error}</span>
+          {formError && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-md border border-danger-200 bg-danger-50 p-3 text-sm text-danger-800"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{formError}</span>
             </div>
           )}
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
+          <DialogFooter sticky className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" size="touch" onClick={onClose} disabled={loading}>
               Annuler
             </Button>
-            <Button type="submit" disabled={loading || isAmountInvalid}>
+            <Button type="submit" size="touch" disabled={loading} aria-busy={loading || undefined} className="gap-2">
               {loading ? (
                 <>
                   <Spinner />

@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
-import { factureService, paiementService, acompteService, tiersService } from '../services/api';
-import { FactureComplete, Paiement } from '../types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { toast } from 'sonner';
+import { ArrowLeftRight, Download, FileText, Printer, ShoppingCart, Wallet } from 'lucide-react';
+import {
+  acompteService,
+  caisseService,
+  factureService,
+  paiementService,
+  tiersService,
+  type PaiementResult,
+} from '../services/api';
+import type { FactureComplete, FactureLigne, Paiement } from '../types';
 import { PaymentStatusBar } from '../components/PaymentStatusBar';
 import { PaymentHistory } from '../components/PaymentHistory';
 import { AttachmentPanel } from '../components/AttachmentPanel';
-import { PaymentModal } from '../components/PaymentModal';
-import { Button } from '@/components/ui/button';
+import { PaymentModal, type CashTillState, type PaymentModalSubmit } from '../components/PaymentModal';
+import StatusBadge from '@/components/StatusBadge';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -17,99 +27,276 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import StatusBadge from '@/components/StatusBadge';
-import { formatCurrency, formatXOF } from '@/utils/format';
-import { formatPaymentMethod, type PaymentMethod } from '@/utils/paymentMethod';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
+import { PageShell } from '@/components/ui/page-shell';
+import type { PageHeaderMenuAction } from '@/components/ui/page-header';
+import { QueryErrorState } from '@/components/ui/query-state';
+import { EmptyState } from '@/components/ui/empty-state';
+import { DocumentTotals } from '@/components/ui/document-totals';
+import { DocumentCode } from '@/components/ui/document-code';
+import { KeyValue, KeyValueList } from '@/components/ui/key-value';
+import { Money } from '@/components/ui/money';
+import { Tag } from '@/components/ui/tag';
 import { DocumentPrint } from '@/components/ui/print-layout';
+import { useVenteParDefaut } from '@/hooks/useVenteParDefaut';
+import { printTicket } from '@/utils/ticket';
 import { PrintPreview, usePrintFormat } from '@/components/ui/print-preview';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { DocumentLifecycle } from '@/components/ui/document-lifecycle';
-import { PageLoading } from '@/components/ui/loading';
+import { PageLoading, Spinner } from '@/components/ui/loading';
+import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
+import { useAuth } from '@/lib/AuthContext';
+import { cn } from '@/lib/utils';
+import { useRouteAccess } from '@/hooks/useRouteAccess';
 import { getErrorMessage } from '@/utils/errors';
-import { AlertCircle, ArrowLeft, FileText, User, Calendar, Printer, Download, CreditCard, ArrowLeftRight, RefreshCw } from 'lucide-react';
-import { toast } from 'sonner';
+import { formatCurrency, formatDate, formatNumber, formatPercent, toNumber } from '@/utils/format';
+import { formatPaymentMethod, paymentMethodHue } from '@/utils/paymentMethod';
+
+interface LigneFacture extends FactureLigne {
+  /** Coût d'achat unitaire figé à la vente (analyse de rentabilité, gérants). */
+  prix_achat_unitaire?: number | string | null;
+  /** Produit vendu depuis le stock du dépôt (plus de stock en magasin aujourd'hui). */
+  is_depot_only_history?: boolean;
+}
+
+type FactureDetailData = Omit<FactureComplete, 'lignes'> & {
+  lignes?: LigneFacture[];
+  date_echeance?: string | null;
+  location_id?: number | null;
+};
+
+interface AcompteDisponible {
+  id: number;
+  montant: number | string;
+  montant_restant?: number | string | null;
+  date_acompte?: string | null;
+  methode_paiement?: string | null;
+}
+
+interface TiersSoldes {
+  est_fournisseur?: boolean;
+  solde_fournisseur_live?: number | string | null;
+  solde_fournisseur?: number | string | null;
+}
+
+interface MagasinCaisse {
+  id: number;
+  location_id?: number | null;
+}
+
+/** Rôles que l'API laisse encaisser (`POST /factures/:id/paiements`). */
+const PAY_ROLES = ['admin', 'manager', 'magasin_staff', 'caissier'];
+/** Rôles qui annulent une facture ou compensent (`PUT /factures/:id/statut`, `POST /tiers/:id/compensation`). */
+const MANAGER_ROLES = ['admin', 'manager'];
+
+/** Séparateur de la ligne d'en-tête : l'insécable garde « · » avec ce qui le précède, la ligne ne coupe qu'après. */
+const SEP = '\u00A0· ';
+/** Lien dans la ligne d'en-tête : souligné en permanence, le bleu seul se distingue mal du gris qui l'entoure (1,6:1). */
+const HEADER_LINK_CLASS =
+  'rounded-sm text-primary underline decoration-primary/40 underline-offset-4 transition-colors hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+const restantAcompte = (a: AcompteDisponible) => toNumber(a.montant_restant) ?? toNumber(a.montant) ?? 0;
+const quantiteOf = (ligne: LigneFacture) => toNumber(ligne.quantite) ?? 0;
 
 export default function FactureDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const confirm = useConfirm();
-  const [facture, setFacture] = useState<FactureComplete | null>(null);
+  const { user } = useAuth();
+  const canOpen = useRouteAccess();
+  const venteParDefaut = useVenteParDefaut();
+  const role = user?.role ?? '';
+  const isManager = MANAGER_ROLES.includes(role);
+  const isAdmin = role === 'admin';
+  const canPay = PAY_ROLES.includes(role);
+
+  const [facture, setFacture] = useState<FactureDetailData | null>(null);
   const [paiements, setPaiements] = useState<Paiement[]>([]);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [cashTill, setCashTill] = useState<CashTillState>('unknown');
   const [showPrintLayout, setShowPrintLayout] = useState(false);
   const [printFormat, setPrintFormat] = usePrintFormat();
-  const [acomptesDispo, setAcomptesDispo] = useState<any[]>([]);
+
+  const [acomptesDispo, setAcomptesDispo] = useState<AcompteDisponible[]>([]);
+  const [soldeFourn, setSoldeFourn] = useState(0);
+
   const [showCompensationModal, setShowCompensationModal] = useState(false);
   const [compensationMontant, setCompensationMontant] = useState('');
+  const [compensationError, setCompensationError] = useState<string | null>(null);
   const [compensationLoading, setCompensationLoading] = useState(false);
-  const [soldeFourn, setSoldeFourn] = useState<number>(0);
-  const [acompteToApply, setAcompteToApply] = useState<any | null>(null);
+
+  const [acompteToApply, setAcompteToApply] = useState<AcompteDisponible | null>(null);
   const [applyMontant, setApplyMontant] = useState('');
+  const [applyError, setApplyError] = useState<string | null>(null);
   const [applyLoading, setApplyLoading] = useState(false);
+
+  const [cancelling, setCancelling] = useState(false);
+  const autoOpened = useRef(false);
+
+  /** Acomptes du client (tous rôles) et, pour les gérants, sa dette fournisseur (compensation). */
+  const loadClientExtras = useCallback(
+    async (clientId: number) => {
+      const [acomptes, tiers] = await Promise.allSettled([
+        acompteService.listForClient(clientId),
+        isManager ? tiersService.getById(clientId) : Promise.resolve(null),
+      ]);
+      if (acomptes.status === 'fulfilled') {
+        setAcomptesDispo(Array.isArray(acomptes.value) ? (acomptes.value as AcompteDisponible[]) : []);
+      } else {
+        setAcomptesDispo([]);
+        toast.error(getErrorMessage(acomptes.reason, 'Impossible de charger les acomptes du client.'));
+      }
+      if (tiers.status === 'fulfilled') {
+        const t = tiers.value as TiersSoldes | null;
+        const fourn = t?.est_fournisseur
+          ? toNumber(t.solde_fournisseur_live) ?? toNumber(t.solde_fournisseur) ?? 0
+          : 0;
+        setSoldeFourn(fourn > 0 ? fourn : 0);
+      } else {
+        setSoldeFourn(0);
+        toast.error(getErrorMessage(tiers.reason, 'Impossible de charger le solde fournisseur du client.'));
+      }
+    },
+    [isManager]
+  );
 
   const loadFacture = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await factureService.getById(parseInt(id));
-      setFacture(data);
-      setPaiements(data.paiements || []);
-      // Load client's available acomptes
-      const clientId = (data as any).tiers_id || (data as any).client_id;
-      if (clientId) {
-        try {
-          const acs = await acompteService.listForClient(clientId);
-          setAcomptesDispo(acs);
-        } catch (err) {
-          setAcomptesDispo([]);
-          toast.error(getErrorMessage(err, 'Erreur lors du chargement des acomptes du client'));
-        }
-        try {
-          const tiersResp = await tiersService.getById(clientId);
-          const tiers = tiersResp?.data ?? tiersResp;
-          if (tiers?.est_fournisseur) {
-            const fourn = parseFloat((tiers as any).solde_fournisseur_live ?? (tiers as any).solde_fournisseur ?? 0);
-            setSoldeFourn(fourn > 0 ? fourn : 0);
-          } else {
-            setSoldeFourn(0);
-          }
-        } catch (err) {
-          setSoldeFourn(0);
-          toast.error(getErrorMessage(err, 'Erreur lors du chargement du solde fournisseur'));
-        }
-      }
+      const data = (await factureService.getById(Number(id))) as FactureDetailData | null;
+      setFacture(data ?? null);
+      setPaiements(data?.paiements ?? []);
+      const clientId = data?.tiers_id ?? data?.client_id;
+      if (clientId) void loadClientExtras(clientId);
     } catch (err) {
       setFacture(null);
       setPaiements([]);
       setError(err);
-      toast.error(getErrorMessage(err, 'Erreur lors du chargement de la facture'));
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, loadClientExtras]);
 
   useEffect(() => {
-    loadFacture();
+    void loadFacture();
   }, [loadFacture]);
+
+  const total = toNumber(facture?.total) ?? 0;
+  const sousTotal = toNumber(facture?.sous_total) ?? total;
+  const montantPaye = toNumber(facture?.montant_paye) ?? 0;
+  const remainingDue = facture ? Math.max(0, toNumber(facture.remaining_due) ?? total - montantPaye) : 0;
+  const lignes: LigneFacture[] = facture?.lignes ?? [];
+  const isCancelled = facture?.statut === 'annulee';
+  const isOpenForPayment = !!facture && !isCancelled && facture.statut !== 'payee' && remainingDue > 0;
+  const acomptesTotal = acomptesDispo.reduce((sum, a) => sum + restantAcompte(a), 0);
+
+  // U-15 : la facture vient d'être créée au comptoir → la saisie du paiement
+  // s'ouvre d'elle-même. L'état de navigation est effacé aussitôt, pour qu'un
+  // rafraîchissement ou un retour arrière ne la rouvre pas.
+  useEffect(() => {
+    const state = location.state as { justCreated?: boolean } | null;
+    if (!state?.justCreated || !facture || autoOpened.current) return;
+    autoOpened.current = true;
+    navigate(location.pathname, { replace: true, state: null });
+    if (isOpenForPayment && canPay) setShowPaymentModal(true);
+  }, [location.state, location.pathname, facture, isOpenForPayment, canPay, navigate]);
+
+  // U-23 : la caisse du magasin de la facture est-elle ouverte ? Vérifié à
+  // l'ouverture de la saisie, pour prévenir avant l'envoi plutôt qu'après.
+  useEffect(() => {
+    if (!showPaymentModal) return;
+    const locationId = facture?.location_id;
+    setCashTill('unknown');
+    if (!locationId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const magasins = (await caisseService.getMagasins()) as MagasinCaisse[];
+        const magasin = magasins.find((m) => Number(m.location_id) === Number(locationId));
+        if (!magasin) return; // magasin non affecté : le serveur tranchera
+        const session = await caisseService.getSessionActive(magasin.id);
+        if (!cancelled) setCashTill(session ? 'open' : 'closed');
+      } catch {
+        if (!cancelled) setCashTill('unknown');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showPaymentModal, facture?.location_id]);
+
+  const downloadRecu = async (paiementId: number) => {
+    try {
+      await paiementService.downloadRecu(paiementId);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Impossible de générer le reçu. Réessayez.'));
+    }
+  };
+
+  /** D3 : le paiement enregistre exactement le montant saisi ; le toast reprend la phrase du serveur. */
+  const handleAddPayment = async (paiement: PaymentModalSubmit) => {
+    if (!facture) return;
+    const result: PaiementResult = await paiementService.create(facture.id, paiement);
+    const message = result.idempotent
+      ? 'Ce paiement était déjà enregistré : rien n’a été encaissé deux fois.'
+      : result.message ||
+        `Paiement de ${formatCurrency(result.montant_recu ?? paiement.montant)} enregistré. ${
+          (toNumber(result.reste_du) ?? 0) > 0
+            ? `Reste dû : ${formatCurrency(result.reste_du)}.`
+            : 'Facture soldée.'
+        }`;
+    const recuId = result.direct_paiement_id;
+    toast.success(message, recuId ? { action: { label: 'Imprimer le reçu', onClick: () => void downloadRecu(recuId) } } : undefined);
+    await loadFacture();
+  };
+
+  const handleDeletePayment = async (paiement: Paiement) => {
+    if (!facture) return;
+    const ok = await confirm({
+      title: `Supprimer ce paiement de ${formatCurrency(paiement.montant)} ?`,
+      description: `Le montant redeviendra dû sur la facture ${facture.numero_facture}. S’il a été encaissé en caisse, une sortie du même montant sera enregistrée dans la session ouverte.`,
+      confirmLabel: 'Supprimer le paiement',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await paiementService.delete(paiement.id);
+      toast.success(`Paiement de ${formatCurrency(paiement.montant)} supprimé`);
+      await loadFacture();
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Impossible de supprimer le paiement. Réessayez.'));
+    }
+  };
+
+  const maxCompensable = Math.min(remainingDue, soldeFourn);
+
+  const openCompensation = () => {
+    setCompensationMontant(String(Math.floor(maxCompensable)));
+    setCompensationError(null);
+    setShowCompensationModal(true);
+  };
 
   const handleCompensation = async () => {
     if (!facture) return;
-    const tiersId = (facture as any).tiers_id || (facture as any).client_id;
-    const montant = parseFloat(compensationMontant);
-    if (Number.isNaN(montant) || montant <= 0) {
-      toast.error('Montant invalide');
+    const tiersId = facture.tiers_id ?? facture.client_id;
+    const montant = Number(compensationMontant);
+    if (!compensationMontant || !Number.isFinite(montant) || montant <= 0) {
+      setCompensationError('Saisissez un montant supérieur à 0 FCFA.');
       return;
     }
-    const maxComp = Math.min(remainingDue, soldeFourn);
-    if (montant > maxComp + 0.005) {
-      toast.error(`Montant trop élevé (max compensable: ${formatCurrency(maxComp)})`);
+    if (montant > maxCompensable + 0.005) {
+      setCompensationError(`Le montant dépasse le maximum compensable (${formatCurrency(maxCompensable)}).`);
       return;
     }
+    if (!tiersId) return;
     setCompensationLoading(true);
     try {
       await tiersService.createCompensation(tiersId, {
@@ -117,46 +304,31 @@ export default function FactureDetail() {
         montant,
         notes: `Compensation sur facture ${facture.numero_facture}`,
       });
-      toast.success(`Compensation de ${formatCurrency(montant)} appliquée`);
+      toast.success(`Compensation de ${formatCurrency(montant)} enregistrée sur la facture ${facture.numero_facture}`);
       setShowCompensationModal(false);
-      setCompensationMontant('');
       await loadFacture();
     } catch (e) {
-      toast.error(getErrorMessage(e, 'Erreur lors de la compensation'));
+      setCompensationError(getErrorMessage(e, 'Impossible d’enregistrer la compensation. Réessayez.'));
     } finally {
       setCompensationLoading(false);
     }
   };
 
-  const acompteMaxApply = (() => {
-    if (!facture || !acompteToApply) return 0;
-    const restant = parseFloat(acompteToApply.montant_restant ?? acompteToApply.montant);
-    const factureReste = parseFloat(facture.remaining_due as any) || (parseFloat(facture.total as any) - parseFloat(facture.montant_paye as any));
-    return Math.min(restant, factureReste);
-  })();
+  const acompteMaxApply = acompteToApply ? Math.min(restantAcompte(acompteToApply), remainingDue) : 0;
 
-  const openApplyAcompte = (acompte: any) => {
-    if (!facture) return;
-    const restant = parseFloat(acompte.montant_restant ?? acompte.montant);
-    const factureReste = parseFloat(facture.remaining_due as any) || (parseFloat(facture.total as any) - parseFloat(facture.montant_paye as any));
-    const maxApply = Math.min(restant, factureReste);
+  const openApplyAcompte = (acompte: AcompteDisponible) => {
     setAcompteToApply(acompte);
-    setApplyMontant(maxApply.toFixed(2));
+    setApplyMontant(String(Math.floor(Math.min(restantAcompte(acompte), remainingDue))));
+    setApplyError(null);
   };
 
   const handleApplyAcompte = async () => {
     if (!facture || !acompteToApply) return;
-    const maxApply = acompteMaxApply;
-    const montant = parseFloat(applyMontant);
-    if (Number.isNaN(montant) || montant <= 0 || montant > maxApply + 0.005) {
-      toast.error(`Montant invalide (max ${formatCurrency(maxApply)})`);
+    const montant = Number(applyMontant);
+    if (!applyMontant || !Number.isFinite(montant) || montant <= 0 || montant > acompteMaxApply + 0.005) {
+      setApplyError(`Saisissez un montant entre 1 et ${formatCurrency(acompteMaxApply)}.`);
       return;
     }
-    if (!(await confirm({
-      title: "Appliquer l'acompte ?",
-      description: `${formatCurrency(montant)} de l'acompte #${acompteToApply.id} seront appliqués sur la facture ${facture.numero_facture}.`,
-      confirmLabel: 'Appliquer',
-    }))) return;
     setApplyLoading(true);
     try {
       await acompteService.apply(acompteToApply.id, {
@@ -164,142 +336,229 @@ export default function FactureDetail() {
         montant,
         idempotency_key: `apply-${acompteToApply.id}-${facture.id}-${Date.now()}`,
       });
-      toast.success(`Acompte appliqué: ${formatCurrency(montant)}`);
+      toast.success(`Acompte de ${formatCurrency(montant)} appliqué à la facture ${facture.numero_facture}`);
       setAcompteToApply(null);
-      setApplyMontant('');
       await loadFacture();
     } catch (e) {
-      toast.error(getErrorMessage(e, 'Erreur application acompte'));
+      setApplyError(getErrorMessage(e, 'Impossible d’appliquer l’acompte. Réessayez.'));
     } finally {
       setApplyLoading(false);
     }
   };
 
-  const handleAddPayment = async (paiement: {
-    montant: number;
-    methode_paiement: PaymentMethod;
-    reference?: string;
-    notes?: string;
-  }) => {
+  /** U-24 : annuler une facture sans paiement (gérant, administrateur). */
+  const handleCancelFacture = async () => {
     if (!facture) return;
-
-    await paiementService.create(facture.id, paiement);
-    toast.success('Paiement enregistré avec succès');
-    await loadFacture();
-  };
-
-  const handleDeletePayment = async (paiementId: number) => {
-    if (!(await confirm({
-      title: 'Supprimer le paiement',
-      description: 'Êtes-vous sûr de vouloir supprimer ce paiement ? Cette action est irréversible.',
-      confirmLabel: 'Supprimer',
+    const ok = await confirm({
+      title: `Annuler la facture ${facture.numero_facture} ?`,
+      description: `Le client ne devra plus les ${formatCurrency(total)} de cette facture : ses écritures comptables sont contre-passées et ses articles reviennent en stock. Si le client a emporté la marchandise, enregistrez plutôt un retour client.`,
+      confirmLabel: 'Annuler la facture',
+      cancelLabel: 'Garder la facture',
       destructive: true,
-    }))) return;
+    });
+    if (!ok) return;
+    setCancelling(true);
     try {
-      await paiementService.delete(paiementId);
-      toast.success('Paiement supprimé');
+      const result = await factureService.updateStatut(facture.id, 'annulee');
+      toast.success(result?.message ?? `Facture ${facture.numero_facture} annulée`);
       await loadFacture();
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur lors de la suppression du paiement'));
+      toast.error(getErrorMessage(err, 'Impossible d’annuler la facture. Réessayez.'));
+    } finally {
+      setCancelling(false);
     }
   };
 
-
-  // Calculate values before early returns to maintain hook order
-  const sousTotal = facture ? parseFloat(facture.sous_total as any) || 0 : 0;
-  const total = facture ? parseFloat(facture.total as any) || 0 : 0;
-  const montantPaye = facture ? parseFloat(facture.montant_paye as any) || 0 : 0;
-  const remainingDue = facture ? parseFloat(facture.remaining_due as any) || total : 0;
-  const lignes = facture ? facture.lignes || [] : [];
-
-  const userStr = localStorage.getItem('auth_user');
-  const user = userStr ? JSON.parse(userStr) : null;
-  const isManagerOrAdmin = user?.role === 'admin' || user?.role === 'manager';
-
-  const totalCost = lignes.reduce((sum, line) => {
-    const prixAchat = parseFloat((line as any).prix_achat_unitaire) || 0;
-    const quantite = typeof line.quantite === 'string' ? parseInt(line.quantite) : line.quantite;
-    return sum + (prixAchat * quantite);
-  }, 0);
-
-  const profit = total - totalCost;
-  const marginPercentage = total > 0 ? parseFloat(((profit / total) * 100).toFixed(2)) : 0;
-
-  if (loading) {
-    return <PageLoading message="Chargement de la facture…" />;
+  // ── États de chargement : chaque branche garde le cadre de page ──
+  if (loading && !facture) {
+    return (
+      <PageShell title="Facture" backTo="/factures" width="wide">
+        <PageLoading message="Chargement de la facture…" />
+      </PageShell>
+    );
   }
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 text-center" role="alert">
-        <AlertCircle className="h-12 w-12 text-destructive opacity-80" />
-        <div className="space-y-1">
-          <h2 className="text-xl font-bold">Échec du chargement</h2>
-          <p className="text-muted-foreground">{getErrorMessage(error, 'Erreur lors du chargement de la facture')}</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => navigate('/factures')}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Retour aux factures
-          </Button>
-          <Button onClick={loadFacture} className="gap-2">
-            <RefreshCw className="h-4 w-4" />
-            Réessayer
-          </Button>
-        </div>
-      </div>
+      <PageShell title="Facture" backTo="/factures" width="wide">
+        <Card>
+          <QueryErrorState error={error} title="Impossible de charger la facture" onRetry={() => void loadFacture()} />
+        </Card>
+      </PageShell>
     );
   }
 
   if (!facture) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <FileText className="h-16 w-16 text-muted-foreground/50" />
-        <h2 className="text-2xl font-bold">Facture non trouvée</h2>
-        <Button onClick={() => navigate('/factures')}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Retour aux factures
-        </Button>
-      </div>
+      <PageShell title="Facture introuvable" backTo="/factures" width="wide">
+        <Card>
+          <EmptyState
+            icon={FileText}
+            title="Facture introuvable"
+            description="Elle a peut-être été supprimée"
+            action={
+              <Link to="/factures" className={buttonVariants({ variant: 'outline' })}>
+                Retour aux factures
+              </Link>
+            }
+          />
+        </Card>
+      </PageShell>
     );
   }
 
-  const downloadPDF = () => {
-    setShowPrintLayout(true);
-    setTimeout(() => window.print(), 300);
+  const clientId = facture.tiers_id ?? facture.client_id;
+  const clientNom = `${facture.client_nom ?? ''} ${facture.client_prenom ?? ''}`.trim() || '—';
+  // Client, date et échéance tiennent sur la ligne d'en-tête : plus de carte
+  // « Informations » qui la répétait.
+  const headerLine = (
+    <>
+      {clientId && canOpen(`/tiers/${clientId}`) ? (
+        <Link to={`/tiers/${clientId}`} className={HEADER_LINK_CLASS}>
+          {clientNom}
+        </Link>
+      ) : (
+        clientNom
+      )}
+      {SEP}
+      <span className="whitespace-nowrap">{formatDate(facture.date_facture)}</span>
+      {facture.date_echeance && (
+        <>
+          {SEP}
+          <span className="whitespace-nowrap">échéance {formatDate(facture.date_echeance)}</span>
+        </>
+      )}
+    </>
+  );
+  const totalCost = lignes.reduce(
+    (sum, ligne) => sum + (toNumber(ligne.prix_achat_unitaire) ?? 0) * quantiteOf(ligne),
+    0
+  );
+  const profit = total - totalCost;
+  const marginPercentage = total > 0 ? (profit / total) * 100 : 0;
+  const showCompensation = isManager && soldeFourn > 0 && isOpenForPayment;
+  const showSousTotal = Math.round(sousTotal) !== Math.round(total);
+
+  const downloadPdf = async () => {
+    try {
+      await factureService.downloadPdf(facture.id, facture.numero_facture);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Impossible de télécharger le PDF de la facture. Réessayez.'));
+    }
   };
 
-  return (
-    <div className="p-3 sm:p-6 w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="outline" size="sm" onClick={() => navigate('/factures')}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Retour
-          </Button>
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-              <FileText className="h-8 w-8" />
-              Facture {facture.numero_facture}
-            </h1>
-            <p className="text-muted-foreground mt-1">Détails de la facture</p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <StatusBadge type="facture" statut={facture.statut} />
-          <Button variant="outline" onClick={() => setShowPrintLayout(true)} className="gap-2">
-            <Printer className="h-4 w-4" />
-            Imprimer
-          </Button>
-          <Button variant="outline" onClick={downloadPDF} className="gap-2">
-            <Download className="h-4 w-4" />
-            Télécharger PDF
-          </Button>
-        </div>
-      </div>
+  // Ticket 80 mm (vente comptoir) : réimpression pour un client qui l'a perdu.
+  const imprimerTicket = async () => {
+    try {
+      await printTicket(facture.id);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Impossible d’imprimer le ticket. Réessayez.'));
+    }
+  };
 
-      {/* Document lifecycle strip */}
+  const moreActions: Array<PageHeaderMenuAction | false> = [
+    { label: 'Télécharger le PDF', icon: Download, onSelect: () => void downloadPdf() },
+    !isCancelled && { label: 'Imprimer le ticket de caisse', onSelect: () => void imprimerTicket() },
+    montantPaye > 0 &&
+      !isCancelled &&
+      canOpen('/avoirs/nouveau') && {
+        label: 'Créer un avoir',
+        to: `/avoirs/nouveau?facture_id=${facture.id}`,
+      },
+    isManager &&
+      !isCancelled &&
+      montantPaye === 0 && {
+        label: 'Annuler la facture',
+        destructive: true,
+        disabled: cancelling,
+        onSelect: () => void handleCancelFacture(),
+      },
+  ];
+
+  // Référence sous le nom du produit, comme sur le devis et le bon de livraison.
+  const lignesTable = (
+    <Table aria-label={`Produits de la facture ${facture.numero_facture}`}>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Produit</TableHead>
+          <TableHead numeric>Quantité</TableHead>
+          <TableHead numeric>Prix unitaire</TableHead>
+          <TableHead numeric>Total</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {lignes.map((ligne) => (
+          <TableRow key={ligne.id}>
+            <TableCell className="font-medium">
+              {ligne.produit_nom}
+              {ligne.is_depot_only_history && (
+                <Tag
+                  className="ms-2"
+                  title="Ce produit n’a plus de stock en magasin : il était disponible au dépôt lors de la vente."
+                >
+                  Vendu depuis le dépôt
+                </Tag>
+              )}
+              {ligne.produit_reference && (
+                <DocumentCode className="block text-xs font-normal text-muted-foreground">
+                  {ligne.produit_reference}
+                </DocumentCode>
+              )}
+            </TableCell>
+            <TableCell numeric>{formatNumber(quantiteOf(ligne))}</TableCell>
+            <TableCell numeric>
+              <Money value={ligne.prix_unitaire} />
+            </TableCell>
+            <TableCell numeric className="font-medium">
+              <Money value={ligne.total_ligne} />
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+
+  const lignesCards = lignes.map((ligne) => (
+    <DataCard key={ligne.id} title={ligne.produit_nom} wrapTitle titleAs="h3">
+      {ligne.produit_reference && (
+        <DataCardRow label="Référence" value={<DocumentCode>{ligne.produit_reference}</DocumentCode>} />
+      )}
+      <DataCardRow label="Quantité" value={formatNumber(quantiteOf(ligne))} numeric />
+      <DataCardRow label="Prix unitaire" value={<Money value={ligne.prix_unitaire} />} numeric />
+      <DataCardRow label="Total" value={<Money value={ligne.total_ligne} className="font-medium" />} numeric />
+    </DataCard>
+  ));
+
+  return (
+    <PageShell
+      title={`Facture ${facture.numero_facture}`}
+      backTo="/factures"
+      width="wide"
+      meta={<StatusBadge type="facture" statut={facture.statut} size="md" />}
+      description={headerLine}
+      actions={
+        <Button variant="outline" size="touch" onClick={() => setShowPrintLayout(true)} className="gap-2">
+          <Printer className="h-4 w-4" aria-hidden="true" />
+          Imprimer
+        </Button>
+      }
+      primaryAction={
+        isOpenForPayment && canPay ? (
+          <Button size="touch" onClick={() => setShowPaymentModal(true)} className="gap-2">
+            <Wallet className="h-4 w-4" aria-hidden="true" />
+            Enregistrer un paiement
+          </Button>
+        ) : facture.statut === 'payee' && venteParDefaut ? (
+          // P-M5 : la vente est soldée, la suivante commence d'ici (comptoir) —
+          // sur l'écran de vente du profil métier.
+          <Link to={venteParDefaut.path} className={cn(buttonVariants({ size: 'touch' }), 'gap-2')}>
+            <ShoppingCart className="h-4 w-4" aria-hidden="true" />
+            Nouvelle vente
+          </Link>
+        ) : undefined
+      }
+      moreActions={moreActions}
+    >
       <DocumentLifecycle
         steps={[
           {
@@ -312,7 +571,7 @@ export default function FactureDetail() {
             numero: facture.origine?.numero_bl ?? null,
             to: facture.origine?.bl_id ? `/bons-livraison/${facture.origine.bl_id}` : null,
           },
-          { label: 'Facture', numero: facture.numero_facture || `Facture #${facture.id}`, current: true },
+          { label: 'Facture', numero: facture.numero_facture || `n° ${facture.id}`, current: true },
           {
             label: 'Avoir',
             numero: facture.origine?.numero_avoir ?? null,
@@ -321,277 +580,193 @@ export default function FactureDetail() {
         ]}
       />
 
-      {/* Payment Status Bar */}
-      {facture.statut !== 'annulee' && (
-        <PaymentStatusBar
-          montantPaye={montantPaye}
-          remainingDue={remainingDue}
-          total={total}
-          statut={facture.statut}
-          onAddPayment={facture.statut !== 'payee' ? () => setShowPaymentModal(true) : undefined}
-        />
+      {/* Annulée : un état neutre, comme sa pastille — plus rien n'est dû. */}
+      {isCancelled ? (
+        <div className="rounded-md border bg-muted/40 p-3 text-sm">
+          Cette facture est annulée : le client ne la doit plus
+        </div>
+      ) : (
+        <PaymentStatusBar montantPaye={montantPaye} remainingDue={remainingDue} total={total} />
       )}
 
-      {/* Compensation fournisseur banner */}
-      {soldeFourn > 0 && remainingDue > 0 && facture.statut !== 'annulee' && facture.statut !== 'payee' && (
-        <div className="flex items-center justify-between rounded-lg border border-warning-300 bg-warning-50 px-4 py-3">
-          <div className="flex items-center gap-2 text-warning-800">
-            <ArrowLeftRight className="h-5 w-5 flex-shrink-0" />
-            <span className="text-sm font-medium">
-              Ce client est aussi fournisseur — vous lui devez <strong>{formatXOF(soldeFourn)}</strong>. Vous pouvez compenser jusqu'à <strong>{formatXOF(Math.min(remainingDue, soldeFourn))}</strong> sur cette facture.
-            </span>
+      {/* Une possibilité, pas une alerte : surface neutre, icône atténuée. */}
+      {showCompensation && (
+        <div className="flex flex-col gap-3 rounded-lg border bg-muted/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-2">
+            <ArrowLeftRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <p className="text-sm">
+              Ce client est aussi votre fournisseur : vous lui devez{' '}
+              <Money value={soldeFourn} className="font-medium" />. Vous pouvez compenser jusqu’à{' '}
+              <Money value={maxCompensable} className="font-medium" /> sur cette facture.
+            </p>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-warning-400 text-warning-800 hover:bg-warning-100 ml-4 flex-shrink-0"
-            onClick={() => {
-              setCompensationMontant(Math.min(remainingDue, soldeFourn).toFixed(2));
-              setShowCompensationModal(true);
-            }}
-          >
-            <ArrowLeftRight className="h-4 w-4 mr-1" />
+          <Button variant="outline" size="touch" className="shrink-0 self-start sm:self-auto" onClick={openCompensation}>
             Compenser
           </Button>
         </div>
       )}
 
-      {/* Invoice Details */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <User className="h-5 w-5" />
-              Client
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <p className="font-semibold text-lg">{facture.client_nom} {facture.client_prenom}</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="h-5 w-5" />
-              Informations
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Date de facture:</span>
-              <span className="font-semibold">
-                {new Date(facture.date_facture).toLocaleDateString('fr-FR', {
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric'
-                })}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">N° Facture:</span>
-              <span className="font-mono font-semibold break-words">{facture.numero_facture}</span>
-            </div>
-            {facture.origine && 'devis_id' in facture.origine && facture.origine.devis_id && (
-              <div className="text-sm">
-                <span className="text-muted-foreground">Devis d'origine: </span>
-                <Link to={`/devis/${facture.origine.devis_id}`} className="font-mono font-semibold text-primary hover:underline">
-                  {facture.origine.numero_devis}
-                </Link>
-              </div>
-            )}
-            {facture.origine && 'bl_id' in facture.origine && facture.origine.bl_id && (
-              <div className="text-sm">
-                <span className="text-muted-foreground">Bon de livraison: </span>
-                <Link to={`/bons-livraison/${facture.origine.bl_id}`} className="font-mono font-semibold text-primary hover:underline">
-                  {facture.origine.numero_bl}
-                </Link>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Line Items */}
       <Card>
         <CardHeader>
-          <CardTitle>Articles</CardTitle>
-          <CardDescription>{lignes.length} article(s)</CardDescription>
+          <CardTitle>Produits</CardTitle>
+          <CardDescription>
+            {lignes.length} {lignes.length > 1 ? 'produits' : 'produit'}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Référence</TableHead>
-                <TableHead>Produit</TableHead>
-                <TableHead className="text-right">Quantité</TableHead>
-                <TableHead className="text-right">Prix unitaire</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {lignes.map((ligne) => {
-                const prixUnitaire = parseFloat(ligne.prix_unitaire as any) || 0;
-                const quantite = typeof ligne.quantite === 'string' ? parseInt(ligne.quantite) : ligne.quantite;
-                const totalLigne = parseFloat(ligne.total_ligne as any) || 0;
-                
-                return (
-                  <TableRow key={ligne.id}>
-                    <TableCell className="font-mono">{ligne.produit_reference}</TableCell>
-                    <TableCell className="font-semibold">
-                      {ligne.produit_nom}
-                      {(ligne as any).is_depot_only_history && (
-                        <span
-                          className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground"
-                          title="Cet article n'a plus de stock magasin — il était disponible en dépôt au moment de la création"
-                        >
-                          stock dépôt (historique)
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">{quantite}</TableCell>
-                    <TableCell className="text-right">{formatXOF(prixUnitaire)}</TableCell>
-                    <TableCell className="text-right font-bold">{formatXOF(totalLigne)}</TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          {lignes.length === 0 ? (
+            <EmptyState compact icon={FileText} title="Cette facture ne contient aucun produit" />
+          ) : (
+            <ResponsiveTable table={lignesTable} cards={lignesCards} />
+          )}
+          <DocumentTotals
+            aria-label="Totaux de la facture"
+            rows={showSousTotal ? [{ label: 'Sous-total', value: sousTotal }] : []}
+            total={{ label: 'Total', value: total }}
+          />
         </CardContent>
       </Card>
 
-      {/* Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card className="bg-primary text-primary-foreground">
-          <CardContent className="pt-6">
-            <div className="space-y-3">
-              <div className="flex justify-between text-lg">
-                <span className="text-primary-foreground/80">Sous-total</span>
-                <span className="font-semibold">{formatXOF(sousTotal)}</span>
-              </div>
-              <div className="border-t border-primary-foreground/20 pt-3">
-                <div className="flex justify-between text-2xl font-bold">
-                  <span>Total</span>
-                  <span>{formatXOF(total)}</span>
-                </div>
-              </div>
-            </div>
+      {isManager && lignes.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Rentabilité</CardTitle>
+            <p className="text-xs text-muted-foreground">Visible par les gérants et administrateurs</p>
+          </CardHeader>
+          <CardContent>
+            <KeyValueList columns={3}>
+              <KeyValue label="Coût d’achat" numeric>
+                <Money value={totalCost} />
+              </KeyValue>
+              <KeyValue label="Marge brute" numeric>
+                <Money value={profit} tone="delta" />
+              </KeyValue>
+              <KeyValue label="Taux de marge" numeric>
+                {formatPercent(marginPercentage, 1)}
+              </KeyValue>
+            </KeyValueList>
           </CardContent>
         </Card>
+      )}
 
-        {isManagerOrAdmin && (
-          <Card className="border-success-300 bg-success-50 text-success-900">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold uppercase tracking-wider text-success-800">
-                Analyse de rentabilité (Restreint)
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex justify-between text-lg">
-                <span className="text-success-800">Coût total d'achat:</span>
-                <span className="font-semibold">{formatXOF(totalCost)}</span>
-              </div>
-              <div className="flex justify-between text-lg">
-                <span className="text-success-800">Marge brute:</span>
-                <span className="font-bold text-success-700">{formatXOF(profit)}</span>
-              </div>
-              <div className="border-t border-success-200 pt-2">
-                <div className="flex justify-between text-xl font-bold">
-                  <span>Taux de marge:</span>
-                  <span>{marginPercentage}%</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-
-      {/* Notes */}
       {facture.notes && (
         <Card>
           <CardHeader>
             <CardTitle>Notes</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-muted-foreground whitespace-pre-wrap">{facture.notes}</p>
+            <p className="whitespace-pre-wrap text-sm text-muted-foreground">{facture.notes}</p>
           </CardContent>
         </Card>
       )}
 
-      {/* Payment History */}
-      {paiements.length > 0 && (
+      <Card>
+        <CardHeader>
+          <CardTitle>Paiements</CardTitle>
+          {paiements.length > 0 && (
+            <CardDescription>
+              {paiements.length} {paiements.length > 1 ? 'paiements enregistrés' : 'paiement enregistré'}
+            </CardDescription>
+          )}
+        </CardHeader>
+        <CardContent>
+          <PaymentHistory
+            paiements={paiements}
+            onDelete={isAdmin ? handleDeletePayment : undefined}
+            reports={{
+              excedent_reporte: facture.excedent_reporte,
+              recu_par_report: facture.recu_par_report,
+              excedent_non_affecte: facture.excedent_non_affecte,
+            }}
+            factureAnnulee={isCancelled}
+          />
+        </CardContent>
+      </Card>
+
+      {acomptesDispo.length > 0 && isOpenForPayment && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5" />
-              Historique des paiements
-            </CardTitle>
+            <CardTitle>Acomptes disponibles</CardTitle>
             <CardDescription>
-              {paiements.length} paiement(s) enregistré(s)
+              {formatCurrency(acomptesTotal)} versés d’avance par ce client. Pour les déduire de cette facture,
+              utilisez « Appliquer ». Sinon, ils régleront automatiquement ses factures les plus anciennes lors de
+              sa prochaine facture, de son prochain avoir ou de la prochaine compensation.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <PaymentHistory
-              paiements={paiements}
-              onDelete={handleDeletePayment}
+            <ResponsiveTable
+              table={
+                <Table aria-label="Acomptes disponibles du client">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>N°</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Mode de paiement</TableHead>
+                      <TableHead numeric>Disponible</TableHead>
+                      <TableHead className="w-[1%]">
+                        <span className="sr-only">Actions</span>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {acomptesDispo.map((a) => (
+                      <TableRow key={a.id}>
+                        <TableCell className="whitespace-nowrap">n° {a.id}</TableCell>
+                        <TableCell className="whitespace-nowrap">{formatDate(a.date_acompte)}</TableCell>
+                        <TableCell>
+                          <Tag hue={paymentMethodHue(a.methode_paiement)}>{formatPaymentMethod(a.methode_paiement)}</Tag>
+                        </TableCell>
+                        <TableCell numeric className="font-medium">
+                          <Money value={restantAcompte(a)} />
+                        </TableCell>
+                        <TableCell>
+                          {/* Bouton de 36 px rattrapé par la marge négative : la ligne garde sa hauteur. */}
+                          <div className="-my-2 flex justify-end">
+                            <Button
+                              variant="outline"
+                              onClick={() => openApplyAcompte(a)}
+                              aria-label={`Appliquer l’acompte n° ${a.id} à la facture`}
+                            >
+                              Appliquer
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              }
+              cards={acomptesDispo.map((a) => (
+                <DataCard
+                  key={a.id}
+                  title={`Acompte n° ${a.id}`}
+                  titleAs="h3"
+                  actions={
+                    <Button variant="outline" size="touch" onClick={() => openApplyAcompte(a)}>
+                      Appliquer l’acompte
+                    </Button>
+                  }
+                >
+                  <DataCardRow label="Date" value={formatDate(a.date_acompte)} />
+                  <DataCardRow
+                    label="Mode de paiement"
+                    value={<Tag hue={paymentMethodHue(a.methode_paiement)}>{formatPaymentMethod(a.methode_paiement)}</Tag>}
+                  />
+                  <DataCardRow
+                    label="Disponible"
+                    value={<Money value={restantAcompte(a)} className="font-medium" />}
+                    numeric
+                  />
+                </DataCard>
+              ))}
             />
           </CardContent>
         </Card>
       )}
 
-      {facture?.id && <AttachmentPanel entityType="facture" entityId={facture.id} />}
+      <AttachmentPanel entityType="facture" entityId={facture.id} />
 
-      {/* Acomptes disponibles pour ce client */}
-      {acomptesDispo.length > 0 && remainingDue > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5 text-info-700" />
-              Acomptes disponibles ({acomptesDispo.length})
-            </CardTitle>
-            <CardDescription>
-              Crédit client utilisable sur cette facture
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>#</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Méthode</TableHead>
-                  <TableHead className="text-right">Restant</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {acomptesDispo.map((a) => {
-                  const restant = parseFloat(a.montant_restant ?? a.montant);
-                  return (
-                    <TableRow key={a.id}>
-                      <TableCell className="font-mono text-sm">#{a.id}</TableCell>
-                      <TableCell className="text-sm">
-                        {a.date_acompte ? new Date(a.date_acompte).toLocaleDateString('fr-FR') : '-'}
-                      </TableCell>
-                      <TableCell className="text-sm">{formatPaymentMethod(a.methode_paiement)}</TableCell>
-                      <TableCell className="text-right font-semibold text-info-700">
-                        {formatXOF(restant)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button size="sm" variant="outline" onClick={() => openApplyAcompte(a)}>
-                          Appliquer
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Compensation Modal */}
+      {/* Compensation client / fournisseur */}
       <Dialog
         open={showCompensationModal}
         onOpenChange={(open) => {
@@ -600,50 +775,68 @@ export default function FactureDetail() {
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ArrowLeftRight className="h-5 w-5 text-warning-600" />
-              Compenser avec dette fournisseur
-            </DialogTitle>
+            <DialogTitle>Compenser avec ce que vous devez à ce fournisseur</DialogTitle>
             <DialogDescription>
-              Ce montant sera déduit à la fois de ce que le client vous doit (facture client) et de ce que vous lui devez (compte fournisseur).
+              Le montant sera déduit à la fois de ce que le client vous doit sur cette facture et de ce que vous lui
+              devez comme fournisseur
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
+          <dl className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <span className="text-sm font-medium block mb-1">Reste dû sur la facture</span>
-              <p className="text-lg font-bold text-danger-600">{formatXOF(remainingDue)}</p>
+              <dt className="text-xs text-muted-foreground">Reste dû sur la facture</dt>
+              <dd className="mt-0.5 font-medium">
+                <Money value={remainingDue} />
+              </dd>
             </div>
             <div>
-              <span className="text-sm font-medium block mb-1">Votre dette fournisseur envers ce tiers</span>
-              <p className="text-lg font-bold text-info-700">{formatXOF(soldeFourn)}</p>
+              <dt className="text-xs text-muted-foreground">Ce que vous devez à ce fournisseur</dt>
+              <dd className="mt-0.5 font-medium">
+                <Money value={soldeFourn} />
+              </dd>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="compensation-montant">
-                Montant à compenser (max {formatXOF(Math.min(remainingDue, soldeFourn))})
-              </Label>
-              <Input
-                id="compensation-montant"
-                type="number" inputMode="decimal"
-                value={compensationMontant}
-                onChange={(e) => setCompensationMontant(e.target.value)}
-                min={0.01}
-                max={Math.min(remainingDue, soldeFourn)}
-                step={0.01}
-              />
-            </div>
+          </dl>
+          <div className="space-y-1.5">
+            <Label htmlFor="compensation-montant">Montant à compenser</Label>
+            <Input
+              id="compensation-montant"
+              type="number"
+              inputMode="numeric"
+              value={compensationMontant}
+              onChange={(e) => {
+                setCompensationMontant(e.target.value);
+                setCompensationError(null);
+              }}
+              min={1}
+              max={maxCompensable}
+              step={1}
+              {...fieldErrorProps('compensation-montant', compensationError)}
+              aria-describedby={['compensation-montant-help', compensationError ? 'compensation-montant-error' : null]
+                .filter(Boolean)
+                .join(' ')}
+            />
+            <p id="compensation-montant-help" className="text-xs text-muted-foreground tabular-nums">
+              Maximum : {formatCurrency(maxCompensable)}
+            </p>
+            <FieldError id="compensation-montant">{compensationError}</FieldError>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCompensationModal(false)} disabled={compensationLoading}>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="touch"
+              onClick={() => setShowCompensationModal(false)}
+              disabled={compensationLoading}
+            >
               Annuler
             </Button>
-            <Button variant="warning" onClick={handleCompensation} disabled={compensationLoading}>
-              {compensationLoading ? 'En cours…' : 'Confirmer la compensation'}
+            <Button size="touch" onClick={handleCompensation} disabled={compensationLoading} className="gap-2">
+              {compensationLoading && <Spinner />}
+              Compenser {formatCurrency(Number(compensationMontant) || 0)}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Apply acompte Dialog */}
+      {/* Application d'un acompte : le formulaire et son bouton valent confirmation. */}
       <Dialog
         open={!!acompteToApply}
         onOpenChange={(open) => {
@@ -652,66 +845,74 @@ export default function FactureDetail() {
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5 text-info-700" />
-              Appliquer l'acompte
-            </DialogTitle>
+            <DialogTitle>Appliquer l’acompte n° {acompteToApply?.id}</DialogTitle>
             <DialogDescription>
-              Indiquez le montant de l'acompte à appliquer sur cette facture.
+              {formatCurrency(Number(applyMontant) || 0)} de l’acompte n° {acompteToApply?.id} seront déduits du reste
+              dû de la facture <DocumentCode>{facture.numero_facture}</DocumentCode>
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
-            <Label htmlFor="apply-acompte-montant">
-              Montant à appliquer (max {formatCurrency(acompteMaxApply)})
-            </Label>
+            <Label htmlFor="apply-acompte-montant">Montant à appliquer</Label>
             <Input
               id="apply-acompte-montant"
-              type="number" inputMode="decimal"
+              type="number"
+              inputMode="numeric"
               value={applyMontant}
-              onChange={(e) => setApplyMontant(e.target.value)}
-              min={0.01}
+              onChange={(e) => {
+                setApplyMontant(e.target.value);
+                setApplyError(null);
+              }}
+              min={1}
               max={acompteMaxApply}
-              step={0.01}
+              step={1}
+              {...fieldErrorProps('apply-acompte-montant', applyError)}
+              aria-describedby={['apply-acompte-montant-help', applyError ? 'apply-acompte-montant-error' : null]
+                .filter(Boolean)
+                .join(' ')}
             />
+            <p id="apply-acompte-montant-help" className="text-xs text-muted-foreground tabular-nums">
+              Maximum : {formatCurrency(acompteMaxApply)}
+            </p>
+            <FieldError id="apply-acompte-montant">{applyError}</FieldError>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAcompteToApply(null)} disabled={applyLoading}>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" size="touch" onClick={() => setAcompteToApply(null)} disabled={applyLoading}>
               Annuler
             </Button>
-            <Button onClick={handleApplyAcompte} disabled={applyLoading}>
-              {applyLoading ? 'En cours…' : 'Valider'}
+            <Button size="touch" onClick={handleApplyAcompte} disabled={applyLoading} className="gap-2">
+              {applyLoading && <Spinner />}
+              Appliquer l’acompte
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Payment Modal */}
       <PaymentModal
         isOpen={showPaymentModal}
         onClose={() => setShowPaymentModal(false)}
         onSubmit={handleAddPayment}
         remainingDue={remainingDue}
         total={total}
+        numeroFacture={facture.numero_facture}
+        acomptesDisponibles={acomptesTotal}
+        cashTill={cashTill}
+        caisseHref={canOpen('/caisse') ? '/caisse' : null}
       />
 
-      <PrintPreview
-        open={showPrintLayout}
-        onOpenChange={setShowPrintLayout}
-        format={printFormat}
-        onFormatChange={setPrintFormat}
-      >
+      <PrintPreview open={showPrintLayout} onOpenChange={setShowPrintLayout} format={printFormat} onFormatChange={setPrintFormat}>
         <DocumentPrint
           format={printFormat}
           docType="facture"
           numero={facture.numero_facture || `F${String(facture.id).padStart(5, '0')}`}
           dateDoc={facture.date_facture}
-          dateEcheance={(facture as any).date_echeance}
-          vendeur={(facture as any).cree_par_nom || 'Administrator'}
+          dateEcheance={facture.date_echeance}
           clientNom={facture.client_nom}
-          clientPrenom={(facture as any).client_prenom}
-          lignes={lignes as any}
+          clientPrenom={facture.client_prenom ?? undefined}
+          lignes={lignes}
+          montantPaye={montantPaye}
+          resteAPayer={remainingDue}
         />
       </PrintPreview>
-    </div>
+    </PageShell>
   );
 }

@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { stockLocationService } from '../services/StockLocationService';
 import { successResponse } from '../utils/response';
+import { AuthRequest } from '../middleware/auth';
+import { PRODUCT_MONEY_KEYS, redactForRole } from '../utils/roleRedaction';
 
 export class StockLocationController {
   /**
@@ -31,7 +33,7 @@ export class StockLocationController {
       const location = await stockLocationService.getById(parseInt(id));
 
       if (!location) {
-        res.status(404).json({ success: false, error: 'Location non trouvée' });
+        res.status(404).json({ success: false, error: 'Emplacement introuvable' });
         return;
       }
 
@@ -63,7 +65,7 @@ export class StockLocationController {
         req,
       });
 
-      res.status(201).json({ success: true, data: location, message: 'Location créée avec succès' });
+      res.status(201).json({ success: true, data: location, message: 'Emplacement créé' });
     } catch (error: any) {
       console.error('StockLocationController:', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -80,10 +82,10 @@ export class StockLocationController {
         code, nom, adresse, responsable_id, est_principal, req,
       });
       if (!updated) {
-        res.status(404).json({ success: false, error: 'Location non trouvée' });
+        res.status(404).json({ success: false, error: 'Emplacement introuvable' });
         return;
       }
-      res.json({ success: true, data: updated, message: 'Location mise à jour' });
+      res.json({ success: true, data: updated, message: 'Emplacement mis à jour' });
     } catch (error: any) {
       console.error('StockLocationController:', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -104,7 +106,7 @@ export class StockLocationController {
         res.status(result.reason === 'not_found' ? 404 : 400).json({ success: false, error: msg });
         return;
       }
-      res.json({ success: true, message: 'Location désactivée' });
+      res.json({ success: true, message: 'Emplacement désactivé' });
     } catch (error: any) {
       console.error('StockLocationController:', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -119,7 +121,12 @@ export class StockLocationController {
       const { id } = req.params;
       const stockLevels = await stockLocationService.getStockLevels(parseInt(id));
 
-      successResponse(res, stockLevels, 'Niveaux de stock récupérés avec succès');
+      // E2: dépôt staff see quantities only.
+      successResponse(
+        res,
+        redactForRole((req as AuthRequest).user?.role, stockLevels, PRODUCT_MONEY_KEYS),
+        'Niveaux de stock récupérés avec succès'
+      );
     } catch (error: any) {
       console.error('StockLocationController:', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -139,7 +146,11 @@ export class StockLocationController {
 
       const products = await stockLocationService.getProductsWithStock(locationId, searchTerm, limitNum);
 
-      successResponse(res, products, 'Produits récupérés avec succès');
+      successResponse(
+        res,
+        redactForRole((req as AuthRequest).user?.role, products, PRODUCT_MONEY_KEYS),
+        'Produits récupérés avec succès'
+      );
     } catch (error: any) {
       console.error('StockLocationController:', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });

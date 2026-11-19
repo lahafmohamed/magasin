@@ -23,12 +23,23 @@ const STORAGE_KEY = 'print_format';
  * Format d'impression retenu entre deux aperçus (partagé par tous les documents).
  */
 export function usePrintFormat(): [PrintFormat, (f: PrintFormat) => void] {
-  const [format, setFormat] = useState<PrintFormat>(
-    () => (localStorage.getItem(STORAGE_KEY) as PrintFormat) || 'A4'
-  );
+  // Stockage local protégé : il peut être indisponible (navigation privée,
+  // données de site bloquées) — le format revient alors à A4 sans erreur.
+  const [format, setFormat] = useState<PrintFormat>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved === 'A5' ? 'A5' : 'A4';
+    } catch {
+      return 'A4';
+    }
+  });
   const update = (f: PrintFormat) => {
     setFormat(f);
-    localStorage.setItem(STORAGE_KEY, f);
+    try {
+      localStorage.setItem(STORAGE_KEY, f);
+    } catch {
+      /* préférence non mémorisée : sans conséquence */
+    }
   };
   return [format, update];
 }
@@ -66,14 +77,16 @@ export function PrintPreview({
       {/* `print-layout` sort la feuille du flux en `position:absolute` : il faut
           donc neutraliser à l'impression le `fixed` ET le `translate` du
           dialogue, qui créeraient sinon un bloc conteneur pour cet absolu. */}
-      <DialogContent className="max-w-4xl grid-rows-[auto_1fr] overflow-hidden p-0 gap-0 print:static print:max-w-none print:transform-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:border-0 print:p-0 print:shadow-none">
+      {/* Pas de description : l'aperçu se décrit par son titre et la feuille.
+          aria-describedby={undefined} évite l'avertissement Radix. */}
+      <DialogContent aria-describedby={undefined} className="max-w-4xl grid-rows-[auto_1fr] overflow-hidden p-0 gap-0 print:static print:max-w-none print:transform-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:border-0 print:p-0 print:shadow-none">
         <DialogHeader className="flex-row items-center justify-between gap-4 space-y-0 border-b p-4 pr-12 print:hidden">
-          <DialogTitle className="text-lg font-semibold">Aperçu d'impression</DialogTitle>
+          <DialogTitle className="text-lg font-semibold">Aperçu avant impression</DialogTitle>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Format&nbsp;:</span>
+              <span className="text-muted-foreground">Format :</span>
               <Select value={format} onValueChange={(v) => onFormatChange(v as PrintFormat)}>
-                <SelectTrigger className="h-8 w-auto px-2 text-xs" aria-label="Format d'impression">
+                <SelectTrigger className="h-8 w-auto px-2 text-xs" aria-label="Format d’impression">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -89,8 +102,15 @@ export function PrintPreview({
           </div>
         </DialogHeader>
         {/* min-h-0 : sans lui la piste 1fr se dimensionne sur son contenu et
-            c'est la barre d'outils qui défilerait hors de vue. */}
-        <div className="min-h-0 overflow-auto bg-white print:overflow-visible">
+            c'est la barre d'outils qui défilerait hors de vue. La feuille défile :
+            région focusable et nommée pour la faire défiler au clavier (axe
+            scrollable-region-focusable). */}
+        <div
+          tabIndex={0}
+          role="region"
+          aria-label="Document à imprimer"
+          className="min-h-0 overflow-auto bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring print:overflow-visible"
+        >
           {children}
         </div>
       </DialogContent>

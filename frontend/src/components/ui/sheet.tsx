@@ -3,13 +3,16 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { cva, type VariantProps } from "class-variance-authority"
 import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { FocusReturnCapture } from "@/components/ui/dialog"
+import { useFocusReturn } from "@/components/ui/focus-return"
 
 /**
  * Panneau latéral (tiroir) adossé à Radix Dialog.
  *
  * À utiliser à la place d'un `fixed inset-0` fait main : Radix fournit le piège
  * de focus, la fermeture par Échap, le verrouillage du défilement et les rôles
- * ARIA — qu'un tiroir maison n'a pas.
+ * ARIA — qu'un tiroir maison n'a pas. Comme `DialogContent`, le contenu rend le
+ * focus à l'élément d'origine à la fermeture (`useFocusReturn`).
  */
 const Sheet = DialogPrimitive.Root
 const SheetTrigger = DialogPrimitive.Trigger
@@ -31,8 +34,10 @@ const SheetOverlay = React.forwardRef<
 ))
 SheetOverlay.displayName = DialogPrimitive.Overlay.displayName
 
+// `scroll-pb-36` : quand la page rend le tiroir défilant (`overflow-y-auto`), un
+// champ atteint au clavier ne s'arrête pas sous son pied d'actions collant.
 const sheetVariants = cva(
-  "fixed z-modal flex flex-col gap-0 bg-background shadow-xl transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-250 data-[state=open]:duration-250",
+  "fixed z-modal flex flex-col gap-0 scroll-pb-36 bg-popover text-popover-foreground shadow-xl transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-250 data-[state=open]:duration-250",
   {
     variants: {
       side: {
@@ -59,24 +64,29 @@ interface SheetContentProps
 const SheetContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
   SheetContentProps
->(({ side = "right", showClose = true, className, children, ...props }, ref) => (
-  <SheetPortal>
-    <SheetOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(sheetVariants({ side }), className)}
-      {...props}
-    >
-      {children}
-      {showClose && (
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none">
-          <X className="h-4 w-4" />
-          <span className="sr-only">Fermer</span>
-        </DialogPrimitive.Close>
-      )}
-    </DialogPrimitive.Content>
-  </SheetPortal>
-))
+>(({ side = "right", showClose = true, className, children, onCloseAutoFocus, ...props }, ref) => {
+  const focusReturn = useFocusReturn(onCloseAutoFocus)
+  return (
+    <SheetPortal>
+      <SheetOverlay />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(sheetVariants({ side }), className)}
+        onCloseAutoFocus={focusReturn.onCloseAutoFocus}
+        {...props}
+      >
+        <FocusReturnCapture opener={focusReturn.opener} />
+        {children}
+        {showClose && (
+          <DialogPrimitive.Close className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground ring-offset-background transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none sm:right-3 sm:top-3">
+            <X className="h-4 w-4" aria-hidden="true" />
+            <span className="sr-only">Fermer</span>
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Content>
+    </SheetPortal>
+  )
+})
 SheetContent.displayName = DialogPrimitive.Content.displayName
 
 const SheetHeader = ({

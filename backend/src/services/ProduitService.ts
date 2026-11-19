@@ -1,6 +1,19 @@
 import pool from '../db/connection';
 import { BaseService, PaginatedResult, PaginationParams } from './BaseService';
-import { costedStockIn } from './StockCostingService';
+import { applyStockMovement, costedStockIn, StockMovementType } from './StockCostingService';
+import { businessError } from '../utils/errors';
+
+/** What a recorded stock movement reports back (stock = at that location). */
+export interface StockMovementOutcome {
+  produit_id: number;
+  produit_nom: string;
+  location_id: number;
+  location_nom: string;
+  stock_avant: number;
+  /** Stock at `location_id` after the movement. */
+  stock: number;
+  mouvement_id: number;
+}
 
 export interface ProduitRecord {
   id: number;
@@ -57,6 +70,9 @@ function normalizeCodeBarre(value?: string | null): string | null {
   return trimmed ? trimmed : null;
 }
 
+/** Shared with ProduitController, which maps it to 400/422. */
+export const EMPLACEMENT_INVALIDE = 'Emplacement invalide ou inactif.';
+
 export class ProduitService extends BaseService<ProduitRecord> {
   protected tableName = 'produits';
   protected selectColumns = 'id, reference, nom, code_barre, description, categorie, prix_achat, prix_vente, stock, stock_min, fournisseur_id, created_at, updated_at';
@@ -81,7 +97,7 @@ export class ProduitService extends BaseService<ProduitRecord> {
       );
 
       if (!locationRows[0]) {
-        throw new Error('Depot invalide ou inactif');
+        throw new Error(EMPLACEMENT_INVALIDE);
       }
     }
 
@@ -116,19 +132,37 @@ export class ProduitService extends BaseService<ProduitRecord> {
       params.push(categorie);
     }
 
-    const havingClause = lowStock ? ' HAVING COALESCE(SUM(spl.quantite), 0) <= p.stock_min' : '';
+    // Per-location low stock counts only the products carried at that location
+    // (a stock_par_location row exists there). The LEFT JOIN otherwise turned
+    // every product never stocked at a depot into « 0 ≤ minimum »: a dépôt
+    // dashboard listed the whole catalogue as low stock.
+    const havingClause = lowStock
+      ? locationId !== undefined
+        ? ' HAVING COUNT(spl.id) > 0 AND COALESCE(SUM(spl.quantite), 0) <= p.stock_min'
+        : ' HAVING COALESCE(SUM(spl.quantite), 0) <= p.stock_min'
+      : '';
 
+    // `stocke_ici`: the product is carried at the filtered location (a
+    // stock_par_location row exists there, even at 0) — the UI says « Non
+    // stocké ici » instead of a red « Rupture » for a product the location
+    // never had. Without a location: carried somewhere.
     const dataQuery = `
       SELECT p.id, p.reference, p.nom, p.code_barre, p.description, p.categorie,
              p.prix_achat, p.prix_vente,
              COALESCE(SUM(spl.quantite), 0)::integer as stock,
+             (COUNT(spl.id) > 0) AS stocke_ici,
              p.stock_min, p.created_at, p.updated_at
       ${baseQuery}
       GROUP BY p.id
       ${havingClause}
     `;
 
-    const countQuery = `SELECT COUNT(DISTINCT p.id) as total ${baseQuery}`;
+    // The low-stock filter lives in HAVING, so the count must group exactly
+    // like the data query. COUNT(DISTINCT p.id) over the bare WHERE counted the
+    // whole catalogue (U-10: « 40 produits sous leur stock minimum » for 3).
+    const countQuery = lowStock
+      ? `SELECT COUNT(*) as total FROM (SELECT p.id ${baseQuery} GROUP BY p.id ${havingClause}) low_stock_products`
+      : `SELECT COUNT(DISTINCT p.id) as total ${baseQuery}`;
 
     // Handle sorting — whitelist to prevent SQL injection
     const ALLOWED_SORT = ['nom', 'reference', 'categorie', 'prix_vente', 'stock', 'created_at'];
@@ -182,7 +216,7 @@ export class ProduitService extends BaseService<ProduitRecord> {
         );
 
         if (!locationRows[0]) {
-          throw new Error('Depot invalide ou inactif');
+          throw new Error(EMPLACEMENT_INVALIDE);
         }
 
         effectiveLocationId = locationRows[0].id;
@@ -281,55 +315,24 @@ export class ProduitService extends BaseService<ProduitRecord> {
   }
 
   /**
-   * Adjust stock quantity - Uses stock_par_location
+   * PATCH /produits/:id/stock — a manual stock adjustment. It used to change
+   * stock_par_location without writing any mouvements_stock row (the history
+   * missed every such change); it is now an « ajustement » movement through the
+   * same transactional path as POST /produits/:id/mouvements.
    */
-  async adjustStock(id: number, quantite: number, locationId?: number): Promise<{ stock: number } | null> {
-    if (locationId) {
-      const { rows: locationRows } = await pool.query(
-        'SELECT id FROM stock_locations WHERE id = $1 AND actif = true LIMIT 1',
-        [locationId]
-      );
-
-      if (!locationRows[0]) {
-        throw new Error('Depot invalide ou inactif');
-      }
-    }
-
-    // Check if product exists
-    const { rows: existsRows } = await pool.query('SELECT id FROM produits WHERE id = $1 AND deleted_at IS NULL', [id]);
-    if (!existsRows[0]) return null;
-
-    // Get current stock at location (default to MAIN location if not specified)
-    const stockQuery = locationId
-      ? 'SELECT get_stock_at_location($1, $2) as stock'
-      : 'SELECT get_stock_at_location($1) as stock';
-    
-    const { rows: productRows } = await pool.query(stockQuery, locationId ? [id, locationId] : [id]);
-    if (!productRows[0] || productRows[0].stock === null) return null;
-
-    const stockAvant = parseInt(productRows[0].stock);
-    const stockApres = stockAvant + quantite;
-
-    // Prevent negative stock
-    if (stockApres < 0) {
-      throw new Error(`Stock insuffisant. Stock actuel: ${stockAvant}, Ajustement demandé: ${quantite}. Le stock ne peut pas être négatif.`);
-    }
-
-    // Use helper function to adjust stock
-    const operation = quantite >= 0 ? 'add' : 'remove';
-    const absQuantity = Math.abs(quantite);
-    
-    if (locationId) {
-      await pool.query('SELECT adjust_stock_at_location($1, $2, $3, $4)', [id, locationId, absQuantity, operation]);
-    } else {
-      // Default to MAIN location
-      const { rows: locationRows } = await pool.query('SELECT id FROM stock_locations WHERE est_principal = true LIMIT 1');
-      if (locationRows[0]) {
-        await pool.query('SELECT adjust_stock_at_location($1, $2, $3, $4)', [id, locationRows[0].id, absQuantity, operation]);
-      }
-    }
-
-    return { stock: stockApres };
+  async adjustStock(
+    id: number,
+    quantite: number,
+    locationId?: number,
+    raison?: string
+  ): Promise<StockMovementOutcome | null> {
+    return this.addStockMovement(
+      id,
+      'ajustement',
+      quantite,
+      locationId,
+      raison?.trim() || 'Ajustement manuel du stock'
+    );
   }
 
   /**
@@ -389,53 +392,91 @@ export class ProduitService extends BaseService<ProduitRecord> {
   }
 
   /**
-   * Add a stock movement - Uses stock_par_location
+   * Record one stock movement at one location (POST /produits/:id/mouvements).
+   *
+   * One transaction: the location's stock row is locked FOR UPDATE, the
+   * change and its mouvements_stock row are written together, and a removal
+   * larger than the stock is refused with a French 422 naming the product and
+   * the location (STOCK_INSUFFISANT). Before, the movement row was inserted
+   * first and the stock change could then fail — an orphan row stayed behind
+   * and the user got a 500 with the SQL function's English message.
+   *
+   * Without `locationId` the movement lands on the active principal location;
+   * stock_avant / stock_apres are that location's stock (they used to mix the
+   * all-locations total with a change applied to the principal one).
+   *
+   * Returns null when the product does not exist (or is deleted).
    */
   async addStockMovement(
     produitId: number,
-    type_mouvement: string,
+    type_mouvement: StockMovementType,
     quantite: number,
     locationId?: number,
     raison?: string,
     reference_liee?: string
-  ): Promise<{ stock: number } | null> {
-    // Check if product exists
-    const { rows: existsRows } = await pool.query('SELECT id FROM produits WHERE id = $1 AND deleted_at IS NULL', [produitId]);
-    if (!existsRows[0]) return null;
+  ): Promise<StockMovementOutcome | null> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    // Get current stock at location
-    const stockBefore = locationId 
-      ? await pool.query('SELECT get_stock_at_location($1, $2) as stock', [produitId, locationId])
-      : await pool.query('SELECT get_stock_at_location($1) as stock', [produitId]);
-    
-    if (!stockBefore.rows[0]) return null;
-
-    const stockAvant = parseInt(stockBefore.rows[0].stock);
-    const stockApres = stockAvant + quantite;
-
-    // Insert movement record
-    await pool.query(
-      `INSERT INTO mouvements_stock
-       (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [produitId, type_mouvement, quantite, stockAvant, stockApres, raison || null, reference_liee || null, locationId || null]
-    );
-
-    // Update stock at location
-    const operation = quantite >= 0 ? 'add' : 'remove';
-    const absQuantity = Math.abs(quantite);
-    
-    if (locationId) {
-      await pool.query('SELECT adjust_stock_at_location($1, $2, $3, $4)', [produitId, locationId, absQuantity, operation]);
-    } else {
-      // Default to MAIN location
-      const { rows: locationRows } = await pool.query('SELECT id FROM stock_locations WHERE est_principal = true LIMIT 1');
-      if (locationRows[0]) {
-        await pool.query('SELECT adjust_stock_at_location($1, $2, $3, $4)', [produitId, locationRows[0].id, absQuantity, operation]);
+      const { rows: produitRows } = await client.query(
+        'SELECT id, nom FROM produits WHERE id = $1 AND deleted_at IS NULL',
+        [produitId]
+      );
+      if (!produitRows[0]) {
+        await client.query('ROLLBACK');
+        return null;
       }
-    }
 
-    return { stock: stockApres };
+      let location: { id: number; nom: string } | undefined;
+      if (locationId !== undefined && locationId !== null) {
+        const { rows } = await client.query(
+          'SELECT id, nom FROM stock_locations WHERE id = $1 AND actif = true',
+          [locationId]
+        );
+        if (!rows[0]) throw new Error(EMPLACEMENT_INVALIDE);
+        location = rows[0];
+      } else {
+        const { rows } = await client.query(
+          'SELECT id, nom FROM stock_locations WHERE est_principal = true AND actif = true ORDER BY id LIMIT 1'
+        );
+        if (!rows[0]) {
+          throw businessError(
+            422,
+            'Aucun emplacement principal actif : précisez l’emplacement du mouvement.',
+            'EMPLACEMENT_REQUIS'
+          );
+        }
+        location = rows[0];
+      }
+
+      const movement = await applyStockMovement(client, {
+        produitId,
+        locationId: location!.id,
+        delta: quantite,
+        unitCost: null,
+        type: type_mouvement,
+        raison: raison?.trim() || null,
+        reference: reference_liee?.trim() || null,
+      });
+
+      await client.query('COMMIT');
+
+      return {
+        produit_id: produitId,
+        produit_nom: produitRows[0].nom,
+        location_id: location!.id,
+        location_nom: location!.nom,
+        stock_avant: movement.stockAvant,
+        stock: movement.stockApres,
+        mouvement_id: movement.mouvementId,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   /**
@@ -445,13 +486,29 @@ export class ProduitService extends BaseService<ProduitRecord> {
   async searchFuzzy(
     query: string,
     limit: number = 10,
-    threshold: number = 0.1
-  ): Promise<Array<ProduitRecord & { similarity: number }>> {
+    threshold: number = 0.1,
+    locationId?: number
+  ): Promise<Array<ProduitRecord & { similarity: number; stock_total: number }>> {
     if (!query || query.trim().length < 2) {
       return [];
     }
 
     const searchTerm = query.trim();
+    const location = locationId ?? null;
+
+    // With a location, `stock` is the stock AT that location (a legacy product
+    // without any stock_par_location row keeps its produits.stock, the same
+    // fallback the sales paths apply); `stock_total` is always every location.
+    const stockSelect = `
+          CASE WHEN $LOC::int IS NULL THEN p.stock
+               ELSE COALESCE(
+                 spl.quantite,
+                 CASE WHEN EXISTS (SELECT 1 FROM stock_par_location s2 WHERE s2.produit_id = p.id)
+                      THEN 0 ELSE p.stock END
+               )
+          END AS stock,
+          p.stock AS stock_total`;
+    const stockJoin = 'LEFT JOIN stock_par_location spl ON spl.produit_id = p.id AND spl.location_id = $LOC::int';
 
     try {
       const { rows } = await pool.query(
@@ -464,7 +521,7 @@ export class ProduitService extends BaseService<ProduitRecord> {
           p.categorie,
           p.prix_achat,
           p.prix_vente,
-          p.stock,
+          ${stockSelect.replace(/\$LOC/g, '$4')},
           p.stock_min,
           p.created_at,
           p.updated_at,
@@ -475,6 +532,7 @@ export class ProduitService extends BaseService<ProduitRecord> {
             similarity(COALESCE(p.categorie, ''), $1) * 0.5
           ) END as similarity
         FROM produits p
+        ${stockJoin.replace(/\$LOC/g, '$4')}
         WHERE p.deleted_at IS NULL
           AND (
             p.nom % $1
@@ -492,7 +550,7 @@ export class ProduitService extends BaseService<ProduitRecord> {
           ) > $2)
         ORDER BY similarity DESC, p.nom ASC
         LIMIT $3`,
-        [searchTerm, threshold, limit]
+        [searchTerm, threshold, limit, location]
       );
       return rows;
     } catch (error: any) {
@@ -508,12 +566,13 @@ export class ProduitService extends BaseService<ProduitRecord> {
             p.categorie,
             p.prix_achat,
             p.prix_vente,
-            p.stock,
+            ${stockSelect.replace(/\$LOC/g, '$3')},
             p.stock_min,
             p.created_at,
             p.updated_at,
             CASE WHEN p.code_barre = $1 THEN 1 ELSE 0.5 END as similarity
           FROM produits p
+          ${stockJoin.replace(/\$LOC/g, '$3')}
           WHERE p.deleted_at IS NULL
             AND (
               p.nom ILIKE '%' || $1 || '%'
@@ -523,7 +582,7 @@ export class ProduitService extends BaseService<ProduitRecord> {
             )
           ORDER BY similarity DESC, p.nom ASC
           LIMIT $2`,
-          [searchTerm, limit]
+          [searchTerm, limit, location]
         );
         return rows;
       }

@@ -16,14 +16,14 @@ export class CaisseMagasinController {
       const magasinId = parseInt(req.query.magasin_id as string);
 
       if (!magasinId) {
-        res.status(400).json({ error: 'magasin_id requis' });
+        res.status(400).json({ success: false, error: 'Choisissez un magasin.' });
         return;
       }
 
       // Check permission
       const userRole = await caisseMagasinService.getUserMagasinRole(authReq.user!.id, magasinId);
       if (userRole === 'none') {
-        res.status(403).json({ error: 'Accès refusé - vous ne pouvez pas voir cette caisse' });
+        res.status(403).json({ success: false, error: 'Accès refusé : vous n’êtes pas affecté à ce magasin.' });
         return;
       }
 
@@ -36,7 +36,7 @@ export class CaisseMagasinController {
       });
     } catch (error: any) {
       console.error('Erreur GET /api/caisse/session-active:', error);
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -50,7 +50,7 @@ export class CaisseMagasinController {
       const { magasin_id, fond_initial, commentaire_ouverture } = req.body;
 
       if (!magasin_id || fond_initial === undefined || fond_initial === null) {
-        res.status(400).json({ error: 'magasin_id et fond_initial requis' });
+        res.status(400).json({ success: false, error: 'Choisissez le magasin et saisissez le fonds de caisse.' });
         return;
       }
 
@@ -84,7 +84,7 @@ export class CaisseMagasinController {
       const { fond_final_compte, commentaire_cloture } = req.body;
 
       if (!sessionId || fond_final_compte === undefined || fond_final_compte === null) {
-        res.status(400).json({ error: 'session_id et fond_final_compte requis' });
+        res.status(400).json({ success: false, error: 'Saisissez le montant des espèces comptées.' });
         return;
       }
 
@@ -121,7 +121,7 @@ export class CaisseMagasinController {
       const sessionId = parseInt(req.params.session_id);
 
       if (!sessionId) {
-        res.status(400).json({ error: 'session_id requis' });
+        res.status(400).json({ success: false, error: 'Session de caisse non précisée.' });
         return;
       }
 
@@ -130,7 +130,7 @@ export class CaisseMagasinController {
       // Check permission
       const userRole = await caisseMagasinService.getUserMagasinRole(authReq.user!.id, session.magasin_id);
       if (userRole === 'none') {
-        res.status(403).json({ error: 'Accès refusé' });
+        res.status(403).json({ success: false, error: 'Accès refusé : vous n’êtes pas affecté à ce magasin.' });
         return;
       }
 
@@ -154,6 +154,12 @@ export class CaisseMagasinController {
       const authReq = req as AuthRequest;
       const { magasin_id, from, to, page, limit } = req.query;
 
+      const isDay = (v: unknown) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
+      if ((from !== undefined && from !== '' && !isDay(from)) || (to !== undefined && to !== '' && !isDay(to))) {
+        res.status(400).json({ success: false, error: 'Date invalide : utilisez le format AAAA-MM-JJ.' });
+        return;
+      }
+
       // If magasin_id specified, check permission
       if (magasin_id) {
         const userRole = await caisseMagasinService.getUserMagasinRole(
@@ -161,7 +167,7 @@ export class CaisseMagasinController {
           parseInt(magasin_id as string)
         );
         if (userRole === 'none') {
-          res.status(403).json({ error: 'Accès refusé' });
+          res.status(403).json({ success: false, error: 'Accès refusé : vous n’êtes pas affecté à ce magasin.' });
           return;
         }
       }
@@ -180,7 +186,7 @@ export class CaisseMagasinController {
       });
     } catch (error: any) {
       console.error('Erreur GET /api/caisse/historique:', error);
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -203,7 +209,7 @@ export class CaisseMagasinController {
       });
     } catch (error: any) {
       console.error('Erreur GET /api/caisse/magasins:', error);
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
@@ -224,7 +230,7 @@ export class CaisseMagasinController {
         : undefined;
 
       if (!sessionId) {
-        res.status(400).json({ error: 'session_id requis' });
+        res.status(400).json({ success: false, error: 'Session de caisse non précisée.' });
         return;
       }
 
@@ -232,7 +238,7 @@ export class CaisseMagasinController {
 
       const userRole = await caisseMagasinService.getUserMagasinRole(authReq.user!.id, preview.magasin_id);
       if (userRole === 'none') {
-        res.status(403).json({ error: 'Accès refusé' });
+        res.status(403).json({ success: false, error: 'Accès refusé : vous n’êtes pas affecté à ce magasin.' });
         return;
       }
 
@@ -261,27 +267,27 @@ export class CaisseMagasinController {
       const VALID_METHODS: readonly string[] = PAYMENT_METHODS;
 
       if (!sessionId) {
-        res.status(400).json({ error: 'session_id requis' });
+        res.status(400).json({ success: false, error: 'Session de caisse non précisée.' });
         return;
       }
       if (!['encaissement', 'decaissement'].includes(type)) {
-        res.status(400).json({ error: 'type invalide (encaissement|decaissement)' });
+        res.status(400).json({ success: false, error: 'Type de mouvement invalide : encaissement ou décaissement.' });
         return;
       }
       if (!ALLOWED_CATEGORIES.includes(categorie)) {
-        res.status(400).json({ error: `categorie doit être l'une de: ${ALLOWED_CATEGORIES.join(', ')}` });
+        res.status(400).json({ success: false, error: 'Catégorie de mouvement invalide.' });
         return;
       }
       if (!methode_paiement || !VALID_METHODS.includes(methode_paiement)) {
-        res.status(400).json({ error: 'methode_paiement invalide' });
+        res.status(400).json({ success: false, error: 'Mode de paiement invalide.' });
         return;
       }
       if (!libelle || libelle.trim().length < 3) {
-        res.status(400).json({ error: 'libelle (motif) obligatoire (≥3 caractères)' });
+        res.status(400).json({ success: false, error: 'Indiquez le motif du mouvement (au moins 3 caractères).' });
         return;
       }
       if (!montant || Number(montant) <= 0) {
-        res.status(400).json({ error: 'montant > 0 obligatoire' });
+        res.status(400).json({ success: false, error: 'Le montant doit être supérieur à 0.' });
         return;
       }
 
@@ -291,12 +297,12 @@ export class CaisseMagasinController {
         [sessionId]
       );
       if (sessRows.length === 0) {
-        res.status(404).json({ error: 'Session introuvable' });
+        res.status(404).json({ success: false, error: 'Session introuvable' });
         return;
       }
       const userRole = await caisseMagasinService.getUserMagasinRole(authReq.user!.id, sessRows[0].magasin_id);
       if (userRole === 'none') {
-        res.status(403).json({ error: 'Accès refusé' });
+        res.status(403).json({ success: false, error: 'Accès refusé : vous n’êtes pas affecté à ce magasin.' });
         return;
       }
 
@@ -330,7 +336,7 @@ export class CaisseMagasinController {
       const sessionId = parseInt(req.params.session_id);
 
       if (!sessionId) {
-        res.status(400).json({ error: 'session_id requis' });
+        res.status(400).json({ success: false, error: 'Session de caisse non précisée.' });
         return;
       }
 
@@ -341,7 +347,7 @@ export class CaisseMagasinController {
         // Try to get session info to check permission
         const session = await caisseMagasinService.getSessionDetail(sessionId).catch(() => null);
         if (!session) {
-          res.status(404).json({ error: 'Session non trouvée' });
+          res.status(404).json({ success: false, error: 'Session non trouvée' });
           return;
         }
         
@@ -350,7 +356,7 @@ export class CaisseMagasinController {
           session.magasin_id
         );
         if (userRole === 'none') {
-          res.status(403).json({ error: 'Accès refusé' });
+          res.status(403).json({ success: false, error: 'Accès refusé : vous n’êtes pas affecté à ce magasin.' });
           return;
         }
         
@@ -365,7 +371,7 @@ export class CaisseMagasinController {
       );
 
       if (sessionRows.length === 0) {
-        res.status(404).json({ error: 'Session non trouvée' });
+        res.status(404).json({ success: false, error: 'Session non trouvée' });
         return;
       }
 
@@ -374,7 +380,7 @@ export class CaisseMagasinController {
         sessionRows[0].magasin_id
       );
       if (userRole === 'none') {
-        res.status(403).json({ error: 'Accès refusé' });
+        res.status(403).json({ success: false, error: 'Accès refusé : vous n’êtes pas affecté à ce magasin.' });
         return;
       }
 
@@ -384,7 +390,7 @@ export class CaisseMagasinController {
       });
     } catch (error: any) {
       console.error('Erreur GET /api/caisse/mouvements:', error);
-      res.status(500).json({ error: 'Erreur serveur' });
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 }

@@ -134,9 +134,10 @@ describe('FactureService', () => {
         ],
       };
 
-      await expect(factureService.create(input)).rejects.toThrow(
-        'Produit ID 999999 non trouvé'
-      );
+      await expect(factureService.create(input)).rejects.toMatchObject({
+        statusCode: 404,
+        message: 'Produit introuvable (n° 999999) : il a peut-être été supprimé.',
+      });
     });
 
     it('should throw error when stock is insufficient', async () => {
@@ -386,6 +387,78 @@ describe('FactureService', () => {
       expect(fetched.lignes).toHaveLength(2);
       expect(fetched.paiements).toBeDefined();
       expect(fetched.client_nom).toBe('FactureTest Client');
+    });
+
+    it('paiements : source, notes, suppression permise ou non, lignes supprimées exclues ; vendeur nommé', async () => {
+      const { rows: adminRows } = await pool.query("SELECT id, nom_complet FROM utilisateurs WHERE username = 'admin'");
+      const result = await factureService.create({
+        tiers_id: testClientId,
+        lignes: [{ produit_id: testProduct1Id, quantite: 4, prix_unitaire: 5000 }],
+        cree_par: adminRows[0].id,
+      });
+      createdInvoiceIds.push(result.id);
+
+      const { rows: [direct] } = await pool.query(
+        `INSERT INTO paiements (facture_id, montant, methode_paiement, date_paiement, notes, source)
+         VALUES ($1, 1000, 'virement', CURRENT_TIMESTAMP, 'Virement client', 'direct') RETURNING id`,
+        [result.id]
+      );
+      const { rows: [gone] } = await pool.query(
+        `INSERT INTO paiements (facture_id, montant, methode_paiement, date_paiement, source, deleted_at)
+         VALUES ($1, 700, 'carte', CURRENT_TIMESTAMP, 'direct', CURRENT_TIMESTAMP) RETURNING id`,
+        [result.id]
+      );
+      const { rows: [acompte] } = await pool.query(
+        `INSERT INTO acomptes_clients (tiers_id, montant, montant_restant, date_acompte, statut, notes)
+         VALUES ($1, 2000, 2000, CURRENT_TIMESTAMP, 'disponible', 'Acompte test détail') RETURNING id`,
+        [testClientId]
+      );
+      const { rows: [fromAcompte] } = await pool.query(
+        `INSERT INTO paiements (facture_id, montant, methode_paiement, date_paiement, notes, source)
+         VALUES ($1, 2000, 'espece', CURRENT_TIMESTAMP, 'Pris sur l’acompte', 'acompte_application') RETURNING id`,
+        [result.id]
+      );
+      await pool.query(
+        `INSERT INTO acompte_applications (acompte_id, facture_id, paiement_id, montant)
+         VALUES ($1, $2, $3, 2000)`,
+        [acompte.id, result.id, fromAcompte.id]
+      );
+      const { rows: [legacy] } = await pool.query(
+        `INSERT INTO acomptes_clients (tiers_id, montant, montant_restant, date_acompte, statut, facture_id_applique, date_utilisation)
+         VALUES ($1, 500, 0, CURRENT_TIMESTAMP, 'utilise', $2, CURRENT_TIMESTAMP) RETURNING id`,
+        [testClientId, result.id]
+      );
+
+      try {
+        const fetched = await factureService.getById(result.id);
+
+        expect(fetched.cree_par_nom).toBe(adminRows[0].nom_complet);
+        const byId = new Map(fetched.paiements.map((p: any) => [p.id, p]));
+        expect(byId.has(gone.id)).toBe(false);
+        expect(byId.get(direct.id)).toMatchObject({
+          source: 'direct',
+          notes: 'Virement client',
+          supprimable: true,
+          suppression_bloquee: null,
+        });
+        expect(byId.get(fromAcompte.id)).toMatchObject({
+          source: 'acompte_application',
+          acompte_id: acompte.id,
+          supprimable: false,
+          suppression_bloquee: 'Paiement pris sur un acompte : annulez l’application de l’acompte.',
+        });
+        expect(byId.get(-legacy.id)).toMatchObject({
+          source: 'acompte_application',
+          methode_paiement: 'acompte',
+          acompte_id: legacy.id,
+          supprimable: false,
+        });
+        expect(fetched.paiements).toHaveLength(3);
+      } finally {
+        await pool.query('DELETE FROM acompte_applications WHERE facture_id = $1', [result.id]);
+        await pool.query('DELETE FROM paiements WHERE facture_id = $1', [result.id]);
+        await pool.query('DELETE FROM acomptes_clients WHERE id = ANY($1::int[])', [[acompte.id, legacy.id]]);
+      }
     });
 
     it('should return null for non-existent invoice', async () => {

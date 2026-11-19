@@ -4,17 +4,24 @@ import app from '../server';
 import pool from '../db/connection';
 
 /**
- * Integration tests for the payment flow (PaiementController) and the FIFO
+ * Integration tests for the payment flow (PaiementController) and the
  * client-allocation engine (ClientAllocationService).
  *
  * Domain semantics under test (verified against the code, not assumed):
- *  - factures.montant_paye/statut derive from a FULL FIFO recompute across the
- *    client's account (payments + unapplied acompte remainders), oldest facture
- *    first. Tests therefore use a FRESH tiers per scenario.
- *  - Acomptes auto-allocate to open factures at recompute time (facture create,
- *    payment, etc.). Facture statuts: en_attente / partielle / payee.
- *  - Payment payload `montant` is the total to settle: available acomptes are
- *    applied first, only the remainder is recorded as a direct payment.
+ *  - factures.montant_paye/statut derive from a recompute of the client's
+ *    account. E1 (2026-10-24): each payment settles the invoice it was
+ *    recorded on; only money without a target (acompte remainders spread
+ *    automatically, legacy overpayments) goes to the oldest facture first.
+ *    Tests use a FRESH tiers per scenario (see AllocationE1.test.ts for the
+ *    multi-invoice cases).
+ *  - Acomptes auto-allocate to open factures at recompute time on facture
+ *    creation (and the other non-payment events). Facture statuts:
+ *    en_attente / partielle / payee.
+ *  - D3 (2026-10-23): a payment records exactly `montant` as a direct payment.
+ *    Available acomptes are applied only when the caller asks for it
+ *    (`appliquer_acomptes: true`) or through POST /acomptes/:id/apply — never
+ *    as a side effect of « Enregistrer le paiement ».
+ *  - The response uses the standard envelope: { success, data, message }.
  *
  * Requires the dev database (same convention as the other integration tests).
  */
@@ -100,10 +107,26 @@ async function pay(factureId: number, body: Record<string, unknown>) {
     .set(auth())
     .send(body);
   if (res.status === 201) {
-    if (res.body.direct_paiement_id) trackedPaiementIds.push(res.body.direct_paiement_id);
-    for (const a of res.body.applications ?? []) trackedPaiementIds.push(a.paiement_id);
+    if (res.body.data?.direct_paiement_id) trackedPaiementIds.push(res.body.data.direct_paiement_id);
+    for (const a of res.body.data?.applications ?? []) trackedPaiementIds.push(a.paiement_id);
   }
   return res;
+}
+
+async function getAcompte(id: number) {
+  const { rows } = await pool.query(
+    'SELECT statut, montant_restant FROM acomptes_clients WHERE id = $1',
+    [id]
+  );
+  return { statut: rows[0].statut as string, montant_restant: parseFloat(rows[0].montant_restant) };
+}
+
+async function sumPaiements(factureId: number): Promise<number> {
+  const { rows } = await pool.query(
+    'SELECT COALESCE(SUM(montant), 0) AS total FROM paiements WHERE facture_id = $1',
+    [factureId]
+  );
+  return parseFloat(rows[0].total);
 }
 
 async function getFacture(id: number) {
@@ -219,6 +242,18 @@ describe('Paiements API (Integration)', () => {
       expect(res.body.error).toMatch(/clôturée/);
     });
 
+    it('rejects cash when no till is open, with a code the UI can act on (409 CAISSE_FERMEE)', async () => {
+      const tiersId = await newTiers();
+      const { id } = await newFacture(tiersId, 2);
+      const res = await pay(id, { montant: 1000, methode_paiement: 'espece' });
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        success: false,
+        code: 'CAISSE_FERMEE',
+        error: 'La caisse de ce magasin est fermée : ouvrez-la avant d’encaisser des espèces.',
+      });
+    });
+
     it('rejects payment on an annulee facture (400)', async () => {
       const tiersId = await newTiers();
       const { id } = await newFacture(tiersId, 2);
@@ -245,8 +280,9 @@ describe('Paiements API (Integration)', () => {
         skip_acompte_application: true,
       });
       expect(res.status).toBe(201);
-      expect(res.body.direct_montant).toBe(total);
-      expect(res.body.applique_depuis_acomptes).toBe(0);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.direct_montant).toBe(total);
+      expect(res.body.data.applique_depuis_acomptes).toBe(0);
 
       const facture = await getFacture(id);
       expect(parseFloat(facture.montant_paye)).toBe(total);
@@ -279,23 +315,108 @@ describe('Paiements API (Integration)', () => {
       expect(facture.statut).toBe('partielle');
     });
 
-    it('payment-time FIFO applies a disponible acompte, remainder as direct', async () => {
+    it('explicit request (appliquer_acomptes) applies a disponible acompte, remainder as direct', async () => {
       const tiersId = await newTiers();
       const { id } = await newFacture(tiersId, 10); // 10 000
       const acompteId = await newAcompte(tiersId, 4000); // created after -> still disponible
 
+      const res = await pay(id, { montant: 6000, methode_paiement: 'virement', appliquer_acomptes: true });
+      expect(res.status).toBe(201);
+      expect(res.body.data.applique_depuis_acomptes).toBe(4000);
+      expect(res.body.data.direct_montant).toBe(2000); // montant is the total to settle
+      expect(res.body.data.applications).toHaveLength(1);
+      expect(res.body.data.applications[0].acompte_id).toBe(acompteId);
+      expect(res.body.message).toContain('pris sur l’acompte');
+
+      expect((await getAcompte(acompteId)).montant_restant).toBe(0);
+      expect(await sumPaiements(id)).toBe(6000);
+    });
+
+    it('explicit request never applies more than the amount entered', async () => {
+      const tiersId = await newTiers();
+      const { id } = await newFacture(tiersId, 10); // 10 000
+      const acompteId = await newAcompte(tiersId, 8000);
+
+      // Before D3 the acomptes were applied up to the invoice balance, so 3 000
+      // entered could book 8 000 from the deposit.
+      const res = await pay(id, { montant: 3000, methode_paiement: 'virement', appliquer_acomptes: true });
+      expect(res.status).toBe(201);
+      expect(res.body.data.applique_depuis_acomptes).toBe(3000);
+      expect(res.body.data.direct_montant).toBe(0);
+      expect((await getAcompte(acompteId)).montant_restant).toBe(5000);
+      expect(parseFloat((await getFacture(id)).montant_paye)).toBe(3000);
+    });
+
+    it('D3: without an explicit request the full amount is recorded and the acompte stays available', async () => {
+      const tiersId = await newTiers();
+      const { id, total } = await newFacture(tiersId, 10); // 10 000
+      const acompteId = await newAcompte(tiersId, 4000); // created after the facture -> disponible
+
+      // The cashier collects the full balance in cash (the modal prefills it).
+      const res = await pay(id, { montant: total, methode_paiement: 'virement' });
+      expect(res.status).toBe(201);
+      expect(res.body.data).toMatchObject({
+        montant_recu: total,
+        direct_montant: total,
+        applique_depuis_acomptes: 0,
+        applications: [],
+        reste_du: 0,
+        statut_facture: 'payee',
+        acomptes_disponibles: 4000,
+      });
+      expect(res.body.message).toBe('Paiement de 10 000 FCFA enregistré par virement. Facture soldée.');
+
+      // Deposit untouched, and no double counting on the invoice.
+      expect(await getAcompte(acompteId)).toEqual({ statut: 'disponible', montant_restant: 4000 });
+      expect(await sumPaiements(id)).toBe(total);
+      const facture = await getFacture(id);
+      expect(parseFloat(facture.montant_paye)).toBe(total);
+      expect(facture.statut).toBe('payee');
+    });
+
+    it('D3: a partial payment does not top the invoice up from the acompte', async () => {
+      const tiersId = await newTiers();
+      const { id } = await newFacture(tiersId, 10); // 10 000
+      const acompteId = await newAcompte(tiersId, 4000);
+
       const res = await pay(id, { montant: 6000, methode_paiement: 'virement' });
       expect(res.status).toBe(201);
-      expect(res.body.applique_depuis_acomptes).toBe(4000);
-      expect(res.body.direct_montant).toBe(2000); // montant is the total to settle
-      expect(res.body.applications).toHaveLength(1);
-      expect(res.body.applications[0].acompte_id).toBe(acompteId);
+      expect(res.body.data.direct_montant).toBe(6000);
+      expect(res.body.data.reste_du).toBe(4000);
+      expect(res.body.data.statut_facture).toBe('partielle');
+      expect(res.body.message).toContain('Reste dû : 4 000 FCFA');
 
-      const { rows } = await pool.query(
-        'SELECT statut, montant_restant FROM acomptes_clients WHERE id = $1',
-        [acompteId]
+      expect(await getAcompte(acompteId)).toEqual({ statut: 'disponible', montant_restant: 4000 });
+      const facture = await getFacture(id);
+      expect(parseFloat(facture.montant_paye)).toBe(6000);
+      expect(facture.statut).toBe('partielle');
+    });
+
+    it('D3: acompte money an invoice already counts (legacy recompute) is kept, not dropped', async () => {
+      // Before 2026-07-18 the recompute spent acompte balances straight into
+      // factures.montant_paye without writing payment rows: the invoice counts
+      // the deposit while the acompte still shows a balance. Production still
+      // carries such rows. Recording a payment must not make that money vanish
+      // from the invoice.
+      const tiersId = await newTiers();
+      const { id } = await newFacture(tiersId, 10); // 10 000
+      const acompteId = await newAcompte(tiersId, 4000);
+      await pool.query(
+        `UPDATE factures SET montant_paye = 4000, remaining_due = total - 4000, statut = 'partielle' WHERE id = $1`,
+        [id]
       );
-      expect(parseFloat(rows[0].montant_restant)).toBe(0);
+      await pool.query(`UPDATE acomptes_clients SET statut = 'utilise' WHERE id = $1`, [acompteId]);
+
+      const res = await pay(id, { montant: 2000, methode_paiement: 'virement' });
+      expect(res.status).toBe(201);
+      expect(res.body.data.direct_montant).toBe(2000);
+      expect(res.body.data.reste_du).toBe(4000);
+
+      const facture = await getFacture(id);
+      expect(parseFloat(facture.montant_paye)).toBe(6000);
+      // The counted deposit is now recorded as an application row.
+      expect(await sumPaiements(id)).toBe(6000);
+      expect((await getAcompte(acompteId)).montant_restant).toBe(0);
     });
 
     it('REGRESSION: applied acompte money is not double-counted by the recompute', async () => {
@@ -307,7 +428,7 @@ describe('Paiements API (Integration)', () => {
       const { id: factureA } = await newFacture(tiersId, 10); // 10 000
       await newAcompte(tiersId, 4000);
 
-      const res = await pay(factureA, { montant: 6000, methode_paiement: 'virement' });
+      const res = await pay(factureA, { montant: 6000, methode_paiement: 'virement', appliquer_acomptes: true });
       expect(res.status).toBe(201);
 
       // Real money in the system: 4 000 (acompte) + 2 000 (direct) = 6 000
@@ -342,7 +463,7 @@ describe('Paiements API (Integration)', () => {
 
       const r2 = await pay(id, payload);
       expect(r2.status).toBe(200);
-      expect(r2.body.idempotent).toBe(true);
+      expect(r2.body.data.idempotent).toBe(true);
 
       const { rows } = await pool.query('SELECT COUNT(*) FROM paiements WHERE idempotency_key = $1', [key]);
       expect(parseInt(rows[0].count)).toBe(1);
@@ -362,7 +483,7 @@ describe('Paiements API (Integration)', () => {
       });
 
       const res = await request(app)
-        .put(`/api/paiements/${payRes.body.direct_paiement_id}`)
+        .put(`/api/paiements/${payRes.body.data.direct_paiement_id}`)
         .set(auth())
         .send({ notes: 'note modifiée' });
       expect(res.status).toBe(200);
@@ -376,7 +497,7 @@ describe('Paiements API (Integration)', () => {
         methode_paiement: 'virement',
         skip_acompte_application: true,
       });
-      const paiementId = payRes.body.direct_paiement_id;
+      const paiementId = payRes.body.data.direct_paiement_id;
 
       const { rows } = await pool.query('SELECT mouvement_caisse_id FROM paiements WHERE id = $1', [paiementId]);
       const caisseLinked = rows[0].mouvement_caisse_id != null;
@@ -401,12 +522,12 @@ describe('Paiements API (Integration)', () => {
       const tiersId = await newTiers();
       const { id } = await newFacture(tiersId, 5); // 5 000
       await newAcompte(tiersId, 3000);
-      const payRes = await pay(id, { montant: 5000, methode_paiement: 'virement' });
+      const payRes = await pay(id, { montant: 5000, methode_paiement: 'virement', appliquer_acomptes: true });
       expect(payRes.status).toBe(201);
-      expect(payRes.body.applications).toHaveLength(1);
+      expect(payRes.body.data.applications).toHaveLength(1);
 
       const res = await request(app)
-        .put(`/api/paiements/${payRes.body.applications[0].paiement_id}`)
+        .put(`/api/paiements/${payRes.body.data.applications[0].paiement_id}`)
         .set(auth())
         .send({ montant: 100 });
       expect(res.status).toBe(409);
@@ -425,7 +546,7 @@ describe('Paiements API (Integration)', () => {
         methode_paiement: 'virement',
         skip_acompte_application: true,
       });
-      const paiementId = payRes.body.direct_paiement_id;
+      const paiementId = payRes.body.data.direct_paiement_id;
 
       const before = await getFacture(id);
       expect(parseFloat(before.montant_paye)).toBe(total);
@@ -438,16 +559,31 @@ describe('Paiements API (Integration)', () => {
       expect(after.statut).toBe('en_attente');
     });
 
+    it('D3: deleting a payment does not let an available acompte fill the reopened invoice', async () => {
+      const tiersId = await newTiers();
+      const { id, total } = await newFacture(tiersId, 5); // 5 000
+      const payRes = await pay(id, { montant: total, methode_paiement: 'virement' });
+      const acompteId = await newAcompte(tiersId, 3000); // deposit for a later purchase
+
+      const del = await request(app).delete(`/api/paiements/${payRes.body.data.direct_paiement_id}`).set(auth());
+      expect(del.status).toBe(200);
+
+      const facture = await getFacture(id);
+      expect(parseFloat(facture.montant_paye)).toBe(0);
+      expect(facture.statut).toBe('en_attente');
+      expect(await getAcompte(acompteId)).toEqual({ statut: 'disponible', montant_restant: 3000 });
+    });
+
     it('rejects deleting an acompte_application payment (409)', async () => {
       const tiersId = await newTiers();
       const { id } = await newFacture(tiersId, 5); // 5 000
       await newAcompte(tiersId, 2000);
-      const payRes = await pay(id, { montant: 5000, methode_paiement: 'virement' });
+      const payRes = await pay(id, { montant: 5000, methode_paiement: 'virement', appliquer_acomptes: true });
       expect(payRes.status).toBe(201);
-      expect(payRes.body.applications).toHaveLength(1);
+      expect(payRes.body.data.applications).toHaveLength(1);
 
       const res = await request(app)
-        .delete(`/api/paiements/${payRes.body.applications[0].paiement_id}`)
+        .delete(`/api/paiements/${payRes.body.data.applications[0].paiement_id}`)
         .set(auth());
       expect(res.status).toBe(409);
       expect(res.body.error).toMatch(/acompte/);

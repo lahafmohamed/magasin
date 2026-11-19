@@ -47,7 +47,7 @@ export class DevisController {
       const resolvedTiersId = tiers_id ?? client_id;
 
       if (!resolvedTiersId || !lignes || lignes.length === 0) {
-        res.status(400).json({ success: false, error: 'tiers_id and lignes are required' });
+        res.status(400).json({ success: false, error: 'Choisissez le client et ajoutez au moins une ligne.' });
         return;
       }
 
@@ -119,7 +119,7 @@ export class DevisController {
     try {
       const { statut } = req.body;
       if (!statut) {
-        res.status(400).json({ success: false, error: 'statut is required' });
+        res.status(400).json({ success: false, error: 'Choisissez le nouveau statut.' });
         return;
       }
       await devisService.updateStatut(parseInt(req.params.id), statut, req);

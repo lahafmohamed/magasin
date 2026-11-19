@@ -13,26 +13,63 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/** Lecture défensive du stockage : navigation privée, quota, valeur corrompue. */
+function readStoredUser(): User | null {
+  try {
+    const raw = localStorage.getItem('auth_user');
+    return raw ? (JSON.parse(raw) as User) : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeUser(user: User | null): void {
+  try {
+    if (user) localStorage.setItem('auth_user', JSON.stringify(user));
+    else localStorage.removeItem('auth_user');
+  } catch {
+    /* stockage indisponible : la session reste portée par le cookie */
+  }
+}
+
+/**
+ * Les brouillons de formulaire (`useDraft`) sont rangés par utilisateur ; sur
+ * un poste partagé, la déconnexion les efface pour que le collègue suivant ne
+ * se voie pas proposer la facture à moitié saisie d'un autre.
+ */
+function clearDrafts(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith('draft:')) keys.push(key);
+    }
+    keys.forEach((key) => localStorage.removeItem(key));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('auth_user');
+    const storedUser = readStoredUser();
 
     if (storedUser) {
-      setUser(JSON.parse(storedUser));
+      setUser(storedUser);
       // Validate the session via the httpOnly cookie (sent automatically).
       authService.getCurrentUser()
         .then((userData) => {
           setUser(userData);
-          localStorage.setItem('auth_user', JSON.stringify(userData));
+          storeUser(userData);
         })
         .catch((err: any) => {
           // Only end the session if the cookie is actually rejected (401).
           // Rate-limit (429), network, or server errors keep the cached session.
           if (err?.response?.status === 401) {
-            localStorage.removeItem('auth_user');
+            storeUser(null);
             setUser(null);
           }
         })
@@ -49,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // A shared browser can restore an authenticated page from its back/forward
       // cache after logout. The absence of the cached user is an immediate local
       // signal; the server remains authoritative when a cached user exists.
-      if (!localStorage.getItem('auth_user')) {
+      if (!readStoredUser()) {
         setUser(null);
         setIsLoading(false);
         if (!window.location.pathname.startsWith('/login')) {
@@ -62,10 +99,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       authService.getCurrentUser()
         .then((userData) => {
           setUser(userData);
-          localStorage.setItem('auth_user', JSON.stringify(userData));
+          storeUser(userData);
         })
         .catch(() => {
-          localStorage.removeItem('auth_user');
+          storeUser(null);
           setUser(null);
           if (!window.location.pathname.startsWith('/login')) {
             window.location.replace('/login');
@@ -83,12 +120,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (response.success && response.data) {
       setUser(response.data.user);
     } else {
-      throw new Error((response as any).error || 'Échec de connexion');
+      throw new Error((response as any).error || 'Connexion impossible. Réessayez.');
     }
   };
 
   const logout = async () => {
     setUser(null);
+    clearDrafts();
     await authService.logout();
     window.location.replace('/login');
   };
@@ -117,4 +155,12 @@ export function useAuth(): AuthContextType {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
+}
+
+/**
+ * Variante sans exception, pour les composants partagés rendus aussi hors
+ * `AuthProvider` (tests de pages isolées) : `undefined` hors fournisseur.
+ */
+export function useOptionalAuth(): AuthContextType | undefined {
+  return useContext(AuthContext);
 }

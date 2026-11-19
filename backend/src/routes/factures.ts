@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { FactureController } from '../controllers/FactureController';
 import { PaiementController } from '../controllers/PaiementController';
 import { validateBody } from '../middleware/validation';
-import { createFactureSchema, updateFactureStatutSchema, createPaiementSchema } from '../validation/schemas';
+import { createFactureSchema, updateFactureStatutSchema, createPaiementSchema, venteComptoirSchema } from '../validation/schemas';
 import { authenticate, authorize } from '../middleware/auth';
 
 const router = Router();
@@ -18,6 +18,8 @@ router.get('/top-clients', FactureController.getTopClients);
 router.get('/:id', FactureController.getById);
 router.get('/:id/pdf', FactureController.generatePDF);
 router.post('/', authorize('admin', 'manager', 'magasin_staff', 'caissier'), validateBody(createFactureSchema), FactureController.create);
+// Vente comptoir : facture + encaissement en une transaction (lot 2).
+router.post('/comptoir', authorize('admin', 'manager', 'magasin_staff', 'caissier'), validateBody(venteComptoirSchema), FactureController.createVenteComptoir);
 router.put('/:id/statut', authorize('admin', 'manager'), validateBody(updateFactureStatutSchema), FactureController.updateStatut);
 router.delete('/:id', authorize('admin', 'manager'), FactureController.delete);
 

@@ -7,6 +7,7 @@ import {
   updatePayslipSchema,
   markPayrollPaidSchema,
   updateCotisationSchema,
+  createCotisationSchema,
   replaceBaremesSchema,
 } from '../validation/schemas';
 
@@ -21,6 +22,7 @@ router.get('/', hrFinance, PayrollController.getAll);
 router.get('/stats', hrFinance, PayrollController.getStats);
 // Statutory config (CNPS cotisations + ITS brackets) — must precede '/:id'.
 router.get('/config', hrFinance, PayrollController.getConfig);
+router.post('/config/cotisations', authorize(['admin']), validateBody(createCotisationSchema), PayrollController.createCotisation);
 router.put('/config/cotisations/:id', authorize(['admin']), validateBody(updateCotisationSchema), PayrollController.updateCotisation);
 router.put('/config/baremes', authorize(['admin']), validateBody(replaceBaremesSchema), PayrollController.replaceBaremes);
 

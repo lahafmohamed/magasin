@@ -1,5 +1,7 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { PageShell } from '@/components/ui/page-shell';
 
 interface Props {
   children: ReactNode;
@@ -8,17 +10,21 @@ interface Props {
 
 interface State {
   hasError: boolean;
-  error: Error | null;
 }
 
+/**
+ * Filet de sécurité d'affichage. Le message technique de l'erreur (en anglais,
+ * « Cannot read properties of undefined… ») part dans la console, jamais à
+ * l'écran : l'utilisateur lit ce qui s'est passé et quoi faire.
+ */
 export class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
+  static getDerivedStateFromError(): State {
+    return { hasError: true };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
@@ -30,24 +36,28 @@ export class ErrorBoundary extends Component<Props, State> {
       if (this.props.fallback) return this.props.fallback;
 
       return (
-        <div className="flex flex-col items-center justify-center min-h-[400px] p-8 text-center">
-          <div className="flex items-start gap-2 rounded-md border border-danger-200 bg-danger-50 p-4 max-w-md text-left">
-            <AlertCircle className="h-5 w-5 mt-0.5 shrink-0 text-danger-700" />
-            <div>
-              <h3 className="font-semibold text-danger-800">Une erreur est survenue</h3>
-              <p className="text-sm text-danger-700">{this.state.error?.message}</p>
-            </div>
+        <PageShell title="Cette page a rencontré un problème" width="narrow">
+          <div
+            role="alert"
+            className="flex items-start gap-3 rounded-lg border border-danger-200 bg-danger-50 p-4 text-danger-800"
+          >
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+            <p className="text-sm">
+              Rechargez la page. Si le problème revient, prévenez votre administrateur.
+            </p>
           </div>
-          <button
-            className="mt-4 inline-flex items-center justify-center h-9 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          <Button
+            type="button"
+            className="gap-2"
             onClick={() => {
-              this.setState({ hasError: false, error: null });
+              this.setState({ hasError: false });
               window.location.reload();
             }}
           >
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
             Recharger la page
-          </button>
-        </div>
+          </Button>
+        </PageShell>
       );
     }
 

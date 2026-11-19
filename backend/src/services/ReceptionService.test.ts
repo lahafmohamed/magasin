@@ -289,4 +289,91 @@ describe('ReceptionService (intégration)', () => {
 
     expect(await receptionService.getById(99999999)).toBeNull();
   });
+
+  // ---- U-20 : réception partielle d'une commande ----
+
+  it('getOrderDetails renvoie déjà reçu et reste à recevoir par ligne', async () => {
+    const a = await newProduct();
+    const b = await newProduct();
+    const commandeId = await newCommande([
+      { produit_id: a, quantite: 10, prix_unitaire: 500 },
+      { produit_id: b, quantite: 5, prix_unitaire: 300 },
+    ]);
+    const rec = await receptionService.create({
+      commande_id: commandeId,
+      location_id: locationId,
+      lignes: [{ produit_id: a, quantite_commandee: 10, quantite_recue: 4, cout_unitaire: 500 }],
+    });
+    createdReceptionIds.push(rec.id);
+
+    const detail = await receptionService.getOrderDetails(commandeId);
+    const byProduit = new Map(detail.lignes.map((l: any) => [l.produit_id, l]));
+    expect(byProduit.get(a)).toMatchObject({ quantite_deja_recue: 4, quantite_restante: 6 });
+    expect(byProduit.get(b)).toMatchObject({ quantite_deja_recue: 0, quantite_restante: 5 });
+  });
+
+  it('répartit le déjà-reçu sur deux lignes du même produit, dans l’ordre', async () => {
+    const a = await newProduct();
+    const commandeId = await newCommande([
+      { produit_id: a, quantite: 3, prix_unitaire: 500 },
+      { produit_id: a, quantite: 5, prix_unitaire: 500 },
+    ]);
+    const rec = await receptionService.create({
+      commande_id: commandeId,
+      location_id: locationId,
+      lignes: [{ produit_id: a, quantite_commandee: 8, quantite_recue: 4, cout_unitaire: 500 }],
+    });
+    createdReceptionIds.push(rec.id);
+
+    const detail = await receptionService.getOrderDetails(commandeId);
+    expect(detail.lignes.map((l: any) => [l.quantite_deja_recue, l.quantite_restante])).toEqual([[3, 0], [1, 4]]);
+  });
+
+  it('le refus de sur-réception nomme le produit et le reste à recevoir', async () => {
+    const produitId = await newProduct();
+    const { rows: [p] } = await pool.query('SELECT nom FROM produits WHERE id = $1', [produitId]);
+    const commandeId = await newCommande([{ produit_id: produitId, quantite: 10, prix_unitaire: 500 }]);
+    const first = await receptionService.create({
+      commande_id: commandeId,
+      location_id: locationId,
+      lignes: [{ produit_id: produitId, quantite_commandee: 10, quantite_recue: 8, cout_unitaire: 500 }],
+    });
+    createdReceptionIds.push(first.id);
+
+    const err = await receptionService.create({
+      commande_id: commandeId,
+      location_id: locationId,
+      lignes: [{ produit_id: produitId, quantite_commandee: 10, quantite_recue: 3, cout_unitaire: 500 }],
+    }).catch((e) => e);
+    expect(err).toMatchObject({ statusCode: 422, code: 'OVER_RECEIPT' });
+    expect(err.message).toBe(
+      `Réception excessive pour « ${p.nom} » : reste à recevoir 2 (commandé 10, déjà reçu 8).`
+    );
+  });
+
+  it('une réception partielle laisse la commande à réceptionner ; la dernière la clôt', async () => {
+    const produitId = await newProduct();
+    const commandeId = await newCommande([{ produit_id: produitId, quantite: 10, prix_unitaire: 500 }]);
+    await pool.query(`UPDATE commandes_fournisseur SET statut = 'validee' WHERE id = $1`, [commandeId]);
+
+    const first = await receptionService.create({
+      commande_id: commandeId,
+      location_id: locationId,
+      lignes: [{ produit_id: produitId, quantite_commandee: 10, quantite_recue: 6, cout_unitaire: 500 }],
+    });
+    createdReceptionIds.push(first.id);
+
+    const statut = async () =>
+      (await pool.query('SELECT statut FROM commandes_fournisseur WHERE id = $1', [commandeId])).rows[0].statut;
+    expect(await statut()).toBe('validee');
+    expect((await receptionService.getPendingOrders()).map((c: any) => c.id)).toContain(commandeId);
+
+    const second = await receptionService.create({
+      commande_id: commandeId,
+      location_id: locationId,
+      lignes: [{ produit_id: produitId, quantite_commandee: 10, quantite_recue: 4, cout_unitaire: 500 }],
+    });
+    createdReceptionIds.push(second.id);
+    expect(await statut()).toBe('livree');
+  });
 });

@@ -1,11 +1,52 @@
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
-import { calculateTotals } from './PricingService';
+import { calculateTotals, roundMoney } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { businessError } from '../utils/errors';
 import { checkPeriodIsOpen } from './PeriodService';
 import { ClientAllocationService } from './ClientAllocationService';
+import { caisseMagasinService } from './CaisseMagasinService';
+import { formatMontantFcfa } from '../utils/money';
+import { mouvementLibelle } from '../utils/caisseLibelle';
+import { isPaymentMethod, PaymentMethod, paymentMethodPhrase, toPaiementMethod } from '../utils/paymentMethods';
+
+/** POST /avoirs/:id/apply-to-facture — what was booked on the chosen invoice. */
+export interface ApplyAvoirResult {
+  avoir_id: number;
+  numero_avoir: string;
+  facture_id: number;
+  numero_facture: string;
+  montant_avoir: number;
+  /** Booked on the chosen invoice: min(avoir, reste dû before). */
+  montant_impute: number;
+  /** Part the invoice could not take: client credit without a target. */
+  credit_client: number;
+  /** Of that credit, what is still available after the oldest-first spread. */
+  credit_restant: number;
+  reste_du: number;
+  statut_facture: string;
+  message: string;
+}
+
+export interface RembourserAvoirInput {
+  methode_paiement: PaymentMethod;
+  notes?: string | null;
+  reference?: string | null;
+  userId: number | null;
+  req?: any;
+}
+
+export interface RembourserAvoirResult {
+  avoir_id: number;
+  numero_avoir: string;
+  montant: number;
+  methode_paiement: PaymentMethod;
+  /** Till movement written (null for a non-cash refund while the till is closed). */
+  mouvement_caisse_id: number | null;
+  session_caisse_id: number | null;
+  message: string;
+}
 
 export interface CreditNoteLigneInput {
   produit_id?: number;
@@ -197,14 +238,39 @@ export class CreditNoteService {
       [id]
     );
 
+    // A refunded credit note (E3) is 'utilise' without facture_appliquee_id;
+    // its refund is the 'rembourser' audit row written in the same transaction.
+    const { rows: remboursementRows } = await pool.query(
+      `SELECT a.created_at AS date,
+              (a.new_values->>'montant')::numeric AS montant,
+              a.new_values->>'methode_paiement' AS methode_paiement,
+              NULLIF(a.new_values->>'reference', '') AS reference,
+              NULLIF(a.new_values->>'mouvement_caisse_id', '')::int AS mouvement_caisse_id,
+              COALESCE(u.nom_complet, u.username) AS rembourse_par_nom
+       FROM audit_log a
+       LEFT JOIN utilisateurs u ON u.id = a.user_id
+       WHERE a.table_name = 'factures_avoir' AND a.action = 'rembourser' AND a.record_id = $1
+       ORDER BY a.id DESC
+       LIMIT 1`,
+      [id]
+    );
+    const remboursement = remboursementRows[0]
+      ? { ...remboursementRows[0], montant: parseFloat(remboursementRows[0].montant) || 0 }
+      : null;
+
     return {
       ...avoirRows[0],
       lignes: lignesRows,
+      remboursement,
     };
   }
 
   /**
-   * Create credit note from return (uses DB function)
+   * Create the credit note of an approved return (DB function
+   * `create_avoir_from_retour`, migration 106): one active avoir per return,
+   * lines copied from the return, credit on the client statement. The
+   * function raises French messages with SQLSTATE HK404/HK409/HK422, mapped
+   * here to business errors (HTTP status = the last three digits).
    */
   async createFromRetour(retour_id: number, userId: number, req?: any): Promise<{ avoir_id: number; numero_avoir: string }> {
     const client = await pool.connect();
@@ -212,11 +278,16 @@ export class CreditNoteService {
     try {
       await client.query('BEGIN');
 
+      await checkPeriodIsOpen(new Date(), client);
+
       // Call database function
       const { rows } = await client.query(
         'SELECT create_avoir_from_retour($1, $2) as avoir_id',
         [retour_id, userId]
-      );
+      ).catch((err: any) => {
+        const match = typeof err?.code === 'string' ? /^HK(\d{3})$/.exec(err.code) : null;
+        throw match ? businessError(Number(match[1]), err.message) : err;
+      });
 
       const avoirId = rows[0].avoir_id;
 
@@ -289,12 +360,40 @@ export class CreditNoteService {
       const facture = factureRows[0];
 
       if (Number(facture.tiers_id) !== Number(tiers_id)) {
-        throw businessError(422, 'Le tiers de l\'avoir doit correspondre à la facture d\'origine');
+        throw businessError(422, 'L’avoir doit être au nom du client de la facture d’origine.');
       }
 
       // An invoice must be validated (not cancelled) to allow credit note creation
       if (facture.statut === 'annulee') {
         throw businessError(422, 'On ne peut pas créer un avoir sur une facture annulée');
+      }
+
+      // Linked to a return: same rules as POST /avoirs/from-retour — an
+      // approved return of this client, and one active avoir per return.
+      if (retour_id) {
+        const { rows: retourRows } = await client.query(
+          'SELECT id, numero_retour, tiers_id, statut FROM retours WHERE id = $1 FOR UPDATE',
+          [retour_id]
+        );
+        const retour = retourRows[0];
+        if (!retour) {
+          throw businessError(404, 'Retour introuvable.');
+        }
+        if (Number(retour.tiers_id) !== Number(tiers_id)) {
+          throw businessError(422, `Le retour ${retour.numero_retour} concerne un autre client.`);
+        }
+        if (retour.statut !== 'traite') {
+          throw businessError(409, `Approuvez le retour ${retour.numero_retour} avant de créer son avoir.`);
+        }
+        const { rows: existing } = await client.query(
+          `SELECT numero_avoir FROM factures_avoir
+           WHERE retour_id = $1 AND deleted_at IS NULL AND statut IS DISTINCT FROM 'annule'
+           LIMIT 1`,
+          [retour_id]
+        );
+        if (existing[0]) {
+          throw businessError(409, `Le retour ${retour.numero_retour} a déjà son avoir : ${existing[0].numero_avoir}.`);
+        }
       }
 
       // Generate avoir number
@@ -337,7 +436,7 @@ export class CreditNoteService {
       // Adjust customer account
       await client.query(
         `INSERT INTO compte_client_lignes (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
-         VALUES ($1, 'avoir', $2, $3, 0, $4, 'Credit note ' || $5, $6)`,
+         VALUES ($1, 'avoir', $2, $3, 0, $4, 'Avoir ' || $5, $6)`,
         [tiers_id, avoirId, numeroAvoir, total, numeroAvoir, cree_par || null]
       );
 
@@ -372,11 +471,25 @@ export class CreditNoteService {
   async updateStatut(id: number, statut: string, req?: any): Promise<void> {
     const validStatuts = ['brouillon', 'valide', 'annule', 'utilise'];
     if (!validStatuts.includes(statut)) {
-      throw businessError(400, 'Statut invalide');
+      throw businessError(400, 'Statut d’avoir inconnu.');
+    }
+    // 'utilise' carries money (imputed on an invoice or paid back): it is only
+    // reached through those two actions and never left — flipping it back to
+    // 'valide' would let the same credit note be imputed or refunded twice.
+    if (statut === 'utilise') {
+      throw businessError(422, 'Pour utiliser un avoir, imputez-le sur une facture ou remboursez-le.');
+    }
+    const { rows: currentRows } = await pool.query(
+      'SELECT numero_avoir, statut FROM factures_avoir WHERE id = $1 AND deleted_at IS NULL',
+      [id]
+    );
+    if (currentRows[0]?.statut === 'utilise') {
+      throw businessError(409, `L’avoir ${currentRows[0].numero_avoir} a déjà été utilisé : son statut ne change plus.`);
     }
 
     await pool.query(
-      'UPDATE factures_avoir SET statut = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      `UPDATE factures_avoir SET statut = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2 AND statut IS DISTINCT FROM 'utilise'`,
       [statut, id]
     );
 
@@ -396,17 +509,30 @@ export class CreditNoteService {
   }
 
   /**
-   * Apply credit note to an invoice (marks avoir as 'utilise')
+   * Apply a credit note to the invoice the user chose (marks it 'utilise').
+   *
+   * E1 (2026-10-24): the credit settles THAT invoice. The credit note becomes
+   * an acompte, and min(avoir, reste dû) of it is booked on the chosen invoice
+   * as an acompte application — a payment row the allocation engine keeps
+   * pinned there, exactly like POST /acomptes/:id/apply. Only the part the
+   * invoice cannot take (it was already partly or fully paid) stays client
+   * credit without a target, which the recompute spreads oldest-first.
+   * Before, the whole credit went through the FIFO pool and landed on the
+   * client's oldest open invoice, whatever invoice the user had picked.
    */
-  async applyToFacture(avoirId: number, factureId: number, req?: any): Promise<void> {
+  async applyToFacture(avoirId: number, factureId: number, req?: any): Promise<ApplyAvoirResult> {
     const client = await pool.connect();
+    const userId: number | null = req?.user?.id ?? null;
 
     try {
       await client.query('BEGIN');
 
+      // The application is booked today: refuse a closed period up front.
+      await checkPeriodIsOpen(new Date(), client);
+
       // Lock both records
       const { rows: avoirRows } = await client.query(
-        'SELECT id, tiers_id, statut, total, numero_avoir FROM factures_avoir WHERE id = $1 FOR UPDATE',
+        'SELECT id, tiers_id, statut, total, numero_avoir FROM factures_avoir WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
         [avoirId]
       );
       if (avoirRows.length === 0) {
@@ -414,11 +540,13 @@ export class CreditNoteService {
       }
       const avoir = avoirRows[0];
       if (avoir.statut !== 'valide') {
-        throw businessError(422, 'L\'avoir doit être au statut "valide" pour être appliqué');
+        throw businessError(422, 'Seul un avoir validé peut être imputé sur une facture.');
       }
 
       const { rows: factureRows } = await client.query(
-        'SELECT id, tiers_id, statut, total FROM factures WHERE id = $1 FOR UPDATE',
+        `SELECT id, tiers_id, statut, total, numero_facture, location_id,
+                GREATEST(total - COALESCE(montant_paye, 0), 0) AS remaining
+         FROM factures WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
         [factureId]
       );
       if (factureRows.length === 0) {
@@ -429,7 +557,7 @@ export class CreditNoteService {
         throw businessError(422, 'Impossible d\'appliquer un avoir sur une facture annulée');
       }
       if (Number(facture.tiers_id) !== Number(avoir.tiers_id)) {
-        throw businessError(422, 'L\'avoir et la facture doivent appartenir au même tiers');
+        throw businessError(422, 'L’avoir et la facture doivent concerner le même client.');
       }
 
       await client.query(
@@ -439,32 +567,262 @@ export class CreditNoteService {
         [factureId, avoirId]
       );
 
-      // Give the applied credit note a real financial effect through the FIFO engine:
-      // turn it into available client credit (an acompte), then let the recompute
-      // allocate it to the client's invoices and re-derive balances. This keeps the
-      // FIFO engine the single source of truth instead of hand-mutating remaining_due.
-      await client.query(
-        `INSERT INTO acomptes_clients (tiers_id, montant, date_acompte, statut, notes)
-         VALUES ($1, $2, CURRENT_TIMESTAMP, 'disponible', $3)`,
-        [avoir.tiers_id, avoir.total, `Issu de l'avoir ${avoir.numero_avoir}`]
+      // The credit note becomes client credit (an acompte). montant_restant is
+      // NOT NULL without default (048): omitting it made every application fail.
+      const montantAvoir = roundMoney(parseFloat(avoir.total) || 0);
+      const { rows: acompteRows } = await client.query(
+        `INSERT INTO acomptes_clients (tiers_id, montant, montant_restant, date_acompte, statut, notes, cree_par)
+         VALUES ($1, $2, $2, CURRENT_TIMESTAMP, 'disponible', $3, $4)
+         RETURNING id`,
+        [avoir.tiers_id, montantAvoir, `Issu de l'avoir ${avoir.numero_avoir}`, userId]
       );
+      const acompteId: number = acompteRows[0].id;
 
-      await ClientAllocationService.recomputeClientAllocations(avoir.tiers_id, { transaction: client });
+      // Pinned part: what the chosen invoice still owes, at most the avoir.
+      const montantImpute = roundMoney(Math.min(montantAvoir, parseFloat(facture.remaining) || 0));
+      if (montantImpute > 0) {
+        const magasinId = facture.location_id
+          ? (await client.query('SELECT id FROM magasins WHERE location_id = $1 LIMIT 1', [facture.location_id])).rows[0]?.id ?? null
+          : null;
+        const { rows: payRows } = await client.query(
+          `INSERT INTO paiements (
+             facture_id, montant, methode_paiement, date_paiement,
+             reference, notes, magasin_id, source, cree_par
+           ) VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5, $6, 'acompte_application', $7)
+           RETURNING id`,
+          [factureId, montantImpute, toPaiementMethod(null), avoir.numero_avoir,
+            `Imputation de l'avoir ${avoir.numero_avoir}`, magasinId, userId]
+        );
+        await client.query(
+          `INSERT INTO acompte_applications (acompte_id, facture_id, paiement_id, montant, cree_par, notes)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [acompteId, factureId, payRows[0].id, montantImpute, userId, `Avoir ${avoir.numero_avoir}`]
+        );
+        await client.query(
+          `INSERT INTO compte_client_lignes
+             (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
+           VALUES ($1, 'paiement', $2, $3, 0, $4, $5, $6)`,
+          [avoir.tiers_id, payRows[0].id, `PAI-${payRows[0].id}`, montantImpute,
+            `Avoir ${avoir.numero_avoir} imputé sur la facture ${facture.numero_facture}`, userId]
+        );
+      }
+
+      // Re-derive balances; the remainder (if any) is credit without a target.
+      await ClientAllocationService.recomputeClientAllocations(avoir.tiers_id, { transaction: client, userId });
+
+      const { rows: afterRows } = await client.query(
+        `SELECT f.statut, GREATEST(f.total - COALESCE(f.montant_paye, 0), 0) AS reste_du,
+                (SELECT montant_restant FROM acomptes_clients WHERE id = $2) AS credit_restant
+         FROM factures f WHERE f.id = $1`,
+        [factureId, acompteId]
+      );
+      const resteDu = roundMoney(parseFloat(afterRows[0].reste_du) || 0);
+      const creditRestant = roundMoney(parseFloat(afterRows[0].credit_restant) || 0);
+      const surplus = roundMoney(montantAvoir - montantImpute);
 
       await client.query('COMMIT');
 
-      if (req?.user?.id) {
+      if (userId) {
         await logAudit({
-          utilisateur_id: req.user.id,
+          utilisateur_id: userId,
           action: 'apply_to_facture',
           table_name: 'factures_avoir',
           record_id: avoirId,
           req,
-          new_values: { facture_appliquee_id: factureId, statut: 'utilise' },
+          new_values: { facture_appliquee_id: factureId, statut: 'utilise', montant_impute: montantImpute, surplus },
         });
       }
 
-      logger.info({ avoirId, factureId }, 'Credit note applied to invoice');
+      logger.info({ avoirId, factureId, montantImpute }, 'Credit note applied to invoice');
+
+      let message: string;
+      if (montantImpute <= 0) {
+        message = `La facture ${facture.numero_facture} est déjà soldée : les ${formatMontantFcfa(montantAvoir)} de l’avoir ${avoir.numero_avoir} passent au crédit du client.`;
+      } else {
+        message = `Avoir ${avoir.numero_avoir} imputé sur la facture ${facture.numero_facture} : ${formatMontantFcfa(montantImpute)}. `
+          + (resteDu > 0.005 ? `Reste dû : ${formatMontantFcfa(resteDu)}.` : 'Facture soldée.');
+        if (surplus > 0.005) {
+          message += ` Les ${formatMontantFcfa(surplus)} restants passent au crédit du client.`;
+        }
+      }
+
+      return {
+        avoir_id: avoirId,
+        numero_avoir: avoir.numero_avoir,
+        facture_id: factureId,
+        numero_facture: facture.numero_facture,
+        montant_avoir: montantAvoir,
+        montant_impute: montantImpute,
+        credit_client: surplus,
+        credit_restant: creditRestant,
+        reste_du: resteDu,
+        statut_facture: afterRows[0].statut,
+        message,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * « Rembourser l’avoir » (E3): pay a valid, unused credit note back to the
+   * client. Built on the deposit refund (AcompteService.refundClient): the
+   * money goes out through a `remboursement_client` till movement (which posts
+   * to the general ledger when CAISSE_GL_POSTING is on) and the client's
+   * statement gets the matching debit. Espèces must leave the open till of the
+   * credit note's shop (409 CAISSE_FERMEE otherwise); another method uses that
+   * till when it is open, so the closing count sees it, and needs none
+   * otherwise. The credit note ends 'utilise' with no invoice: the audit_log
+   * row ('rembourser') records method, amount, reference and movement.
+   */
+  async rembourser(avoirId: number, input: RembourserAvoirInput): Promise<RembourserAvoirResult> {
+    const { methode_paiement, userId } = input;
+    const notes = input.notes?.trim() || null;
+    const reference = input.reference?.trim() || null;
+    if (!isPaymentMethod(methode_paiement)) {
+      throw businessError(400, 'Choisissez un mode de paiement.');
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      await checkPeriodIsOpen(new Date(), client);
+
+      const { rows: avoirRows } = await client.query(
+        `SELECT fa.id, fa.numero_avoir, fa.tiers_id, fa.statut, fa.total,
+                COALESCE(fa.location_id, f.location_id) AS location_id,
+                TRIM(CONCAT_WS(' ', t.raison_sociale, NULLIF(t.prenom, ''))) AS client_nom
+         FROM factures_avoir fa
+         LEFT JOIN factures f ON f.id = fa.facture_origine_id
+         LEFT JOIN tiers t ON t.id = fa.tiers_id
+         WHERE fa.id = $1 AND fa.deleted_at IS NULL
+         FOR UPDATE OF fa`,
+        [avoirId]
+      );
+      const avoir = avoirRows[0];
+      if (!avoir) {
+        throw businessError(404, 'Avoir introuvable.');
+      }
+      const numero: string = avoir.numero_avoir;
+      if (avoir.statut === 'utilise') {
+        throw businessError(409, `L’avoir ${numero} a déjà été utilisé : il ne peut plus être remboursé.`, 'AVOIR_DEJA_UTILISE');
+      }
+      if (avoir.statut === 'annule') {
+        throw businessError(409, `L’avoir ${numero} est annulé : il ne peut pas être remboursé.`, 'AVOIR_ANNULE');
+      }
+      if (avoir.statut !== 'valide') {
+        throw businessError(409, `Validez l’avoir ${numero} avant de le rembourser.`, 'AVOIR_NON_VALIDE');
+      }
+      const montant = roundMoney(parseFloat(avoir.total) || 0);
+      if (montant <= 0) {
+        throw businessError(422, `L’avoir ${numero} n’a aucun montant à rembourser.`);
+      }
+
+      // The credit note's shop and its open till.
+      const magasin = avoir.location_id
+        ? (await client.query('SELECT id, nom FROM magasins WHERE location_id = $1 ORDER BY id LIMIT 1', [avoir.location_id])).rows[0] ?? null
+        : null;
+      const session = magasin
+        ? (await client.query(
+            `SELECT id FROM sessions_caisse WHERE magasin_id = $1 AND statut = 'ouverte' ORDER BY id DESC LIMIT 1`,
+            [magasin.id]
+          )).rows[0] ?? null
+        : null;
+
+      if (methode_paiement === 'espece' && !session) {
+        if (!magasin) {
+          throw businessError(
+            422,
+            `L’avoir ${numero} n’est rattaché à aucun magasin : remboursez-le par un autre mode de paiement.`,
+            'CAISSE_INTROUVABLE'
+          );
+        }
+        // The UI names the till and links to it (E3: warning + link).
+        throw Object.assign(
+          businessError(
+            409,
+            `La caisse de ${magasin.nom} est fermée : ouvrez-la avant de rembourser des espèces.`,
+            'CAISSE_FERMEE'
+          ),
+          { details: { magasin_id: magasin.id, magasin_nom: magasin.nom } }
+        );
+      }
+
+      const clientNom: string | null = avoir.client_nom || null;
+      let mouvementId: number | null = null;
+      if (session) {
+        const mouvement = await caisseMagasinService.enregistrerMouvement(client, {
+          session_caisse_id: session.id,
+          type: 'decaissement',
+          categorie: 'remboursement_client',
+          montant,
+          methode_paiement,
+          reference_type: 'avoir',
+          reference_id: avoirId,
+          libelle: mouvementLibelle(`Remboursement avoir ${numero}`, clientNom),
+          user_id: userId ?? undefined,
+        });
+        mouvementId = mouvement.id;
+      }
+
+      await client.query(
+        `UPDATE factures_avoir SET statut = 'utilise', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        [avoirId]
+      );
+
+      // Client statement: the credit the avoir gave is paid out (same entry
+      // as a deposit refund).
+      const ledgerNotes = [`Remboursement de l’avoir ${numero} ${paymentMethodPhrase(methode_paiement)}`, reference ? `réf. ${reference}` : null, notes]
+        .filter(Boolean)
+        .join(' — ');
+      await client.query(
+        `INSERT INTO compte_client_lignes
+           (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
+         VALUES ($1, 'ajustement', $2, $3, $4, 0, $5, $6)`,
+        [avoir.tiers_id, avoirId, `REMB-${numero}`.slice(0, 100), montant, ledgerNotes, userId ?? null]
+      );
+
+      // Audit inside the transaction: the refund exists iff its record does.
+      await client.query(
+        `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent, old_values, new_values)
+         VALUES ($1, 'rembourser', 'factures_avoir', $2, $3, $4, $5, $6)`,
+        [
+          userId ?? null,
+          avoirId,
+          input.req?.ip ?? null,
+          input.req?.get?.('user-agent') ?? null,
+          JSON.stringify({ statut: 'valide' }),
+          JSON.stringify({
+            statut: 'utilise',
+            numero_avoir: numero,
+            montant,
+            methode_paiement,
+            reference,
+            notes,
+            mouvement_caisse_id: mouvementId,
+            session_caisse_id: session?.id ?? null,
+            magasin_id: magasin?.id ?? null,
+          }),
+        ]
+      );
+
+      await client.query('COMMIT');
+
+      logger.info({ avoirId, montant, methode_paiement, mouvementId }, 'Credit note refunded');
+
+      return {
+        avoir_id: avoirId,
+        numero_avoir: numero,
+        montant,
+        methode_paiement,
+        mouvement_caisse_id: mouvementId,
+        session_caisse_id: session?.id ?? null,
+        message: `Avoir ${numero} remboursé : ${formatMontantFcfa(montant)} ${paymentMethodPhrase(methode_paiement)}.`,
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

@@ -53,6 +53,8 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
         Permissions.TRANSFERT_CREATE_PROACTIVE,
         Permissions.TRANSFERT_READ,
         Permissions.TRANSFERT_EXECUTE,
+        // `POST /stock-transfers/:id/cancel` : admin, manager, depot_staff.
+        Permissions.TRANSFERT_CANCEL,
     ],
     magasin_staff: [
         Permissions.STOCK_DEPOT_VIEW,
@@ -75,6 +77,8 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
         Permissions.DEMANDE_READ,
         Permissions.TRANSFERT_READ,
     ],
+    // D2 (2026-10-23) : le gérant décide et exécute les demandes comme
+    // l'administrateur, et peut aussi les modifier, envoyer, annuler et clôturer.
     manager: [
         Permissions.STOCK_DEPOT_VIEW,
         Permissions.STOCK_DEPOT_WRITE,
@@ -82,21 +86,26 @@ const ROLE_PERMISSIONS: Record<string, Permission[]> = {
         Permissions.STOCK_MAGASIN_WRITE,
         Permissions.DEMANDE_CREATE,
         Permissions.DEMANDE_READ,
+        Permissions.DEMANDE_UPDATE,
+        Permissions.DEMANDE_SEND,
         Permissions.DEMANDE_DECIDE,
+        Permissions.DEMANDE_CANCEL,
         Permissions.DEMANDE_EXECUTE,
+        Permissions.DEMANDE_CLOSE,
         Permissions.TRANSFERT_CREATE,
         Permissions.TRANSFERT_CREATE_PROACTIVE,
         Permissions.TRANSFERT_READ,
         Permissions.TRANSFERT_EXECUTE,
+        Permissions.TRANSFERT_CANCEL,
         Permissions.FACTURE_CREATE,
         Permissions.DEVIS_CREATE,
         Permissions.DEVIS_UPDATE,
     ],
+    // Le caissier ne fait pas de demandes : l'API lui refuse le détail, l'envoi
+    // et la modification (un brouillon créé ne pouvait jamais partir).
     caissier: [
         Permissions.STOCK_MAGASIN_VIEW,
         Permissions.STOCK_MAGASIN_WRITE,
-        Permissions.DEMANDE_CREATE,
-        Permissions.DEMANDE_READ,
         Permissions.TRANSFERT_READ,
         Permissions.FACTURE_CREATE,
         Permissions.DEVIS_CREATE,

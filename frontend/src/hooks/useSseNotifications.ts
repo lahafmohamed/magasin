@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { useOptionalAuth } from '../lib/AuthContext';
 
 interface SseNotification {
   title: string;
@@ -25,10 +26,19 @@ interface SseLowStock {
   stock_min: number;
 }
 
+function hasCachedSession(): boolean {
+  try {
+    return !!localStorage.getItem('auth_user');
+  } catch {
+    return false;
+  }
+}
+
 export function useSseNotifications() {
   const navigate = useNavigate();
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
+  const userId = useOptionalAuth()?.user?.id ?? null;
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const failureCountRef = useRef(0);
@@ -37,7 +47,8 @@ export function useSseNotifications() {
   const connect = useCallback(() => {
     // Only stream when logged in; auth is the httpOnly cookie (sent automatically
     // by EventSource for same-origin requests).
-    if (!localStorage.getItem('auth_user')) return;
+    if (!hasCachedSession()) return;
+    if (eventSourceRef.current && eventSourceRef.current.readyState !== EventSource.CLOSED) return;
 
     const es = new EventSource('/api/notifications/stream', { withCredentials: true });
     eventSourceRef.current = es;
@@ -74,12 +85,13 @@ export function useSseNotifications() {
       try {
         const data: SseLowStock = JSON.parse(event.data);
         const rupture = data.stock <= 0;
+        const restant = Number(data.stock) || 0;
         toast.warning(
           rupture
             ? `Rupture de stock : ${data.nom}`
-            : `Stock faible : ${data.nom} — ${data.stock} restant(s)`,
+            : `Stock bas : ${data.nom} — ${restant} restant${restant > 1 ? 's' : ''}`,
           {
-            description: `Réf. ${data.reference} · seuil d'alerte : ${data.stock_min}`,
+            description: `Réf. ${data.reference} · stock minimum : ${data.stock_min}`,
             action: {
               label: 'Voir le produit',
               onClick: () =>
@@ -88,7 +100,7 @@ export function useSseNotifications() {
           }
         );
       } catch {
-        toast.warning('Stock faible détecté');
+        toast.warning('Stock bas détecté sur un produit');
       }
     });
 
@@ -117,18 +129,23 @@ export function useSseNotifications() {
       if (failureCountRef.current >= 3 && !offlineNotifiedRef.current) {
         offlineNotifiedRef.current = true;
         toast.warning('Alertes temps réel interrompues', {
-          description: 'Les nouvelles alertes stock et paiements ne s\'afficheront pas tant que la connexion n\'est pas rétablie.',
+          description: 'Les nouvelles alertes de stock et de paiement ne s’afficheront pas tant que la connexion n’est pas rétablie.',
         });
       }
       reconnectTimeoutRef.current = setTimeout(connect, 5000);
     };
   }, []);
 
+  // (Re)connexion à chaque changement d'utilisateur : ouvert une seule fois au
+  // démarrage, le flux ne s'ouvrait jamais après une connexion faite sans
+  // recharger la page.
   useEffect(() => {
+    if (!userId) return;
     connect();
     return () => {
       if (eventSourceRef.current) eventSourceRef.current.close();
+      eventSourceRef.current = null;
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     };
-  }, [connect]);
+  }, [connect, userId]);
 }

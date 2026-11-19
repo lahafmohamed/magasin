@@ -1,28 +1,59 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Bell, CheckCircle, Truck, Package, Clock, RefreshCw, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Bell, CircleAlert, Truck, Package, Clock, RefreshCw, X, type LucideIcon } from 'lucide-react';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/loading';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
 import { useDemandeNotifications } from '../hooks/useDemandeNotifications';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { usePermission, Permissions } from '../hooks/usePermission';
+import { useRouteAccess } from '../hooks/useRouteAccess';
 
-const TYPE_CONFIG: Record<string, { icon: any; label: string; color: string }> = {
-  awaiting_decision: { icon: CheckCircle, label: 'Décision requise', color: 'text-warning' },
-  awaiting_execution: { icon: Truck, label: 'Exécution requise', color: 'text-info' },
-  awaiting_closure: { icon: Package, label: 'Clôture requise', color: 'text-success' },
+const TYPE_CONFIG: Record<string, { icon: LucideIcon; label: string; color: string }> = {
+  awaiting_decision: { icon: CircleAlert, label: 'Décision requise', color: 'text-warning-700' },
+  // Seule la décision attend le lecteur : les autres étapes restent neutres
+  // (le vert « succès » sur « Clôture requise » disait le contraire).
+  awaiting_execution: { icon: Truck, label: 'Exécution requise', color: 'text-muted-foreground' },
+  awaiting_closure: { icon: Package, label: 'Clôture requise', color: 'text-muted-foreground' },
   new_request: { icon: Clock, label: 'Nouvelle demande', color: 'text-muted-foreground' },
 };
 
+function formatNotificationDate(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('fr-FR', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * Cloche des demandes de réapprovisionnement.
+ *
+ * Un `Popover` et non un menu : un menu Radix bloque la touche Tab, ce qui
+ * rendait « Actualiser », « Ignorer » et « Voir toutes les demandes »
+ * injoignables au clavier. Masquée pour les rôles qui n'ont aucune demande à
+ * traiter (le caissier ne décide, n'exécute ni ne clôture : sa cloche restait
+ * vide pour toujours).
+ */
 export function NotificationBell() {
-  const navigate = useNavigate();
+  const { hasPermission, userRole } = usePermission();
+  const canOpen = useRouteAccess();
+  const concerned =
+    userRole === 'admin' ||
+    hasPermission(Permissions.DEMANDE_DECIDE) ||
+    hasPermission(Permissions.DEMANDE_EXECUTE) ||
+    hasPermission(Permissions.DEMANDE_CLOSE);
+
+  if (!concerned || !canOpen('/demandes')) return null;
+  return <NotificationBellPanel />;
+}
+
+function NotificationBellPanel() {
   const [open, setOpen] = useState(false);
+  const navigating = useRef(false);
   const {
     notifications,
     unreadCount,
@@ -34,143 +65,145 @@ export function NotificationBell() {
     dismissNotification,
   } = useDemandeNotifications(); // SSE pilote le rafraîchissement ; sondage lent en filet
 
-  const handleNotificationClick = (notification: any) => {
+  const followLink = () => {
+    navigating.current = true;
     setOpen(false);
-    navigate(`/demandes/${notification.id}`);
   };
 
   const hasAnyPending = pendingDecisionCount > 0 || pendingExecutionCount > 0 || pendingClosureCount > 0;
+  const triggerLabel =
+    unreadCount > 0
+      ? `Notifications : ${unreadCount} demande${unreadCount > 1 ? 's' : ''} en attente`
+      : 'Notifications';
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="relative h-8 w-8 p-0" aria-label="Notifications">
-          <Bell className="h-4 w-4" />
-          {hasAnyPending && (
-            <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-destructive text-[10px] font-medium text-destructive-foreground flex items-center justify-center">
-              {Math.min(unreadCount, 9)}
-              {unreadCount > 9 && '+'}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="ghost" size="sm" className="relative h-11 w-11 shrink-0 p-0 lg:h-10 lg:w-10" aria-label={triggerLabel}>
+          <Bell className="h-4 w-4" aria-hidden="true" />
+          {unreadCount > 0 && (
+            <span
+              aria-hidden="true"
+              className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger-600 px-1 text-3xs font-semibold leading-4 text-danger-50 tabular-nums ring-2 ring-background lg:right-0.5 lg:top-0.5"
+            >
+              {unreadCount > 9 ? '9+' : unreadCount}
             </span>
           )}
         </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80">
-        <div className="flex items-center justify-between px-3 py-2 border-b">
-          <h4 className="font-semibold text-sm">Notifications</h4>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              onClick={refresh}
-              disabled={isLoading}
-              aria-label="Actualiser les notifications"
-            >
-              {isLoading ? <Spinner className="h-3 w-3" /> : <RefreshCw className="h-3 w-3" />}
-            </Button>
-          </div>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-[min(22rem,calc(100vw-1rem))] p-0"
+        aria-labelledby="notifications-titre"
+        onCloseAutoFocus={(event) => {
+          // Après un clic sur une demande, le Layout place le focus sur le titre
+          // de la page ouverte : ne pas le renvoyer sur la cloche.
+          if (navigating.current) {
+            event.preventDefault();
+            navigating.current = false;
+          }
+        }}
+      >
+        <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+          <h2 id="notifications-titre" className="text-sm font-semibold">
+            Notifications
+          </h2>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={refresh}
+            disabled={isLoading}
+            aria-label="Actualiser les notifications"
+          >
+            {isLoading ? <Spinner className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+          </Button>
         </div>
 
-        {/* Summary */}
-        {(pendingDecisionCount > 0 || pendingExecutionCount > 0 || pendingClosureCount > 0) && (
-          <div className="px-3 py-2 bg-muted/50 grid grid-cols-3 gap-2 text-center">
+        {hasAnyPending && (
+          <div className="grid grid-cols-3 gap-2 bg-muted/50 px-3 py-2 text-center text-xs">
             {pendingDecisionCount > 0 && (
-              <div className="text-xs">
-                <span className="font-bold text-warning">{pendingDecisionCount}</span>
-                <div className="text-muted-foreground">à décider</div>
-              </div>
+              <p>
+                <span className="block font-medium tabular-nums text-warning-700">{pendingDecisionCount}</span>
+                <span className="text-muted-foreground">à décider</span>
+              </p>
             )}
             {pendingExecutionCount > 0 && (
-              <div className="text-xs">
-                <span className="font-bold text-info">{pendingExecutionCount}</span>
-                <div className="text-muted-foreground">à exécuter</div>
-              </div>
+              <p>
+                <span className="block font-medium tabular-nums text-foreground">{pendingExecutionCount}</span>
+                <span className="text-muted-foreground">à exécuter</span>
+              </p>
             )}
             {pendingClosureCount > 0 && (
-              <div className="text-xs">
-                <span className="font-bold text-success">{pendingClosureCount}</span>
-                <div className="text-muted-foreground">à clôturer</div>
-              </div>
+              <p>
+                <span className="block font-medium tabular-nums text-foreground">{pendingClosureCount}</span>
+                <span className="text-muted-foreground">à clôturer</span>
+              </p>
             )}
           </div>
         )}
 
-        <ScrollArea className="h-[300px]">
+        <div className="max-h-[300px] overflow-y-auto">
           {notifications.length === 0 ? (
             <div className="px-3 py-8 text-center text-muted-foreground">
-              <Bell className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Aucune notification</p>
-              <p className="text-xs mt-1">Les demandes en attente apparaîtront ici</p>
+              <Bell className="mx-auto mb-2 h-8 w-8 opacity-50" aria-hidden="true" />
+              <p className="text-sm font-medium text-foreground">Aucune notification</p>
+              <p className="mt-1 text-xs">Les demandes qui attendent votre action apparaîtront ici</p>
             </div>
           ) : (
-            notifications.map((notification, index) => {
-              const config = TYPE_CONFIG[notification.type] ?? {
-                icon: Bell,
-                label: 'Notification',
-                color: 'text-muted-foreground',
-              };
-              const Icon = config.icon;
-
-              return (
-                <div key={`${notification.id}-${index}`}>
-                  <DropdownMenuItem
-                    className="px-3 py-2 cursor-pointer focus:bg-accent"
-                    onClick={() => handleNotificationClick(notification)}
-                  >
-                    <div className="flex items-start gap-3 w-full">
-                      <div className={`mt-0.5 ${config.color}`}>
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate" title={notification.numero}>{notification.numero}</p>
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {notification.message}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {new Date(notification.timestamp).toLocaleString('fr-FR', {
-                            day: 'numeric',
-                            month: 'short',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </p>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-5 w-5 shrink-0"
-                        aria-label="Ignorer cette notification"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          dismissNotification(notification.id);
-                        }}
+            <ul className="divide-y">
+              {notifications.map((notification, index) => {
+                const config = TYPE_CONFIG[notification.type] ?? {
+                  icon: Bell,
+                  label: 'Notification',
+                  color: 'text-muted-foreground',
+                };
+                const Icon = config.icon;
+                return (
+                  <li key={`${notification.id}-${index}`} className="relative flex items-start gap-3 px-3 py-2.5 hover:bg-accent">
+                    <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', config.color)} aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                      <Link
+                        to={`/demandes/${notification.id}`}
+                        onClick={followLink}
+                        className="block truncate rounded-sm font-mono text-sm after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        title={notification.numero}
                       >
-                        <X className="h-3 w-3" />
-                      </Button>
+                        {notification.numero}
+                        <span className="sr-only"> — {config.label}</span>
+                      </Link>
+                      <p className="line-clamp-2 text-xs text-muted-foreground">{notification.message}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {config.label} · {formatNotificationDate(notification.timestamp)}
+                      </p>
                     </div>
-                  </DropdownMenuItem>
-                  {index < notifications.length - 1 && <DropdownMenuSeparator />}
-                </div>
-              );
-            })
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="relative z-10 h-8 w-8 shrink-0"
+                      aria-label={`Ignorer la notification ${notification.numero}`}
+                      onClick={() => dismissNotification(notification.id)}
+                    >
+                      <X className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
           )}
-        </ScrollArea>
+        </div>
 
-        <div className="p-2 border-t">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full"
-            onClick={() => {
-              setOpen(false);
-              navigate('/demandes');
-            }}
+        <div className="border-t p-2">
+          <Link
+            to="/demandes"
+            onClick={followLink}
+            className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'h-9 w-full')}
           >
             Voir toutes les demandes
-          </Button>
+          </Link>
         </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      </PopoverContent>
+    </Popover>
   );
 }
 

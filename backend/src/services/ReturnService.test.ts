@@ -264,4 +264,32 @@ describe('ReturnService (intégration)', () => {
       returnService.create({ tiers_id: tiersId, lignes: [] })
     ).rejects.toMatchObject({ statusCode: 400 });
   });
+
+  it('filtre la liste par statut, lignes et total compris', async () => {
+    const { produitId, factureId } = await soldProduct(10, 6);
+    const enAttente = await returnService.create({
+      tiers_id: tiersId,
+      lignes: [{ facture_id: factureId, produit_id: produitId, quantite: 1, raison: 'Test' }],
+    });
+    const traite = await returnService.create({
+      tiers_id: tiersId,
+      lignes: [{ facture_id: factureId, produit_id: produitId, quantite: 1, raison: 'Test' }],
+    });
+    createdRetourIds.push(enAttente.id, traite.id);
+    await returnService.updateStatut(traite.id, 'traite');
+
+    const { rows: counts } = await pool.query(
+      `SELECT COUNT(*) FILTER (WHERE statut = 'traite')::int AS traites, COUNT(*)::int AS tous FROM retours`
+    );
+
+    const page = await returnService.getAll(1, 1000, 'traite');
+    expect(page.data.length).toBeGreaterThan(0);
+    expect(page.data.every((r: any) => r.statut === 'traite')).toBe(true);
+    expect(page.data.some((r: any) => r.id === traite.id)).toBe(true);
+    expect(page.data.some((r: any) => r.id === enAttente.id)).toBe(false);
+    expect(page.pagination.total).toBe(counts[0].traites);
+
+    const all = await returnService.getAll(1, 1000);
+    expect(all.pagination.total).toBe(counts[0].tous);
+  });
 });

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { consoleError } from '../utils/logError';
 import { businessStatusOf } from '../utils/errors';
 import { factureService } from '../services/FactureService';
+import { venteComptoirService } from '../services/VenteComptoirService';
 import { AuthRequest } from '../middleware/auth';
 import { parsePagination, EXPORT_MAX_ROWS } from '../utils/pagination';
 import { pdfService } from '../services/PDFService';
@@ -91,6 +92,27 @@ export class FactureController {
     }
   }
 
+  /** POST /factures/comptoir — vente comptoir : facture et paiements validés ensemble. */
+  static async createVenteComptoir(req: Request, res: Response): Promise<void> {
+    try {
+      const authReq = req as AuthRequest;
+      const result = await venteComptoirService.create({
+        ...req.body,
+        userId: authReq.user?.id ?? null,
+        req,
+      });
+      res.status(result.idempotent ? 200 : 201).json({ success: true, data: result, message: result.message });
+    } catch (error: any) {
+      const status = businessStatusOf(error);
+      if (status) {
+        res.status(status).json({ success: false, error: error.message, ...(error.code ? { code: error.code } : {}) });
+        return;
+      }
+      consoleError('vente comptoir', error);
+      res.status(500).json({ success: false, error: 'Erreur interne du serveur' });
+    }
+  }
+
   static async updateStatut(req: Request, res: Response): Promise<void> {
     try {
       const authReq = req as AuthRequest;
@@ -99,6 +121,20 @@ export class FactureController {
         res.status(400).json({ success: false, error: 'Identifiant invalide' });
         return;
       }
+
+      // Annulation : contre-passation + remise en stock, le message dit ce
+      // qui a été fait (« Facture FAC-… annulée : écritures contre-passées,
+      // articles remis en stock à … »).
+      if (req.body.statut === 'annulee') {
+        const result = await factureService.annuler(id, authReq.user?.id, req);
+        if (!result) {
+          res.status(404).json({ success: false, error: 'Facture non trouvée' });
+          return;
+        }
+        res.json({ success: true, data: result, message: result.message });
+        return;
+      }
+
       const updated = await factureService.updateStatut(
         id,
         req.body.statut,
@@ -112,7 +148,12 @@ export class FactureController {
       }
 
       res.json({ success: true, message: 'Statut mis à jour' });
-    } catch (error) {
+    } catch (error: any) {
+      const status = businessStatusOf(error);
+      if (status) {
+        res.status(status).json({ success: false, error: error.message, ...(error.code ? { code: error.code } : {}) });
+        return;
+      }
       consoleError('PUT /api/factures/:id/statut', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
@@ -140,7 +181,12 @@ export class FactureController {
       }
 
       res.json({ success: true, message: restaurer_stock ? 'Facture supprimée et stock restauré' : 'Facture supprimée' });
-    } catch (error) {
+    } catch (error: any) {
+      const status = businessStatusOf(error);
+      if (status) {
+        res.status(status).json({ success: false, error: error.message, ...(error.code ? { code: error.code } : {}) });
+        return;
+      }
       consoleError('DELETE /api/factures/:id', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }

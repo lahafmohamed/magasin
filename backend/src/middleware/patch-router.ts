@@ -20,7 +20,8 @@ express.Router = function(options?: any) {
     'session_id',
     'userId',
     'tiersId',
-    'payslipId'
+    'payslipId',
+    'ligneId'
   ];
 
   idParams.forEach(paramName => {

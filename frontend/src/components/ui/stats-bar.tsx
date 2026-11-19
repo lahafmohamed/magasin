@@ -1,44 +1,79 @@
-import { LucideIcon } from 'lucide-react';
+import { GRID_COLS, StatTile as StatTileCard } from '@/components/ui/stat-tile';
 import { cn } from '@/lib/utils';
-import { Card, CardContent } from '@/components/ui/card';
 
+/**
+ * Tuile de `StatsBar` (API historique). Pour une nouvelle rangée d'indicateurs,
+ * composer directement `<StatGrid>` + `<StatTile>` (ui/stat-tile) : valeurs
+ * numériques mises en forme, ton appliqué seulement si ≠ 0, état « Indisponible ».
+ */
 export interface StatTile {
   label: string;
+  /** Valeur déjà mise en forme (`formatCurrency(x)`, `String(n)`). */
   value: string | number;
   hint?: string;
-  icon?: LucideIcon;
-  /** Tailwind text-color class for the value, e.g. 'text-success' / 'text-warning'. */
+  /** `lg` : le chiffre qui répond à la page (« Reste à payer »). */
+  size?: 'md' | 'lg';
+  /**
+   * Classe de couleur de la valeur, palier explicite uniquement :
+   * `'text-warning-700'`, `'text-danger-700'`. Jamais `text-success` /
+   * `text-warning` nus (contraste insuffisant, règle ESLint) ni `text-primary`
+   * (le bleu de marque se lit comme un lien).
+   */
   tone?: string;
 }
 
+/** Alias explicite, pour éviter la confusion avec le composant `StatTile`. */
+export type StatsBarTile = StatTile;
+
 /**
- * Compact row of summary tiles shown above a list. Responsive grid: stacks on
- * mobile, spreads on desktop. Keep to 2–5 tiles for readability.
+ * Synthèse au-dessus d'une liste : **un seul bandeau** à cellules séparées par
+ * un filet (libellé, puis chiffre et indication sur une même ligne ; jamais
+ * d'icône). Trois ou quatre cartes de 110 px pour un nombre chacune prenaient
+ * plus de place que les lignes qu'elles résument. Grille dimensionnée sur le
+ * nombre de cellules ; les filets suivent le passage à la ligne (bord bas +
+ * bord de fin sur chaque cellule, rognés par le cadre).
+ *
+ * `unavailable` : la requête de statistiques a échoué — chaque tuile affiche
+ * « Indisponible » plutôt que « — » ou 0.
  */
-export function StatsBar({ tiles, loading }: { tiles: StatTile[]; loading?: boolean }) {
+export function StatsBar({
+  tiles,
+  loading,
+  unavailable,
+}: {
+  tiles: StatTile[];
+  loading?: boolean;
+  unavailable?: boolean;
+}) {
+  if (tiles.length === 0) return null;
+  const cols = GRID_COLS[Math.min(Math.max(tiles.length, 1), 6)];
+  // Deux colonnes sur téléphone : une dernière cellule impaire prend la rangée
+  // entière plutôt que de laisser une case vide bordée d'un filet.
+  const oddLast = tiles.length >= 3 && tiles.length % 2 === 1;
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {tiles.map((t) => {
-        const Icon = t.icon;
-        return (
-          <Card key={t.label}>
-            <CardContent className="flex items-center gap-3 p-4">
-              {Icon && (
-                <div className="rounded-md bg-muted p-2 text-muted-foreground">
-                  <Icon className="h-5 w-5" />
-                </div>
-              )}
-              <div className="min-w-0">
-                <p className="truncate text-xs text-muted-foreground">{t.label}</p>
-                <p className={cn('text-lg font-bold tracking-tight', t.tone)}>
-                  {loading ? '—' : t.value}
-                </p>
-                {t.hint && <p className="truncate text-xs text-muted-foreground">{t.hint}</p>}
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })}
+    <div className="overflow-hidden rounded-lg border bg-card">
+      <div
+        className={cn(
+          '-mb-px -me-px grid',
+          cols,
+          oddLast && 'min-[360px]:[&>:last-child]:col-span-2 sm:[&>:last-child]:col-span-1'
+        )}
+      >
+        {tiles.map((t) => (
+          <StatTileCard
+            key={t.label}
+            bare
+            className="border-b border-e"
+            label={t.label}
+            value={t.value}
+            hint={t.hint}
+            size={t.size}
+            loading={loading}
+            unavailable={unavailable}
+            valueClassName={t.tone}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -298,7 +298,7 @@ describe('Factures API (Integration)', () => {
       createdFactureIds.push(testFactureId);
     });
 
-     it('should update invoice status', async () => {
+     it('should cancel the invoice and say what the cancellation did', async () => {
       const res = await request(app)
         .put(`/api/factures/${testFactureId}/statut`)
         .set('Authorization', `Bearer ${authToken}`)
@@ -306,7 +306,11 @@ describe('Factures API (Integration)', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.message).toBe('Statut mis à jour');
+      // Décision 2026-10-23 : l'annulation contre-passe et remet en stock, et le dit.
+      expect(res.body.message).toMatch(
+        /^Facture FAC-\d{4}-\d{5} annulée : écritures contre-passées, articles remis en stock à .+\.$/
+      );
+      expect(res.body.data).toMatchObject({ id: testFactureId, statut: 'annulee', ecritures_contre_passees: 2 });
     });
 
     it('should reject invalid status', async () => {

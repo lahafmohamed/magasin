@@ -1,27 +1,36 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Plus, Users, Search, Download, Eye, Pencil, Power } from 'lucide-react';
-import { employeService } from '../services/api';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type MouseEvent } from 'react';
+import { Download, Pencil, Plus, Search, UserCheck, UserX, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { MoneyInput } from '../components/ui/money-input';
+import { employeService } from '../services/api';
+import { iconForPath } from '@/config/routeAccess';
+import { PageShell } from '@/components/ui/page-shell';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { QueryState } from '@/components/ui/query-state';
 import { Spinner } from '@/components/ui/loading';
-import { SortableHeader, toggleSort, SortState } from '@/components/ui/sortable-header';
+import { SortableHeader, toggleSort, type SortState } from '@/components/ui/sortable-header';
 import { ResponsiveTable, DataCard, DataCardRow } from '@/components/ui/responsive-table';
-import { ListSkeleton } from '@/components/ui/skeleton';
+import { ListSkeleton, TableSkeleton } from '@/components/ui/skeleton';
 import { Pagination } from '@/components/ui/pagination';
+import { StatGrid, StatTile } from '@/components/ui/stat-tile';
+import { Money } from '@/components/ui/money';
+import { DocumentCode } from '@/components/ui/document-code';
+import { KeyValue, KeyValueList } from '@/components/ui/key-value';
+import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
+import { RequiredMark } from '@/components/ui/required-mark';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { StatusBadge, getStatusOptions } from '@/components/StatusBadge';
 import { useExportExcel } from '../hooks/useExportExcel';
-import { formatFCFA } from '../utils/format';
+import { formatDate, formatNumber, formatPercent, toNumber } from '../utils/format';
 import { getErrorMessage } from '@/utils/errors';
 
 interface Employe {
@@ -44,11 +53,11 @@ interface Employe {
 }
 
 interface CommissionSummary {
-  total_ventes: number;
+  total_ventes: number | string;
   total_montant_ventes: string;
   total_commissions: string;
-  commissions_en_attente: number;
-  commissions_payees: number;
+  commissions_en_attente: number | string;
+  commissions_payees: number | string;
 }
 
 /**
@@ -67,11 +76,23 @@ interface CommissionLigne {
   statut: string;
 }
 
+interface EmployesPage {
+  data?: Employe[];
+  pagination?: { total?: number; totalPages?: number };
+}
+
+/** Suggestions tant qu'aucun employé n'a de département saisi. */
 const DEPARTEMENTS = ['Vente', 'Magasin', 'Administration'];
+const PAGE_SIZE = 20;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type EmployeSortKey = 'matricule' | 'nom_complet' | 'departement';
+type StatutFilter = 'all' | 'actif' | 'inactif';
+type FormErrors = Partial<Record<'matricule' | 'nom_complet' | 'date_embauche' | 'email' | 'commission_taux', string>>;
 
-const blankForm = {
+const STATUT_OPTIONS = getStatusOptions('compte');
+
+const blankForm = () => ({
   matricule: '',
   nom_complet: '',
   poste: '',
@@ -84,7 +105,22 @@ const blankForm = {
   salaire_base: '',
   commission_taux: '0',
   actif: true,
-};
+});
+
+const tauxText = (v: string | number | null | undefined) => formatPercent(toNumber(v) ?? 0, 2);
+
+function mergeDepartements(current: string[], rows: Employe[]): string[] {
+  const all = new Set(current);
+  rows.forEach((r) => {
+    const d = r.departement?.trim();
+    if (d) all.add(d);
+  });
+  return all.size === current.length ? current : Array.from(all).sort((a, b) => a.localeCompare(b, 'fr'));
+}
+
+function asArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
 
 export default function Employes() {
   const confirm = useConfirm();
@@ -93,71 +129,94 @@ export default function Employes() {
   const [employes, setEmployes] = useState<Employe[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  const requestSeq = useRef(0);
 
-  // filters / paging
+  // filtres / pagination
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [filterDepartement, setFilterDepartement] = useState('');
-  const [filterActif, setFilterActif] = useState<'all' | 'true' | 'false'>('all');
+  const [filterStatut, setFilterStatut] = useState<StatutFilter>('all');
   const [page, setPage] = useState(1);
-  const [limit] = useState(20);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [sort, setSort] = useState<SortState<EmployeSortKey> | null>({ key: 'nom_complet', dir: 'asc' });
-  const handleSort = (key: EmployeSortKey) => setSort((s) => toggleSort(s, key));
+  // Le département est un texte libre : la liste proposée réunit les valeurs
+  // usuelles et celles déjà saisies (« Ventes », « Caisse »…), sans quoi le
+  // filtre proposait des valeurs absentes des données et ne trouvait rien.
+  const [knownDepartements, setKnownDepartements] = useState<string[]>([]);
+  const departementOptions = knownDepartements.length > 0 ? knownDepartements : DEPARTEMENTS;
 
-  // form (create + edit)
+  // formulaire (création + modification)
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Employe | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState(blankForm);
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
 
-  // detail
+  // fiche
   const [detail, setDetail] = useState<Employe | null>(null);
   const [commissionSummary, setCommissionSummary] = useState<CommissionSummary | null>(null);
   const [commissionLignes, setCommissionLignes] = useState<CommissionLigne[]>([]);
+  const [commissionsLoading, setCommissionsLoading] = useState(false);
+  const [commissionsError, setCommissionsError] = useState<unknown>(null);
 
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
     return () => clearTimeout(t);
   }, [search]);
 
-  useEffect(() => { setPage(1); }, [debouncedSearch, filterDepartement, filterActif]);
-
   const fetchEmployes = useCallback(async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
     try {
-      const actif = filterActif === 'all' ? undefined : filterActif === 'true';
-      const res = await employeService.getAll(
+      const actif = filterStatut === 'all' ? undefined : filterStatut === 'actif';
+      const res = (await employeService.getAll(
         debouncedSearch || undefined,
         filterDepartement || undefined,
         actif,
         page,
-        limit,
+        PAGE_SIZE,
         sort?.key,
-        sort?.dir,
-      );
-      const rows = res?.data ?? res ?? [];
-      setEmployes(Array.isArray(rows) ? rows : []);
-      setTotal(res?.pagination?.total ?? 0);
-      setTotalPages(res?.pagination?.totalPages ?? 0);
+        sort?.dir
+      )) as EmployesPage | Employe[];
+      if (seq !== requestSeq.current) return;
+      const rows = Array.isArray(res) ? res : res?.data ?? [];
+      setEmployes(rows);
+      setKnownDepartements((prev) => mergeDepartements(prev, rows));
+      setTotal(Array.isArray(res) ? rows.length : res?.pagination?.total ?? rows.length);
+      setTotalPages(Array.isArray(res) ? 1 : res?.pagination?.totalPages ?? 1);
     } catch (err) {
-      // Erreur conservée en état → QueryState propose « Réessayer ».
+      if (seq !== requestSeq.current) return;
+      // Erreur gardée en état : « Impossible de charger » + « Réessayer », jamais une liste vide.
       setError(err);
       setEmployes([]);
-      toast.error('Erreur chargement employés');
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
-  }, [debouncedSearch, filterDepartement, filterActif, page, limit, sort]);
+  }, [debouncedSearch, filterDepartement, filterStatut, page, sort]);
 
-  useEffect(() => { fetchEmployes(); }, [fetchEmployes]);
+  useEffect(() => {
+    void fetchEmployes();
+  }, [fetchEmployes]);
 
-  const openDetail = async (employe: Employe) => {
-    setDetail(employe);
+  const hasFilters = !!debouncedSearch || !!filterDepartement || filterStatut !== 'all';
+  const clearFilters = () => {
+    setSearch('');
+    setDebouncedSearch('');
+    setFilterDepartement('');
+    setFilterStatut('all');
+    setPage(1);
+  };
+
+  const loadCommissions = useCallback(async (employe: Employe) => {
     setCommissionSummary(null);
     setCommissionLignes([]);
+    setCommissionsError(null);
+    setCommissionsLoading(true);
     try {
       const dateDebut = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0];
       const dateFin = new Date().toISOString().split('T')[0];
@@ -165,42 +224,88 @@ export default function Employes() {
         employeService.getCommissionSummary(employe.id, dateDebut, dateFin),
         employeService.getCommissions(employe.id, dateDebut, dateFin),
       ]);
-      setCommissionSummary(summary.data || summary);
-      setCommissionLignes(lignes?.data ?? lignes ?? []);
+      setCommissionSummary((summary?.data ?? summary) as CommissionSummary);
+      setCommissionLignes(asArray<CommissionLigne>(lignes?.data ?? lignes));
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur chargement commissions'));
+      setCommissionsError(err);
+    } finally {
+      setCommissionsLoading(false);
     }
+  }, []);
+
+  const openDetail = (employe: Employe) => {
+    setDetail(employe);
+    void loadCommissions(employe);
   };
 
-  const openCreate = () => { setEditing(null); setFormData(blankForm); setShowForm(true); };
+  const closeDetail = () => {
+    setDetail(null);
+    setCommissionSummary(null);
+    setCommissionLignes([]);
+  };
+
+  const openCreate = () => {
+    setEditing(null);
+    setFormData(blankForm());
+    setFormErrors({});
+    setShowForm(true);
+  };
+
   const openEdit = (e: Employe) => {
     setEditing(e);
+    setFormErrors({});
     setFormData({
       matricule: e.matricule,
       nom_complet: e.nom_complet,
       poste: e.poste || '',
       departement: e.departement || '',
-      date_embauche: e.date_embauche ? e.date_embauche.split('T')[0] : blankForm.date_embauche,
+      date_embauche: e.date_embauche ? e.date_embauche.split('T')[0] : blankForm().date_embauche,
       date_naissance: e.date_naissance ? e.date_naissance.split('T')[0] : '',
       telephone: e.telephone || '',
       email: e.email || '',
       adresse: e.adresse || '',
-      salaire_base: e.salaire_base ? String(Math.round(parseFloat(e.salaire_base))) : '',
+      salaire_base: e.salaire_base ? String(Math.round(Number.parseFloat(e.salaire_base))) : '',
       commission_taux: e.commission_taux ?? '0',
       actif: e.actif,
     });
     setShowForm(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (ev: FormEvent) => {
+    ev.preventDefault();
+    const taux = Number.parseFloat(formData.commission_taux || '0');
+    const errors: FormErrors = {};
+    if (!formData.matricule.trim()) errors.matricule = 'Saisissez le matricule.';
+    if (!formData.nom_complet.trim()) errors.nom_complet = 'Saisissez le nom complet.';
+    if (!formData.date_embauche) errors.date_embauche = 'Choisissez la date d’embauche.';
+    if (formData.email.trim() && !EMAIL_RE.test(formData.email.trim())) {
+      errors.email = 'Saisissez une adresse e-mail valide (ex. : nom@entreprise.ci).';
+    }
+    if (!Number.isFinite(taux) || taux < 0 || taux > 100) errors.commission_taux = 'Saisissez un taux entre 0 et 100 %.';
+    setFormErrors(errors);
+    const first = (['matricule', 'nom_complet', 'date_embauche', 'email', 'commission_taux'] as const).find((k) => errors[k]);
+    if (first) {
+      const ids: Record<typeof first, string> = {
+        matricule: 'emp-matricule',
+        nom_complet: 'emp-nom',
+        date_embauche: 'emp-embauche',
+        email: 'emp-email',
+        commission_taux: 'emp-com',
+      };
+      requestAnimationFrame(() => document.getElementById(ids[first])?.focus());
+      return;
+    }
+
     setSubmitting(true);
     try {
       const { actif, ...base } = formData;
       const payload = {
         ...base,
-        salaire_base: base.salaire_base ? parseFloat(base.salaire_base) : undefined,
-        commission_taux: parseFloat(base.commission_taux),
+        matricule: base.matricule.trim(),
+        nom_complet: base.nom_complet.trim(),
+        email: base.email.trim(),
+        salaire_base: base.salaire_base ? Number.parseFloat(base.salaire_base) : undefined,
+        commission_taux: taux,
       };
       if (editing) {
         await employeService.update(editing.id, { ...payload, actif });
@@ -210,9 +315,9 @@ export default function Employes() {
         toast.success('Employé créé');
       }
       setShowForm(false);
-      fetchEmployes();
+      void fetchEmployes();
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur enregistrement employé'));
+      toast.error(getErrorMessage(err, 'Impossible d’enregistrer l’employé. Réessayez.'));
     } finally {
       setSubmitting(false);
     }
@@ -220,198 +325,327 @@ export default function Employes() {
 
   const toggleActif = async (e: Employe) => {
     const next = !e.actif;
-    if (!(await confirm({
-      title: next ? 'Réactiver cet employé ?' : 'Désactiver cet employé ?',
-      description: `${e.nom_complet} sera marqué ${next ? 'actif' : 'inactif'}.`,
-      confirmLabel: next ? 'Réactiver' : 'Désactiver',
-      destructive: !next,
-    }))) return;
+    if (
+      !(await confirm(
+        next
+          ? {
+              title: `Réactiver l’employé ${e.nom_complet} ?`,
+              description: `${e.nom_complet} sera de nouveau inclus dans les prochains cycles de paie.`,
+              confirmLabel: 'Réactiver l’employé',
+            }
+          : {
+              title: `Désactiver l’employé ${e.nom_complet} ?`,
+              description: `${e.nom_complet} ne sera plus inclus dans les prochains cycles de paie. Son historique est conservé.`,
+              confirmLabel: 'Désactiver l’employé',
+              destructive: true,
+            }
+      ))
+    )
+      return;
     try {
       await employeService.update(e.id, { actif: next });
       toast.success(next ? 'Employé réactivé' : 'Employé désactivé');
-      fetchEmployes();
+      void fetchEmployes();
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Action impossible'));
+      toast.error(getErrorMessage(err, 'Impossible de modifier le statut de l’employé.'));
     }
   };
 
-  const StatutBadge = ({ actif }: { actif: boolean }) => (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-      actif ? 'bg-success-100 text-success-700' : 'bg-muted text-muted-foreground'
-    }`}>
-      {actif ? 'Actif' : 'Inactif'}
-    </span>
-  );
-
-  const RowActions = ({ e, size = 'sm' }: { e: Employe; size?: 'sm' | 'xs' }) => {
-    const cls = size === 'sm' ? 'h-8 w-8' : 'h-7 w-7';
-    const icon = size === 'sm' ? 'h-4 w-4' : 'h-3.5 w-3.5';
+  // Fonction de rendu (et non composant imbriqué) : un composant redéfini à
+  // chaque rendu serait remonté, et le focus rendu par un dialogue se perdrait.
+  const rowActions = (e: Employe, touch: boolean) => {
+    const size = touch ? 'icon-touch' : 'icon';
+    const variant = touch ? 'outline' : 'ghost';
     return (
-      <div className="flex justify-end gap-1">
-        <Button variant="ghost" size="icon" className={cls} onClick={() => openDetail(e)} aria-label="Voir cet employé">
-          <Eye className={icon} />
+      <>
+        <Button variant={variant} size={size} onClick={() => openEdit(e)} aria-label={`Modifier l’employé ${e.nom_complet}`} title="Modifier">
+          <Pencil className="h-4 w-4" aria-hidden="true" />
         </Button>
-        <Button variant="ghost" size="icon" className={cls} onClick={() => openEdit(e)} aria-label="Modifier cet employé">
-          <Pencil className={icon} />
+        <Button
+          variant={variant}
+          size={size}
+          onClick={() => void toggleActif(e)}
+          aria-label={e.actif ? `Désactiver l’employé ${e.nom_complet}` : `Réactiver l’employé ${e.nom_complet}`}
+          title={e.actif ? 'Désactiver' : 'Réactiver'}
+        >
+          {e.actif ? <UserX className="h-4 w-4" aria-hidden="true" /> : <UserCheck className="h-4 w-4" aria-hidden="true" />}
         </Button>
-        <Button variant="ghost" size="icon" className={cls} onClick={() => toggleActif(e)} aria-label={e.actif ? 'Désactiver' : 'Réactiver'}>
-          <Power className={`${icon} ${e.actif ? 'text-success-600' : 'text-muted-foreground'}`} />
-        </Button>
-      </div>
+      </>
     );
   };
 
+  const handleSort = (key: EmployeSortKey) => {
+    setSort((s) => toggleSort(s, key));
+    setPage(1);
+  };
+
+  /** Clic sur la ligne = confort souris ; le nom est le vrai contrôle (clavier). */
+  const onRowClick = (ev: MouseEvent<HTMLTableRowElement>, e: Employe) => {
+    if ((ev.target as HTMLElement).closest('a,button,input,select,textarea,[role="checkbox"]')) return;
+    openDetail(e);
+  };
+
+  const status = loading || error ? '' : total === 0 ? 'Aucun employé' : `${formatNumber(total)} ${total > 1 ? 'employés' : 'employé'}`;
+
   return (
-    <div className="container mx-auto px-4 py-6 max-w-7xl">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Users className="h-6 w-6" /> Employés</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{total} employé{total > 1 ? 's' : ''} au total</p>
-        </div>
-        <div className="flex gap-2 self-start sm:self-auto">
-          <Button variant="outline" className="gap-2" onClick={() => exportToExcel(employes, [
-            { key: 'matricule', label: 'Matricule' },
-            { key: 'nom_complet', label: 'Nom complet' },
-            { key: 'poste', label: 'Poste' },
-            { key: 'departement', label: 'Département' },
-            { key: 'telephone', label: 'Téléphone' },
-            { key: 'email', label: 'Email' },
-            { key: 'salaire_base', label: 'Salaire de base' },
-            { key: 'commission_taux', label: 'Taux commission' },
-          ], 'employes')}>
-            <Download className="h-4 w-4" /> Excel
-          </Button>
-          <Button onClick={openCreate} className="gap-1.5">
-            <Plus className="h-4 w-4" /> Nouvel employé
-          </Button>
-        </div>
-      </div>
+    <PageShell
+      title="Employés"
+      description="Le personnel, son poste et son taux de commission, repris par la paie"
+      actions={
+        <Button
+          variant="outline"
+          size="touch"
+          className="gap-2"
+          onClick={() =>
+            exportToExcel(
+              employes.map((e) => ({
+                ...e,
+                statut: e.actif ? 'Actif' : 'Inactif',
+                salaire_base: e.salaire_base ? Math.round(Number.parseFloat(e.salaire_base)) : '',
+                commission_taux: toNumber(e.commission_taux) ?? 0,
+              })),
+              [
+                { key: 'matricule', label: 'Matricule' },
+                { key: 'nom_complet', label: 'Nom complet' },
+                { key: 'poste', label: 'Poste' },
+                { key: 'departement', label: 'Département' },
+                { key: 'telephone', label: 'Téléphone' },
+                { key: 'email', label: 'Adresse e-mail' },
+                { key: 'salaire_base', label: 'Salaire de base (FCFA)' },
+                { key: 'commission_taux', label: 'Taux de commission (%)' },
+                { key: 'statut', label: 'Statut' },
+              ],
+              'employes'
+            )
+          }
+        >
+          <Download className="h-4 w-4" aria-hidden="true" /> Exporter en Excel
+        </Button>
+      }
+      primaryAction={
+        <Button size="touch" onClick={openCreate} className="gap-2">
+          <Plus className="h-4 w-4" aria-hidden="true" /> Nouvel employé
+        </Button>
+      }
+    >
+      <p role="status" className="sr-only">
+        {status}
+      </p>
 
+      {/* Recherche et filtres */}
       <Card>
-        <CardContent className="p-0">
-          {/* Filters */}
-          <div className="p-4 border-b flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-              <Input
-                placeholder="Nom, matricule, poste…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Select value={filterDepartement === '' ? '__all' : filterDepartement} onValueChange={(v) => setFilterDepartement(v === '__all' ? '' : v)}>
-              <SelectTrigger className="h-9 w-full sm:w-44" aria-label="Filtrer par département">
-                <SelectValue placeholder="Tous les départements" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all">Tous les départements</SelectItem>
-                {DEPARTEMENTS.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={filterActif} onValueChange={(v) => setFilterActif(v as any)}>
-              <SelectTrigger className="h-9 w-full sm:w-36" aria-label="Filtrer par statut">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Tous</SelectItem>
-                <SelectItem value="true">Actifs</SelectItem>
-                <SelectItem value="false">Inactifs</SelectItem>
-              </SelectContent>
-            </Select>
+        <CardContent inset="standalone" className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="relative min-w-0 flex-1 sm:max-w-sm">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <Input
+              type="search"
+              enterKeyHint="search"
+              aria-label="Rechercher un employé"
+              placeholder="Nom, matricule, poste…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10"
+            />
           </div>
+          <Select
+            value={filterDepartement === '' ? '__all' : filterDepartement}
+            onValueChange={(v) => {
+              setFilterDepartement(v === '__all' ? '' : v);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-56" aria-label="Filtrer par département">
+              <SelectValue placeholder="Tous les départements" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all">Tous les départements</SelectItem>
+              {departementOptions.map((d) => (
+                <SelectItem key={d} value={d}>
+                  {d}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={filterStatut}
+            onValueChange={(v) => {
+              setFilterStatut(v as StatutFilter);
+              setPage(1);
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-44" aria-label="Filtrer par statut">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tous les statuts</SelectItem>
+              {STATUT_OPTIONS.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  {o.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {hasFilters && (
+            <Button variant="ghost" onClick={clearFilters} className="gap-1.5 self-start text-muted-foreground sm:self-auto">
+              <X className="h-4 w-4" aria-hidden="true" /> Effacer les filtres
+            </Button>
+          )}
+        </CardContent>
+      </Card>
 
+      <Card className="max-md:border-0 max-md:bg-transparent max-md:shadow-none">
+        <CardContent inset="flush">
           <QueryState
             loading={loading}
             error={error}
             isEmpty={employes.length === 0}
-            onRetry={fetchEmployes}
+            onRetry={() => void fetchEmployes()}
             skeleton={<ListSkeleton items={6} />}
-            emptyIcon={Users}
-            emptyTitle="Aucun employé"
-          >
-          <ResponsiveTable
-            cards={
-              (
-                employes.map((e) => (
-                  <DataCard
-                    key={e.id}
-                    onClick={() => openDetail(e)}
-                    title={<span>{e.nom_complet}</span>}
-                    badge={<StatutBadge actif={e.actif} />}
-                  >
-                    <DataCardRow label="Matricule" value={<span className="font-mono text-xs">{e.matricule}</span>} />
-                    <DataCardRow label="Poste" value={e.poste || '—'} />
-                    <DataCardRow label="Département" value={e.departement || '—'} />
-                    <DataCardRow label="Commission" value={<span className="num">{e.commission_taux}%</span>} />
-                    <div className="mt-2" onClick={(ev) => ev.stopPropagation()}>
-                      <RowActions e={e} />
-                    </div>
-                  </DataCard>
-                ))
+            errorTitle="Impossible de charger les employés"
+            emptyIcon={iconForPath('/employes')}
+            emptyTitle={hasFilters ? 'Aucun employé ne correspond à ces filtres' : 'Aucun employé'}
+            emptyDescription={
+              hasFilters
+                ? 'Vérifiez le nom, le matricule ou le département'
+                : 'Ajoutez votre personnel pour calculer les commissions et générer la paie'
+            }
+            emptyAction={
+              hasFilters ? (
+                <Button variant="outline" onClick={clearFilters} className="gap-1.5">
+                  <X className="h-4 w-4" aria-hidden="true" /> Effacer les filtres
+                </Button>
+              ) : (
+                <Button onClick={openCreate} className="gap-1.5">
+                  <Plus className="h-4 w-4" aria-hidden="true" /> Nouvel employé
+                </Button>
               )
             }
-            table={
-              <div className="overflow-x-auto">
-                <Table>
+          >
+            <ResponsiveTable
+              cards={employes.map((e) => (
+                <DataCard
+                  key={e.id}
+                  onClick={() => openDetail(e)}
+                  // Le poste est dans le titre : le nom du bouton le reprend.
+                  linkLabel={`Voir la fiche de ${e.nom_complet}${e.poste ? `, ${e.poste}` : ''}`}
+                  title={
+                    <>
+                      {e.nom_complet}
+                      {e.poste && <span className="block text-xs font-normal text-muted-foreground">{e.poste}</span>}
+                    </>
+                  }
+                  wrapTitle
+                  badge={e.actif ? undefined : <StatusBadge type="compte" statut="inactif" />}
+                  actions={rowActions(e, true)}
+                >
+                  <DataCardRow label="Matricule" value={<DocumentCode className="text-xs">{e.matricule}</DocumentCode>} />
+                  <DataCardRow label="Département" value={e.departement || '—'} />
+                  <DataCardRow label="Taux de commission" value={tauxText(e.commission_taux)} numeric />
+                </DataCard>
+              ))}
+              table={
+                <Table aria-label="Liste des employés">
                   <TableHeader>
                     <TableRow>
-                      <SortableHeader columnKey="matricule" sort={sort} onSort={handleSort}>Matricule</SortableHeader>
-                      <SortableHeader columnKey="nom_complet" sort={sort} onSort={handleSort}>Nom</SortableHeader>
-                      <TableHead>Poste</TableHead>
-                      <SortableHeader columnKey="departement" sort={sort} onSort={handleSort}>Dépt.</SortableHeader>
-                      <TableHead className="text-right">Commission</TableHead>
+                      <SortableHeader columnKey="matricule" sort={sort} onSort={handleSort}>
+                        Matricule
+                      </SortableHeader>
+                      <SortableHeader columnKey="nom_complet" sort={sort} onSort={handleSort}>
+                        Nom
+                      </SortableHeader>
+                      <SortableHeader columnKey="departement" sort={sort} onSort={handleSort}>
+                        Département
+                      </SortableHeader>
+                      <TableHead numeric>Taux de commission</TableHead>
                       <TableHead>Statut</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>
+                        <span className="sr-only">Actions</span>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {employes.map((e) => (
-                      <TableRow key={e.id} className="hover:bg-muted/30 cursor-pointer" onClick={() => openDetail(e)}>
-                        <TableCell className="font-mono text-xs num">{e.matricule}</TableCell>
-                        <TableCell className="font-medium">{e.nom_complet}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{e.poste || '—'}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-xs py-0">{e.departement || '—'}</Badge>
+                      <TableRow key={e.id} className="cursor-pointer" onClick={(ev) => onRowClick(ev, e)}>
+                        <TableCell className="text-xs">
+                          <DocumentCode>{e.matricule}</DocumentCode>
                         </TableCell>
-                        <TableCell className="text-right text-xs num">{e.commission_taux}%</TableCell>
-                        <TableCell><StatutBadge actif={e.actif} /></TableCell>
-                        <TableCell className="text-right" onClick={(ev) => ev.stopPropagation()}>
-                          <RowActions e={e} size="xs" />
+                        <TableCell>
+                          <button
+                            type="button"
+                            onClick={() => openDetail(e)}
+                            className="rounded-sm text-left font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            {e.nom_complet}
+                          </button>
+                          {/* Le poste sous le nom, comme le prénom d'un contact : le
+                              département reste la seule colonne d'attribut. */}
+                          {e.poste && <div className="text-xs text-muted-foreground">{e.poste}</div>}
+                        </TableCell>
+                        <TableCell>{e.departement || '—'}</TableCell>
+                        <TableCell numeric>{tauxText(e.commission_taux)}</TableCell>
+                        {/* Pastille pour l'exception seulement : un employé actif est l'état normal. */}
+                        <TableCell>{!e.actif && <StatusBadge type="compte" statut="inactif" />}</TableCell>
+                        <TableCell className="w-px whitespace-nowrap text-right">
+                          <div className="flex justify-end gap-1">
+                            {rowActions(e, false)}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
-              </div>
-            }
-          />
+              }
+            />
           </QueryState>
-
-          {totalPages > 1 && (
-            <div className="p-4 border-t">
-              <Pagination page={page} totalPages={totalPages} total={total} limit={limit} onPageChange={setPage} />
-            </div>
-          )}
         </CardContent>
       </Card>
 
-      {/* Create / Edit dialog */}
+      {!loading && !error && total > 0 && (
+        <Pagination page={page} totalPages={totalPages} total={total} limit={PAGE_SIZE} announce={false} onPageChange={setPage} />
+      )}
+
+      {/* Création / modification */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editing ? 'Modifier l’employé' : 'Nouvel employé'}</DialogTitle>
+            <DialogTitle>{editing ? `Modifier l’employé ${editing.nom_complet}` : 'Nouvel employé'}</DialogTitle>
+            <DialogDescription>Les champs marqués d’un * sont obligatoires</DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="emp-matricule">Matricule *</Label>
-                <Input id="emp-matricule" value={formData.matricule} onChange={(e) => setFormData({ ...formData, matricule: e.target.value })} required />
+                <Label htmlFor="emp-matricule">
+                  Matricule <RequiredMark />
+                </Label>
+                <Input
+                  id="emp-matricule"
+                  value={formData.matricule}
+                  onChange={(e) => {
+                    setFormData({ ...formData, matricule: e.target.value });
+                    setFormErrors((p) => ({ ...p, matricule: undefined }));
+                  }}
+                  {...fieldErrorProps('emp-matricule', formErrors.matricule)}
+                />
+                <FieldError id="emp-matricule">{formErrors.matricule}</FieldError>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="emp-nom">Nom complet *</Label>
-                <Input id="emp-nom" value={formData.nom_complet} onChange={(e) => setFormData({ ...formData, nom_complet: e.target.value })} required />
+                <Label htmlFor="emp-nom">
+                  Nom complet <RequiredMark />
+                </Label>
+                <Input
+                  id="emp-nom"
+                  autoComplete="name"
+                  value={formData.nom_complet}
+                  onChange={(e) => {
+                    setFormData({ ...formData, nom_complet: e.target.value });
+                    setFormErrors((p) => ({ ...p, nom_complet: undefined }));
+                  }}
+                  {...fieldErrorProps('emp-nom', formErrors.nom_complet)}
+                />
+                <FieldError id="emp-nom">{formErrors.nom_complet}</FieldError>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-poste">Poste</Label>
@@ -419,152 +653,268 @@ export default function Employes() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-dept">Département</Label>
-                <Select
-                  value={formData.departement === '' ? '__none' : formData.departement}
-                  onValueChange={(v) => setFormData({ ...formData, departement: v === '__none' ? '' : v })}
-                >
-                  <SelectTrigger id="emp-dept" className="h-9">
-                    <SelectValue placeholder="Sélectionner…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none">Sélectionner…</SelectItem>
-                    {DEPARTEMENTS.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <Input
+                  id="emp-dept"
+                  list="emp-departements"
+                  value={formData.departement}
+                  onChange={(e) => setFormData({ ...formData, departement: e.target.value })}
+                  placeholder="Ex. : Ventes"
+                />
+                <datalist id="emp-departements">
+                  {departementOptions.map((d) => (
+                    <option key={d} value={d} />
+                  ))}
+                </datalist>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="emp-embauche">Date d'embauche *</Label>
-                <DatePicker id="emp-embauche" value={formData.date_embauche} onChange={(date_embauche) => setFormData({ ...formData, date_embauche })} required />
+                <Label htmlFor="emp-embauche">
+                  Date d’embauche <RequiredMark />
+                </Label>
+                <DatePicker
+                  id="emp-embauche"
+                  value={formData.date_embauche}
+                  onChange={(date_embauche) => {
+                    setFormData({ ...formData, date_embauche });
+                    setFormErrors((p) => ({ ...p, date_embauche: undefined }));
+                  }}
+                  required
+                  className="w-full"
+                  {...fieldErrorProps('emp-embauche', formErrors.date_embauche)}
+                />
+                <FieldError id="emp-embauche">{formErrors.date_embauche}</FieldError>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-naissance">Date de naissance</Label>
-                <DatePicker id="emp-naissance" value={formData.date_naissance} onChange={(date_naissance) => setFormData({ ...formData, date_naissance })} />
+                <DatePicker
+                  id="emp-naissance"
+                  value={formData.date_naissance}
+                  onChange={(date_naissance) => setFormData({ ...formData, date_naissance })}
+                  className="w-full"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-tel">Téléphone</Label>
-                <Input id="emp-tel" value={formData.telephone} onChange={(e) => setFormData({ ...formData, telephone: e.target.value })} />
+                <Input
+                  id="emp-tel"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value={formData.telephone}
+                  onChange={(e) => setFormData({ ...formData, telephone: e.target.value })}
+                />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="emp-email">Email</Label>
-                <Input id="emp-email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
+                <Label htmlFor="emp-email">Adresse e-mail</Label>
+                <Input
+                  id="emp-email"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  value={formData.email}
+                  onChange={(e) => {
+                    setFormData({ ...formData, email: e.target.value });
+                    setFormErrors((p) => ({ ...p, email: undefined }));
+                  }}
+                  {...fieldErrorProps('emp-email', formErrors.email)}
+                />
+                <FieldError id="emp-email">{formErrors.email}</FieldError>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="emp-salaire">Salaire de base</Label>
-                <MoneyInput id="emp-salaire" value={formData.salaire_base} onChange={(v) => setFormData({ ...formData, salaire_base: v })} />
+                <MoneyInput
+                  id="emp-salaire"
+                  value={formData.salaire_base}
+                  onChange={(v) => setFormData({ ...formData, salaire_base: v })}
+                  placeholder="0"
+                />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="emp-com">Taux commission (%)</Label>
-                <Input id="emp-com" type="number" inputMode="decimal" value={formData.commission_taux} onChange={(e) => setFormData({ ...formData, commission_taux: e.target.value })} step={0.01} min={0} max={100} />
+                <Label htmlFor="emp-com">Taux de commission (%)</Label>
+                <Input
+                  id="emp-com"
+                  type="number"
+                  inputMode="decimal"
+                  value={formData.commission_taux}
+                  onChange={(e) => {
+                    setFormData({ ...formData, commission_taux: e.target.value });
+                    setFormErrors((p) => ({ ...p, commission_taux: undefined }));
+                  }}
+                  step={0.01}
+                  min={0}
+                  max={100}
+                  {...fieldErrorProps('emp-com', formErrors.commission_taux)}
+                />
+                <FieldError id="emp-com">{formErrors.commission_taux}</FieldError>
               </div>
             </div>
 
             <div className="space-y-1.5">
               <Label htmlFor="emp-adresse">Adresse</Label>
-              <Textarea id="emp-adresse" value={formData.adresse} onChange={(e) => setFormData({ ...formData, adresse: e.target.value })} />
+              <Textarea
+                id="emp-adresse"
+                value={formData.adresse}
+                onChange={(e) => setFormData({ ...formData, adresse: e.target.value })}
+              />
             </div>
 
             {editing && (
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={formData.actif} onChange={(e) => setFormData({ ...formData, actif: e.target.checked })} className="rounded" />
-                <span className="text-sm">Employé actif</span>
-              </label>
+              <div className="space-y-1">
+                <label htmlFor="emp-actif" className="flex min-h-9 cursor-pointer items-center gap-2 text-sm font-medium">
+                  <Checkbox
+                    id="emp-actif"
+                    checked={formData.actif}
+                    onChange={(e) => setFormData({ ...formData, actif: e.target.checked })}
+                    aria-describedby="emp-actif-help"
+                  />
+                  Employé actif
+                </label>
+                <p id="emp-actif-help" className="text-xs text-muted-foreground">
+                  Seuls les employés actifs sont inclus dans les prochains cycles de paie
+                </p>
+              </div>
             )}
 
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>Annuler</Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? (<><Spinner /> Enregistrement…</>) : editing ? 'Modifier' : 'Créer'}
+              <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+                Annuler
+              </Button>
+              <Button type="submit" disabled={submitting} className="gap-2">
+                {submitting && <Spinner />}
+                {submitting ? 'Enregistrement…' : editing ? 'Enregistrer les modifications' : 'Créer l’employé'}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      {/* Detail dialog */}
-      <Dialog open={!!detail} onOpenChange={(o) => { if (!o) { setDetail(null); setCommissionSummary(null); setCommissionLignes([]); } }}>
-        <DialogContent className="sm:max-w-lg">
+      {/* Fiche employé */}
+      <Dialog open={!!detail} onOpenChange={(o) => !o && closeDetail()}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           {detail && (
             <>
               <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  {detail.nom_complet} <StatutBadge actif={detail.actif} />
+                <DialogTitle className="flex flex-wrap items-center gap-2 pr-8">
+                  {detail.nom_complet}
+                  {!detail.actif && <StatusBadge type="compte" statut="inactif" />}
                 </DialogTitle>
+                <DialogDescription>Fiche de l’employé et ses commissions de l’année en cours</DialogDescription>
               </DialogHeader>
-              <div className="space-y-1 text-sm">
-                <p>Matricule: <strong>{detail.matricule}</strong></p>
-                <p>Poste: <strong>{detail.poste || '—'}</strong></p>
-                <p>Département: <strong>{detail.departement || '—'}</strong></p>
-                <p>Date d'embauche: <strong>{new Date(detail.date_embauche).toLocaleDateString('fr-FR')}</strong></p>
-                {detail.telephone && <p>Téléphone: <strong>{detail.telephone}</strong></p>}
-                {detail.email && <p>Email: <strong>{detail.email}</strong></p>}
-                {detail.salaire_base && <p>Salaire de base: <strong className="num">{formatFCFA(detail.salaire_base)}</strong></p>}
-                <p>Taux commission: <strong className="num">{detail.commission_taux}%</strong></p>
-              </div>
 
-              {commissionSummary && (
-                <div className="mt-2">
-                  <h3 className="font-semibold mb-2 text-sm">Commissions (année en cours)</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="rounded-md border bg-muted/30 p-4">
-                      <div className="text-xs text-muted-foreground uppercase tracking-wide">Total ventes</div>
-                      <div className="text-xl font-semibold num">{commissionSummary.total_ventes}</div>
-                      <div className="text-xs text-muted-foreground num">{formatFCFA(commissionSummary.total_montant_ventes)}</div>
-                    </div>
-                    <div className="rounded-md border bg-muted/30 p-4">
-                      <div className="text-xs text-muted-foreground uppercase tracking-wide">Total commissions</div>
-                      <div className="text-xl font-semibold text-success-700 num">{formatFCFA(commissionSummary.total_commissions)}</div>
-                      <div className="text-xs text-muted-foreground num">{commissionSummary.commissions_payees} payées</div>
-                    </div>
-                  </div>
+              <KeyValueList>
+                <KeyValue label="Matricule">
+                  <DocumentCode>{detail.matricule}</DocumentCode>
+                </KeyValue>
+                <KeyValue label="Poste">{detail.poste || '—'}</KeyValue>
+                <KeyValue label="Département">{detail.departement || '—'}</KeyValue>
+                <KeyValue label="Date d’embauche">{formatDate(detail.date_embauche)}</KeyValue>
+                {detail.telephone && (
+                  <KeyValue label="Téléphone">
+                    <a href={`tel:${detail.telephone.replace(/\s+/g, '')}`} className="text-primary underline-offset-4 hover:underline">
+                      {detail.telephone}
+                    </a>
+                  </KeyValue>
+                )}
+                {detail.email && (
+                  <KeyValue label="Adresse e-mail">
+                    <a href={`mailto:${detail.email}`} className="break-all text-primary underline-offset-4 hover:underline">
+                      {detail.email}
+                    </a>
+                  </KeyValue>
+                )}
+                {detail.salaire_base && (
+                  <KeyValue label="Salaire de base" numeric>
+                    <Money value={detail.salaire_base} />
+                  </KeyValue>
+                )}
+                <KeyValue label="Taux de commission" numeric>
+                  {tauxText(detail.commission_taux)}
+                </KeyValue>
+              </KeyValueList>
 
-                  {commissionLignes.length === 0 ? (
-                    <p className="mt-3 text-sm text-muted-foreground">
-                      Aucune vente commissionnée cette année. Une commission est enregistrée
-                      automatiquement à chaque facture émise par cet employé, si son taux est
-                      supérieur à 0.
-                    </p>
-                  ) : (
-                    <div className="mt-3 max-h-64 overflow-y-auto rounded-md border">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Date</TableHead>
-                            <TableHead>Facture</TableHead>
-                            <TableHead className="text-right">Vente</TableHead>
-                            <TableHead className="text-right">Taux</TableHead>
-                            <TableHead className="text-right">Commission</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {commissionLignes.map((c) => (
-                            <TableRow key={c.id} className="text-sm">
-                              <TableCell className="text-xs">
-                                {new Date(c.date_vente).toLocaleDateString('fr-FR')}
-                              </TableCell>
-                              <TableCell className="text-xs">{c.numero_facture || '—'}</TableCell>
-                              <TableCell className="text-right text-xs">{formatFCFA(c.montant_vente)}</TableCell>
-                              <TableCell className="text-right text-xs">{c.taux_commission}%</TableCell>
-                              <TableCell className="text-right text-xs font-semibold text-success-700">
-                                {formatFCFA(c.montant_commission)}
-                              </TableCell>
+              <section aria-labelledby="emp-commissions-title" className="space-y-3">
+                <h3 id="emp-commissions-title" className="text-sm font-medium">
+                  Commissions de l’année en cours
+                </h3>
+                <QueryState
+                  loading={commissionsLoading}
+                  error={commissionsError}
+                  onRetry={() => void loadCommissions(detail)}
+                  errorTitle="Impossible de charger les commissions"
+                  className="py-4"
+                  skeleton={<TableSkeleton rows={3} columns={3} />}
+                >
+                  {commissionSummary && (
+                    <div className="space-y-3">
+                      <StatGrid>
+                        <StatTile
+                          label="Ventes"
+                          value={toNumber(commissionSummary.total_ventes) ?? 0}
+                          hint={<Money value={commissionSummary.total_montant_ventes} />}
+                        />
+                        <StatTile
+                          label="Commissions"
+                          value={commissionSummary.total_commissions}
+                          format="money"
+                          hint={`${formatNumber(toNumber(commissionSummary.commissions_payees) ?? 0)} payées`}
+                        />
+                      </StatGrid>
+                      {commissionLignes.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          Aucune vente commissionnée cette année. Une commission est enregistrée automatiquement à chaque
+                          facture émise par cet employé, si son taux est supérieur à 0.
+                        </p>
+                      ) : (
+                        <Table aria-label="Commissions de l’année" containerClassName="max-h-64 rounded-md border">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Date</TableHead>
+                              <TableHead>Facture</TableHead>
+                              <TableHead numeric>Vente</TableHead>
+                              <TableHead numeric>Taux</TableHead>
+                              <TableHead numeric>Commission</TableHead>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                          </TableHeader>
+                          <TableBody>
+                            {commissionLignes.map((c) => (
+                              <TableRow key={c.id}>
+                                <TableCell className="whitespace-nowrap">{formatDate(c.date_vente)}</TableCell>
+                                <TableCell>
+                                  {c.numero_facture ? <DocumentCode>{c.numero_facture}</DocumentCode> : '—'}
+                                </TableCell>
+                                <TableCell numeric>
+                                  <Money value={c.montant_vente} />
+                                </TableCell>
+                                <TableCell numeric>{tauxText(c.taux_commission)}</TableCell>
+                                <TableCell numeric>
+                                  <Money value={c.montant_commission} />
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      )}
                     </div>
                   )}
-                </div>
-              )}
+                </QueryState>
+              </section>
 
               <DialogFooter>
-                <Button variant="outline" onClick={() => { const e = detail; setDetail(null); setCommissionSummary(null); if (e) openEdit(e); }}>
-                  <Pencil className="mr-1 h-4 w-4" /> Modifier
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => {
+                    const e = detail;
+                    closeDetail();
+                    openEdit(e);
+                  }}
+                >
+                  <Pencil className="h-4 w-4" aria-hidden="true" /> Modifier l’employé
                 </Button>
               </DialogFooter>
             </>
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </PageShell>
   );
 }

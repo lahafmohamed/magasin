@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg';
+import { businessError } from '../utils/errors';
 
 /**
  * Weighted-average "costed stock-in" primitive.
@@ -101,4 +102,151 @@ export async function getLocationCmp(
     [produitId, locationId]
   );
   return rows.length > 0 ? Number(rows[0].cmp) : 0;
+}
+
+/** `mouvements_stock.type_mouvement` CHECK values. */
+export type StockMovementType =
+  | 'vente'
+  | 'ajustement'
+  | 'retour'
+  | 'commande'
+  | 'perte'
+  | 'autre'
+  | 'transfert';
+
+export interface StockMovementInput {
+  produitId: number;
+  locationId: number;
+  /** Signed quantity: > 0 enters the stock (costed), < 0 leaves it at cmp. Never 0. */
+  delta: number;
+  /** Unit cost of an inflow (see costedStockIn). Ignored for a removal. */
+  unitCost?: number | null;
+  type: StockMovementType;
+  raison: string | null;
+  reference: string | null;
+}
+
+export interface StockMovementResult {
+  stockAvant: number;
+  stockApres: number;
+  mouvementId: number;
+  /**
+   * The product has no stock_par_location row at all: its stock still lives in
+   * the legacy produits.stock column, which was adjusted instead.
+   */
+  legacy: boolean;
+}
+
+/**
+ * « Stock insuffisant pour « Souris USB » à Hitek Plateau : 3 en stock, retrait de 5 demandé. »
+ * Names the product and the location, never an id (422 STOCK_INSUFFISANT).
+ */
+async function insufficientStockError(
+  db: Queryable,
+  produitId: number,
+  locationId: number,
+  disponible: number,
+  retrait: number
+) {
+  const { rows } = await db.query(
+    `SELECT (SELECT nom FROM produits WHERE id = $1) AS produit,
+            (SELECT nom FROM stock_locations WHERE id = $2) AS emplacement`,
+    [produitId, locationId]
+  );
+  const produit = rows[0]?.produit ?? `n° ${produitId}`;
+  const emplacement = rows[0]?.emplacement ? ` à ${rows[0].emplacement}` : '';
+  return businessError(
+    422,
+    `Stock insuffisant pour « ${produit} »${emplacement} : ${disponible} en stock, retrait de ${retrait} demandé.`,
+    'STOCK_INSUFFISANT'
+  );
+}
+
+/**
+ * One stock change at one location AND its mouvements_stock row, in the
+ * caller's transaction — the two can no longer drift apart (a failed removal
+ * used to leave its movement row behind).
+ *
+ * - The location's stock row is locked (SELECT … FOR UPDATE) before reading
+ *   stock_avant, so concurrent movements serialize.
+ * - A removal that would make the stock negative is refused with a French 422
+ *   naming the product and the location; nothing is written.
+ * - An inflow goes through costedStockIn (weighted cmp, 076 keeps
+ *   valeur_stock = quantite × cmp); a removal is a plain decrement at cmp.
+ * - A product with no stock_par_location row anywhere is a legacy product whose
+ *   stock lives in produits.stock (same fallback as the sales paths): that
+ *   column is adjusted instead, so the legacy quantity is never overwritten by a
+ *   one-row SUM through trg_sync_produits_stock.
+ */
+export async function applyStockMovement(
+  db: PoolClient,
+  input: StockMovementInput
+): Promise<StockMovementResult> {
+  const { produitId, locationId, delta, type, raison, reference } = input;
+  if (!Number.isInteger(delta) || delta === 0) {
+    throw new Error(`applyStockMovement: delta must be a non-zero integer (got ${delta})`);
+  }
+
+  const { rows: splRows } = await db.query(
+    `SELECT quantite FROM stock_par_location
+     WHERE produit_id = $1 AND location_id = $2
+     FOR UPDATE`,
+    [produitId, locationId]
+  );
+
+  let stockAvant: number;
+  let legacy = false;
+
+  if (splRows.length > 0) {
+    stockAvant = Number(splRows[0].quantite);
+  } else {
+    const { rows: anyRow } = await db.query(
+      'SELECT 1 FROM stock_par_location WHERE produit_id = $1 LIMIT 1',
+      [produitId]
+    );
+    if (anyRow.length > 0) {
+      // Location-managed product, never stocked here.
+      stockAvant = 0;
+    } else {
+      const { rows: legacyRows } = await db.query(
+        'SELECT stock FROM produits WHERE id = $1 FOR UPDATE',
+        [produitId]
+      );
+      stockAvant = Number(legacyRows[0]?.stock ?? 0);
+      legacy = true;
+    }
+  }
+
+  const stockApres = stockAvant + delta;
+  if (delta < 0 && stockApres < 0) {
+    throw await insufficientStockError(db, produitId, locationId, Math.max(stockAvant, 0), -delta);
+  }
+
+  if (legacy) {
+    await db.query('UPDATE produits SET stock = stock + $1 WHERE id = $2', [delta, produitId]);
+  } else if (delta > 0) {
+    await costedStockIn(db, {
+      produitId,
+      locationId,
+      quantite: delta,
+      unitCost: input.unitCost ?? null,
+    });
+  } else {
+    await db.query(
+      `UPDATE stock_par_location
+       SET quantite = quantite + $3, updated_at = CURRENT_TIMESTAMP
+       WHERE produit_id = $1 AND location_id = $2`,
+      [produitId, locationId, delta]
+    );
+  }
+
+  const { rows: mvtRows } = await db.query(
+    `INSERT INTO mouvements_stock
+       (produit_id, type_mouvement, quantite, stock_avant, stock_apres, raison, reference_liee, location_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id`,
+    [produitId, type, delta, stockAvant, stockApres, raison, reference, locationId]
+  );
+
+  return { stockAvant, stockApres, mouvementId: Number(mvtRows[0].id), legacy };
 }

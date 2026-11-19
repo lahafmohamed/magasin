@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { checkPeriodIsOpen } from './PeriodService';
 import { businessError } from '../utils/errors';
+import { roundMoney } from './PricingService';
 
 interface PieceInput {
   journal: string;
@@ -126,14 +127,28 @@ export class ComptabiliteService {
 
   // ========== TRÉSORERIE PRÉVISIONNELLE ==========
 
+  /**
+   * Forecast over `jours` days starting today (day 0 … jours − 1), plus a
+   * weekly schedule (`echeancier`) whose weeks sum exactly to the totals.
+   *
+   * Each item carries `jour` = days from today, computed by PostgreSQL. The
+   * previous version compared pg DATE values (JS `Date`) with 'YYYY-MM-DD'
+   * strings — always false — so every week summed to 0 and the chart was
+   * empty (VB-TRE-00). Dates are anchored on the database's CURRENT_DATE so
+   * the server's time zone cannot shift an item into the wrong week.
+   */
   async getTresoreriePrevisionnelle(jours: number = 90): Promise<any> {
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + jours);
-    const endDateStr = endDate.toISOString().slice(0, 10);
+    // Clamped: `jours` comes straight from the query string.
+    const horizon = Math.min(366, Math.max(1, Math.trunc(Number(jours) || 90)));
+
+    const { rows: [{ today }] } = await pool.query(
+      `SELECT to_char(CURRENT_DATE, 'YYYY-MM-DD') AS today`
+    );
 
     const { rows: encaissements } = await pool.query(
       `SELECT
          f.date_echeance as echeance,
+         (f.date_echeance - CURRENT_DATE) AS jour,
          f.remaining_due as montant,
          f.numero_facture as reference,
          t.raison_sociale as tiers_nom
@@ -142,14 +157,15 @@ export class ComptabiliteService {
        WHERE f.statut IN ('en_attente', 'partielle')
          AND f.deleted_at IS NULL
          AND f.date_echeance >= CURRENT_DATE
-         AND f.date_echeance <= $1::DATE
+         AND f.date_echeance < CURRENT_DATE + $1::int
        ORDER BY f.date_echeance ASC`,
-      [endDateStr]
+      [horizon]
     );
 
     const { rows: decaissements } = await pool.query(
       `SELECT
          c.date_livraison_prevue as echeance,
+         (c.date_livraison_prevue - CURRENT_DATE) AS jour,
          c.sous_total as montant,
          c.numero_commande as reference,
          t.raison_sociale as tiers_nom
@@ -158,63 +174,69 @@ export class ComptabiliteService {
        WHERE c.statut NOT IN ('livree', 'annulee')
          AND c.deleted_at IS NULL
          AND c.date_livraison_prevue >= CURRENT_DATE
-         AND c.date_livraison_prevue <= $1::DATE
+         AND c.date_livraison_prevue < CURRENT_DATE + $1::int
        ORDER BY c.date_livraison_prevue ASC`,
-      [endDateStr]
+      [horizon]
     );
 
     const { rows: depenses } = await pool.query(
       `SELECT
          d.date_depense as echeance,
+         (d.date_depense - CURRENT_DATE) AS jour,
          d.montant,
          d.numero_depense as reference,
          d.description
        FROM depenses d
        WHERE d.deleted_at IS NULL
          AND d.date_depense >= CURRENT_DATE
-         AND d.date_depense <= $1::DATE
+         AND d.date_depense < CURRENT_DATE + $1::int
        ORDER BY d.date_depense ASC`,
-      [endDateStr]
+      [horizon]
     );
 
-    // Aggrégation par période (7 jours)
-    const echeancier: { debut: string; fin: string; encaissements: number; decaissements: number; solde: number }[] = [];
-    const maintenant = new Date();
+    // Aggregate per 7-day period (the last one may be shorter).
+    const weeks = Math.ceil(horizon / 7);
+    const enc = new Array<number>(weeks).fill(0);
+    const dec = new Array<number>(weeks).fill(0);
+    const weekOf = (row: any) => Math.min(weeks - 1, Math.floor(Number(row.jour) / 7));
+    for (const e of encaissements) enc[weekOf(e)] += parseFloat(e.montant || 0);
+    for (const e of decaissements) dec[weekOf(e)] += parseFloat(e.montant || 0);
+    for (const e of depenses) dec[weekOf(e)] += parseFloat(e.montant || 0);
 
-    for (let i = 0; i < jours; i += 7) {
-      const debut = new Date(maintenant.getTime() + i * 86400000);
-      const fin = new Date(maintenant.getTime() + Math.min(i + 6, jours - 1) * 86400000);
-      const d = debut.toISOString().slice(0, 10);
-      const f = fin.toISOString().slice(0, 10);
+    const [y, m, d] = String(today).split('-').map(Number);
+    const dayUtc = (offset: number) => new Date(Date.UTC(y, m - 1, d + offset));
+    const iso = (date: Date) => date.toISOString().slice(0, 10);
+    const label = (date: Date) => date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
-      const enc = encaissements
-        .filter((e: any) => e.echeance >= d && e.echeance <= f)
-        .reduce((s: number, e: any) => s + parseFloat(e.montant || 0), 0);
-
-      const dec = decaissements
-        .filter((e: any) => e.echeance >= d && e.echeance <= f)
-        .reduce((s: number, e: any) => s + parseFloat(e.montant || 0), 0)
-        + depenses
-          .filter((e: any) => e.echeance >= d && e.echeance <= f)
-          .reduce((s: number, e: any) => s + parseFloat(e.montant || 0), 0);
-
+    const echeancier: {
+      debut: string; fin: string; date_debut: string; date_fin: string;
+      encaissements: number; decaissements: number; solde: number;
+    }[] = [];
+    for (let w = 0; w < weeks; w++) {
+      const debut = dayUtc(w * 7);
+      const fin = dayUtc(Math.min(w * 7 + 6, horizon - 1));
+      const e = roundMoney(enc[w]);
+      const s = roundMoney(dec[w]);
       echeancier.push({
-        debut: debut.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }),
-        fin: fin.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }),
-        encaissements: enc,
-        decaissements: dec,
-        solde: enc - dec,
+        debut: label(debut),
+        fin: label(fin),
+        date_debut: iso(debut),
+        date_fin: iso(fin),
+        encaissements: e,
+        decaissements: s,
+        solde: roundMoney(e - s),
       });
     }
+
+    const total = (rows: any[]) => rows.reduce((s: number, r: any) => s + parseFloat(r.montant || 0), 0);
 
     return {
       echeancier,
       encaissements,
       decaissements,
       depenses,
-      total_encaissements: encaissements.reduce((s: number, e: any) => s + parseFloat(e.montant || 0), 0),
-      total_decaissements: decaissements.reduce((s: number, e: any) => s + parseFloat(e.montant || 0), 0)
-        + depenses.reduce((s: number, e: any) => s + parseFloat(e.montant || 0), 0),
+      total_encaissements: roundMoney(total(encaissements)),
+      total_decaissements: roundMoney(total(decaissements) + total(depenses)),
     };
   }
 }

@@ -211,15 +211,45 @@ describe('DevisService (intégration)', () => {
     await pool.query(`UPDATE bons_livraison SET statut = 'annule' WHERE id = $1`, [bl.id]);
   });
 
+  it('refuse d’annuler un devis dont le bon est livré (409), sans toucher au BL ni au stock', async () => {
+    const produitId = await product('magasin', 10);
+    const devisId = await makeDevis(produitId, 4);
+    await devisService.updateStatut(devisId, 'accepte');
+    const [bl] = await blFor(devisId);
+    const bonLivraisonService = (await import('./BonLivraisonService')).default;
+    await bonLivraisonService.updateStatut(bl.id, 'livre');
+
+    const stockAt = async () => {
+      const { rows } = await pool.query(
+        'SELECT quantite FROM stock_par_location WHERE produit_id = $1 AND location_id = $2',
+        [produitId, magasinId]
+      );
+      return Number(rows[0].quantite);
+    };
+    expect(await stockAt()).toBe(6);
+
+    await expect(devisService.updateStatut(devisId, 'annule')).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'DEVIS_BL_LIVRE',
+      message: `Impossible d’annuler ce devis : son bon de livraison ${bl.numero_bl} est déjà livré. Si la marchandise revient, annulez d’abord ce bon de livraison : ses articles seront remis en stock.`,
+    });
+
+    // Rien n'a bougé : ni le devis, ni le BL (toujours livré), ni le stock.
+    const { rows } = await pool.query('SELECT statut FROM devis WHERE id = $1', [devisId]);
+    expect(rows[0].statut).toBe('accepte');
+    expect((await blFor(devisId))[0].statut).toBe('livre');
+    expect(await stockAt()).toBe(6);
+  });
+
   it('rejette un statut inconnu', async () => {
     const produitId = await product('magasin');
     const devisId = await makeDevis(produitId);
 
-    await expect(devisService.updateStatut(devisId, 'expedie')).rejects.toThrow(/Invalid statut/);
+    await expect(devisService.updateStatut(devisId, 'expedie')).rejects.toMatchObject({ statusCode: 400, message: 'Statut de devis inconnu.' });
   });
 
   it('renvoie une erreur pour un devis inexistant', async () => {
-    await expect(devisService.updateStatut(99999999, 'accepte')).rejects.toThrow(/non trouvé/);
+    await expect(devisService.updateStatut(99999999, 'accepte')).rejects.toMatchObject({ statusCode: 404, message: 'Devis introuvable.' });
   });
 
   // ---- Read paths, now served by the shared SalesDocumentQuery engine ----

@@ -3,6 +3,11 @@ import { consoleError } from '../utils/logError';
 import { receptionService } from '../services/ReceptionService';
 import { AuthRequest } from '../middleware/auth';
 import { businessStatusOf } from '../utils/errors';
+import { PURCHASE_MONEY_KEYS, redactForRole, seesAmounts } from '../utils/roleRedaction';
+
+/** E2: dépôt staff receive quantities, never the order's prices or value. */
+const redact = <T>(req: Request, data: T): T =>
+  redactForRole((req as AuthRequest).user?.role, data, PURCHASE_MONEY_KEYS);
 
 export class ReceptionController {
 
@@ -21,7 +26,7 @@ export class ReceptionController {
       
       res.json({
         success: true,
-        data: result.data,
+        data: redact(req, result.data),
         pagination: {
           page: pageNum,
           limit: limitNum,
@@ -42,7 +47,7 @@ export class ReceptionController {
         res.status(404).json({ success: false, error: 'Réception non trouvée' });
         return;
       }
-      res.json({ success: true, data });
+      res.json({ success: true, data: redact(req, data) });
     } catch (error) {
       consoleError('GET /api/receptions/:id', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -55,6 +60,9 @@ export class ReceptionController {
       const result = await receptionService.create({
         ...req.body,
         receptionne_par: authReq.user?.id,
+        // A role that cannot see prices cannot set them: the order's unit
+        // price is the reception cost (E2).
+        trustCouts: seesAmounts(authReq.user?.role),
         req,
       });
       res.status(201).json({ success: true, data: result, message: 'Réception créée et stock mis à jour' });
@@ -89,7 +97,7 @@ export class ReceptionController {
   static async getPendingOrders(req: Request, res: Response): Promise<void> {
     try {
       const data = await receptionService.getPendingOrders();
-      res.json({ success: true, data });
+      res.json({ success: true, data: redact(req, data) });
     } catch (error) {
       consoleError('GET /api/receptions/pending', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -103,7 +111,7 @@ export class ReceptionController {
         res.status(404).json({ success: false, error: 'Commande non trouvée' });
         return;
       }
-      res.json({ success: true, data });
+      res.json({ success: true, data: redact(req, data) });
     } catch (error) {
       consoleError('GET /api/receptions/order/:id', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -113,7 +121,7 @@ export class ReceptionController {
   static async getStats(req: Request, res: Response): Promise<void> {
     try {
       const data = await receptionService.getStats();
-      res.json({ success: true, data });
+      res.json({ success: true, data: redact(req, data) });
     } catch (error) {
       consoleError('GET /api/receptions/stats', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });

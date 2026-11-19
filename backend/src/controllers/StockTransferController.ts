@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { stockTransferService } from '../services/StockTransferService';
 import { successResponse, paginatedResponse } from '../utils/response';
+import { respondWithError } from '../utils/errors';
 
 export class StockTransferController {
   /**
@@ -53,7 +54,7 @@ export class StockTransferController {
       const { location_source_id, location_destination_id, lignes, notes } = req.body;
 
       if (!location_source_id || !location_destination_id || !lignes || lignes.length === 0) {
-        res.status(400).json({ success: false, error: 'Location source, destination et lignes sont requises' });
+        res.status(400).json({ success: false, error: 'Choisissez les emplacements de départ et d’arrivée, et ajoutez au moins un produit.' });
         return;
       }
 
@@ -68,8 +69,7 @@ export class StockTransferController {
 
       res.status(201).json({ success: true, data: transfer, message: 'Transfert créé avec succès' });
     } catch (error: any) {
-      console.error('StockTransferController:', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
+      respondWithError(res, error, 'StockTransferController.create', 'Erreur serveur');
     }
   }
 
@@ -84,8 +84,7 @@ export class StockTransferController {
 
       successResponse(res, null, 'Transfert complété avec succès');
     } catch (error: any) {
-      console.error('StockTransferController:', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
+      respondWithError(res, error, 'StockTransferController.complete', 'Erreur serveur');
     }
   }
 

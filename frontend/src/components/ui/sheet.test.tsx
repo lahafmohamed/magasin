@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Sheet, SheetContent, SheetTitle, SheetDescription, SheetClose } from './sheet';
 import { Button } from './button';
 
@@ -64,5 +66,34 @@ describe('Sheet', () => {
     );
     // Le contenu sous-jacent est retiré de l'arbre d'accessibilité par Radix.
     expect(screen.queryByRole('button', { name: 'Bouton hors tiroir' })).toBeNull();
+  });
+
+  it('rend le focus à la ligne qui l’a ouvert à la fermeture (sans SheetTrigger)', async () => {
+    const user = userEvent.setup();
+    function TransferList() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <Button type="button" onClick={() => setOpen(true)}>
+            Ouvrir le transfert TRF-2026-00004
+          </Button>
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetContent aria-describedby={undefined}>
+              <SheetTitle>Transfert TRF-2026-00004</SheetTitle>
+              <Button type="button">Exécuter le transfert</Button>
+            </SheetContent>
+          </Sheet>
+        </>
+      );
+    }
+    render(<TransferList />);
+    const opener = screen.getByRole('button', { name: 'Ouvrir le transfert TRF-2026-00004' });
+
+    await user.click(opener);
+    await waitFor(() => expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true));
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 });

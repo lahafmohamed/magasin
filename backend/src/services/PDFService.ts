@@ -23,6 +23,49 @@ export function formatNombrePdf(value: unknown): string {
   return (Number.isFinite(n) ? n : 0).toLocaleString('fr-FR').replace(SEPARATEURS_UNICODE, ' ');
 }
 
+const SEPARATEURS_PDF = /[\u202F\u00A0\u2009]/g;
+
+/** `Date` d'une valeur d'API ; une date seule (« 2026-10-01 ») est lue en heure locale, jamais la veille. */
+function toPdfDate(value: string | Date): Date {
+  if (value instanceof Date) return value;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
+}
+
+/**
+ * Date imprimée, au format de l'interface (CPG2-04) : « 1er oct. 2026 »,
+ * « 31 oct. 2026 » — jamais l'ISO « 2026-10-01 ». Encodable en WinAnsi.
+ */
+export function formatDatePdf(value: string | Date | null | undefined): string {
+  if (!value) return '';
+  const d = toPdfDate(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  const texte = d
+    .toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
+    .replace(SEPARATEURS_PDF, ' ');
+  return d.getDate() === 1 ? texte.replace(/^1 /, '1er ') : texte;
+}
+
+/**
+ * « Période : du 1er oct. 2026 au 31 oct. 2026 » ; une seule borne →
+ * « Période : depuis le … » / « Période : jusqu’au … » ; aucune → chaîne vide.
+ */
+export function formatPeriodePdf(debut?: string | null, fin?: string | null): string {
+  if (debut && fin) return `Période : du ${formatDatePdf(debut)} au ${formatDatePdf(fin)}`;
+  if (debut) return `Période : depuis le ${formatDatePdf(debut)}`;
+  if (fin) return `Période : jusqu’au ${formatDatePdf(fin)}`;
+  return '';
+}
+
+/** Mois de paie « 2026-10 » → « octobre 2026 » ; valeur illisible rendue telle quelle. */
+export function formatMoisPdf(periode: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(periode ?? '');
+  if (!m) return periode ?? '';
+  return new Date(Number(m[1]), Number(m[2]) - 1, 1)
+    .toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+    .replace(SEPARATEURS_PDF, ' ');
+}
+
 interface LedgerRow {
   numero_piece?: string;
   date_ecriture?: string;
@@ -57,6 +100,15 @@ async function getSettings() {
   return rows[0] || { devise: 'FCFA', taux_conversion: 1, nom: '' };
 }
 
+/**
+ * Raison sociale imprimée en tête des documents : celle des paramètres de
+ * l'entreprise, jamais une marque codée en dur (CPG-08 — chaque client a son
+ * instance). Vide tant qu'elle n'est pas renseignée : la ligne reste vide.
+ */
+export function companyName(settings: { nom?: string | null } | null | undefined): string {
+  return settings?.nom?.trim() || '';
+}
+
 export class PDFService {
   static generateLedgerPDF(
     data: LedgerRow[] | ChartRow[] | BalanceRow[],
@@ -69,8 +121,9 @@ export class PDFService {
 
     doc.fontSize(16).font('Helvetica-Bold').text(title, { align: 'center' });
     doc.moveDown(0.5);
-    if (dateDebut && dateFin) {
-      doc.fontSize(10).font('Helvetica').text(`Période: ${dateDebut} au ${dateFin}`, { align: 'center' });
+    const periode = formatPeriodePdf(dateDebut, dateFin);
+    if (periode) {
+      doc.fontSize(10).font('Helvetica').text(periode, { align: 'center' });
     }
     doc.moveDown(1);
 
@@ -247,15 +300,15 @@ export class PDFService {
       livree: 'Livrée', annulee: 'Annulée',
     };
     const extraInfo: string[] = [
-      `Date de commande: ${new Date(cmd.date_commande).toLocaleDateString('fr-FR')}`,
+      `Date de commande : ${new Date(cmd.date_commande).toLocaleDateString('fr-FR')}`,
     ];
     if (cmd.date_livraison_prevue) {
       extraInfo.push(
-        `Livraison prévue: ${new Date(cmd.date_livraison_prevue).toLocaleDateString('fr-FR')}`
+        `Livraison prévue : ${new Date(cmd.date_livraison_prevue).toLocaleDateString('fr-FR')}`
       );
     }
-    extraInfo.push(`Statut: ${STATUT_LABELS[cmd.statut] || cmd.statut}`);
-    if (cmd.notes) extraInfo.push(`Notes: ${cmd.notes}`);
+    extraInfo.push(`Statut : ${STATUT_LABELS[cmd.statut] || cmd.statut}`);
+    if (cmd.notes) extraInfo.push(`Notes : ${cmd.notes}`);
 
     return this.buildDocumentPDF(cmd, lignes, 'BON DE COMMANDE', cmd.numero_commande, {
       counterpartyLabel: 'Fournisseur',
@@ -299,12 +352,12 @@ export class PDFService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      doc.fontSize(16).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', { align: 'center' });
+      doc.fontSize(16).font('Helvetica-Bold').text(companyName(settings), { align: 'center' });
       doc.fontSize(9).font('Helvetica');
       if (settings.adresse) doc.text(settings.adresse, { align: 'center' });
-      if (settings.telephone) doc.text(`Tel: ${settings.telephone}`, { align: 'center' });
+      if (settings.telephone) doc.text(`Tél. : ${settings.telephone}`, { align: 'center' });
       if (settings.nif) {
-        doc.fontSize(7).text(`NIF: ${settings.nif} | RC: ${settings.rc || '-'}`, { align: 'center' });
+        doc.fontSize(7).text(`NIF : ${settings.nif} · RCCM : ${settings.rc || '-'}`, { align: 'center' });
       }
       doc.moveDown(1.5);
 
@@ -313,9 +366,9 @@ export class PDFService {
       doc.moveDown(1.5);
 
       doc.fontSize(10).font('Helvetica');
-      doc.text(`Reçu de: ${pay.client_nom || '-'}`);
-      if (pay.client_adresse) doc.text(`Adresse: ${pay.client_adresse}`);
-      if (pay.client_telephone) doc.text(`Tel: ${pay.client_telephone}`);
+      doc.text(`Reçu de : ${pay.client_nom || '-'}`);
+      if (pay.client_adresse) doc.text(`Adresse : ${pay.client_adresse}`);
+      if (pay.client_telephone) doc.text(`Tél. : ${pay.client_telephone}`);
       doc.moveDown(1);
 
       // Encadré montant
@@ -341,23 +394,23 @@ export class PDFService {
         doc.y = ry + rowH;
       };
 
-      drawRow('Détail du règlement', '', { bold: true, fill: '#f0f0f0' });
-      drawRow('Facture réglée', pay.numero_facture || '-');
+      drawRow('Détail du paiement', '', { bold: true, fill: '#f0f0f0' });
+      drawRow('Facture payée', pay.numero_facture || '-');
       drawRow('Date du paiement', new Date(pay.date_paiement).toLocaleDateString('fr-FR'), { fill: '#fafafa' });
       drawRow('Mode de paiement', METHODE_LABELS[pay.methode_paiement] || pay.methode_paiement);
       if (pay.reference) drawRow('Référence', pay.reference, { fill: '#fafafa' });
       drawRow('Total de la facture', `${fmt(pay.facture_total)} ${devise}`);
-      drawRow('Total réglé à ce jour', `${fmt(pay.montant_paye)} ${devise}`, { fill: '#fafafa' });
+      drawRow('Total payé à ce jour', `${fmt(pay.montant_paye)} ${devise}`, { fill: '#fafafa' });
       drawRow('RESTE À PAYER', `${fmt(pay.remaining_due)} ${devise}`, { bold: true, fill: '#e8f0e8' });
 
       if (pay.notes) {
         doc.moveDown(1);
-        doc.fontSize(9).font('Helvetica').fillColor('#111').text(`Notes: ${pay.notes}`);
+        doc.fontSize(9).font('Helvetica').fillColor('#111').text(`Notes : ${pay.notes}`);
       }
 
       doc.moveDown(2);
       doc.fontSize(9).font('Helvetica').fillColor('#111');
-      doc.text(`Encaissé par: ${pay.encaisse_par || pay.encaisse_par_username || '-'}`);
+      doc.text(`Encaissé par : ${pay.encaisse_par || pay.encaisse_par_username || '-'}`);
 
       doc.moveDown(3);
       doc.fontSize(9).text('Signature et cachet', 380, doc.y, { width: 175, align: 'center' });
@@ -394,21 +447,21 @@ export class PDFService {
       doc.on('error', reject);
 
       // Company header
-      doc.fontSize(16).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', { align: 'center' });
+      doc.fontSize(16).font('Helvetica-Bold').text(companyName(settings), { align: 'center' });
       doc.fontSize(9).font('Helvetica');
       if (settings.adresse) doc.text(settings.adresse, { align: 'center' });
-      if (settings.telephone) doc.text(`Tel: ${settings.telephone}`, { align: 'center' });
+      if (settings.telephone) doc.text(`Tél. : ${settings.telephone}`, { align: 'center' });
       doc.moveDown(1);
 
       doc.fontSize(14).font('Helvetica-Bold').text('BULLETIN DE PAIE', { align: 'center' });
-      doc.fontSize(10).font('Helvetica').text(`Période: ${ps.periode}  -  Cycle: ${ps.run_numero}`, { align: 'center' });
+      doc.fontSize(10).font('Helvetica').text(`Période : ${formatMoisPdf(ps.periode)} · Cycle : ${ps.run_numero}`, { align: 'center' });
       doc.moveDown(1);
 
       // Employee block
       doc.fontSize(9).font('Helvetica');
-      doc.text(`Employé: ${ps.nom_complet}`);
-      if (ps.matricule) doc.text(`Matricule: ${ps.matricule}`);
-      if (ps.poste) doc.text(`Poste: ${ps.poste}`);
+      doc.text(`Employé : ${ps.nom_complet}`);
+      if (ps.matricule) doc.text(`Matricule : ${ps.matricule}`);
+      if (ps.poste) doc.text(`Poste : ${ps.poste}`);
       doc.moveDown(1);
 
       // Detail table
@@ -433,7 +486,7 @@ export class PDFService {
       drawRow('Salaire brut', fmt(ps.salaire_brut), { bold: true, fill: '#f0f0f0' });
       drawRow('Retenue CNPS', `- ${fmt(ps.retenue_cnps)}`, { fill: '#fafafa' });
       drawRow('Retenue ITS', `- ${fmt(ps.retenue_its)}`);
-      drawRow('Autres déductions', `- ${fmt(ps.deductions)}`, { fill: '#fafafa' });
+      drawRow('Autres retenues',`- ${fmt(ps.deductions)}`, { fill: '#fafafa' });
       drawRow('NET À PAYER', `${fmt(ps.salaire_net)} ${devise}`, { bold: true, fill: '#e8f0e8' });
       if (Number(ps.cotisations_patronales) > 0) {
         drawRow('Charges patronales (employeur)', fmt(ps.cotisations_patronales));
@@ -442,9 +495,9 @@ export class PDFService {
       doc.moveDown(1.5);
       doc.fontSize(9).font('Helvetica').fillColor('#111');
       const statutLabel = ps.statut === 'paye' ? 'Payé' : 'En attente';
-      doc.text(`Statut: ${statutLabel}`);
-      if (ps.methode_paiement) doc.text(`Méthode de paiement: ${ps.methode_paiement}`);
-      if (ps.date_paiement) doc.text(`Date de paiement: ${new Date(ps.date_paiement).toLocaleDateString('fr-FR')}`);
+      doc.text(`Statut : ${statutLabel}`);
+      if (ps.methode_paiement) doc.text(`Mode de paiement : ${ps.methode_paiement}`);
+      if (ps.date_paiement) doc.text(`Date de paiement : ${new Date(ps.date_paiement).toLocaleDateString('fr-FR')}`);
 
       doc.moveDown(2);
       doc.fontSize(7).font('Helvetica').fillColor('#666');
@@ -475,7 +528,7 @@ export class PDFService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      doc.fontSize(16).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', { align: 'center' });
+      doc.fontSize(16).font('Helvetica-Bold').text(companyName(settings), { align: 'center' });
       doc.fontSize(14).font('Helvetica-Bold').text(title, { align: 'center' });
       doc.fontSize(9).font('Helvetica').text(subtitle, { align: 'center' });
       doc.moveDown(1);
@@ -527,7 +580,7 @@ export class PDFService {
       settings, 'COMPTE DE RÉSULTAT',
       'Charges', charges, r.total_charges + (r.resultat > 0 ? r.resultat : 0),
       'Produits', produits, r.total_produits + (r.resultat < 0 ? -r.resultat : 0),
-      `Période: ${dateDebut} au ${dateFin}`
+      formatPeriodePdf(dateDebut, dateFin)
     );
   }
 
@@ -540,7 +593,7 @@ export class PDFService {
       settings, 'BILAN',
       'Actif', r.actif, r.total_actif,
       'Passif', passif, r.total_passif,
-      `Arrêté au ${dateFin}`
+      `Arrêté au ${formatDatePdf(dateFin)}`
     );
   }
 
@@ -560,10 +613,10 @@ export class PDFService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
-      doc.fontSize(15).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', { align: 'center' });
+      doc.fontSize(15).font('Helvetica-Bold').text(companyName(settings), { align: 'center' });
       doc.fontSize(13).font('Helvetica-Bold').text('RELEVÉ DE COMPTE', { align: 'center' });
-      doc.fontSize(10).font('Helvetica').text(`Client: ${releve.tiers.raison_sociale || ''}`, { align: 'center' });
-      const periode = from || to ? `Période: ${from || '...'} au ${to || '...'}` : 'Toutes opérations';
+      doc.fontSize(10).font('Helvetica').text(`Client : ${releve.tiers.raison_sociale || ''}`, { align: 'center' });
+      const periode = formatPeriodePdf(from, to) || 'Toutes opérations';
       doc.fontSize(9).text(periode, { align: 'center' });
       doc.moveDown(0.8);
 
@@ -617,7 +670,7 @@ export class PDFService {
       y += 6;
       if (y > 540) { doc.addPage(); y = 40; }
       doc.font('Helvetica-Bold').fontSize(9).fillColor('#111');
-      doc.text(`Total facturé: ${fmt(releve.total_facture)} ${devise}    Total versé: ${fmt(releve.total_versement)} ${devise}    Solde dû: ${fmt(releve.solde_final)} ${devise}`,
+      doc.text(`Total facturé : ${fmt(releve.total_facture)} ${devise} · Total payé : ${fmt(releve.total_versement)} ${devise} · Solde dû : ${fmt(releve.solde_final)} ${devise}`,
         startX, y, { width: totalW, align: 'right' });
 
       doc.moveDown(1.5);
@@ -666,7 +719,7 @@ export class PDFService {
       }
 
       if (logoRendered) {
-        doc.fontSize(16).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', 200, 40, { align: 'right', width: 355 });
+        doc.fontSize(16).font('Helvetica-Bold').text(companyName(settings), 200, 40, { align: 'right', width: 355 });
         doc.fontSize(9).font('Helvetica');
         let currentY = doc.y;
         if (settings.adresse) {
@@ -674,19 +727,19 @@ export class PDFService {
           currentY = doc.y;
         }
         if (settings.telephone) {
-          doc.text(`Tel: ${settings.telephone}`, 200, currentY, { align: 'right', width: 355 });
+          doc.text(`Tél. : ${settings.telephone}`, 200, currentY, { align: 'right', width: 355 });
           currentY = doc.y;
         }
         if (settings.nif) {
-          doc.fontSize(7).text(`NIF: ${settings.nif} | RC: ${settings.rc || '-'} | AI: ${settings.ai || '-'}`, 200, currentY, { align: 'right', width: 355 });
+          doc.fontSize(7).text(`NIF : ${settings.nif} · RCCM : ${settings.rc || '-'} · AI : ${settings.ai || '-'}`, 200, currentY, { align: 'right', width: 355 });
         }
         doc.y = Math.max(doc.y, 100);
       } else {
-        doc.fontSize(18).font('Helvetica-Bold').text(settings.nom || 'Hitek-CI', { align: 'center' });
+        doc.fontSize(18).font('Helvetica-Bold').text(companyName(settings), { align: 'center' });
         doc.fontSize(10).font('Helvetica');
         if (settings.adresse) doc.text(settings.adresse, { align: 'center' });
-        if (settings.telephone) doc.text(`Tel: ${settings.telephone}`, { align: 'center' });
-        if (settings.nif) doc.fontSize(8).text(`NIF: ${settings.nif} | RC: ${settings.rc || '-'} | AI: ${settings.ai || '-'}`, { align: 'center' });
+        if (settings.telephone) doc.text(`Tél. : ${settings.telephone}`, { align: 'center' });
+        if (settings.nif) doc.fontSize(8).text(`NIF : ${settings.nif} · RCCM : ${settings.rc || '-'} · AI : ${settings.ai || '-'}`, { align: 'center' });
       }
       doc.moveDown(1);
 
@@ -697,9 +750,9 @@ export class PDFService {
       // Bloc tiers (client ou fournisseur selon le document)
       if (header.client_nom) {
         doc.fontSize(9).font('Helvetica');
-        doc.text(`${counterpartyLabel}: ${header.client_nom}`, { continued: false });
-        if (header.client_adresse) doc.text(`Adresse: ${header.client_adresse}`);
-        if (header.client_telephone) doc.text(`Tel: ${header.client_telephone}`);
+        doc.text(`${counterpartyLabel} : ${header.client_nom}`, { continued: false });
+        if (header.client_adresse) doc.text(`Adresse : ${header.client_adresse}`);
+        if (header.client_telephone) doc.text(`Tél. : ${header.client_telephone}`);
         doc.moveDown(0.5);
       }
 
@@ -757,7 +810,7 @@ export class PDFService {
         return sum + Number(l.total_ligne || (l.quantite * l.prix_unitaire) || 0);
       }, 0) : 0;
       doc.fontSize(10).font('Helvetica-Bold');
-      doc.text(`Total: ${formatNombrePdf(total)} ${devise}`, { align: 'right' });
+      doc.text(`Total : ${formatNombrePdf(total)} ${devise}`, { align: 'right' });
 
       // Footer
       doc.moveDown(2);

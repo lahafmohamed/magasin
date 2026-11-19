@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
+import { getErrorMessage } from '../utils/errors';
 
 interface ExportColumn {
   key: string;
@@ -27,7 +28,7 @@ export function useExportExcel() {
     filename: string
   ) => {
     if (!data || data.length === 0) {
-      toast.error('Aucune donnée à exporter');
+      toast.error('Rien à exporter : la liste est vide.');
       return;
     }
 
@@ -68,10 +69,10 @@ export function useExportExcel() {
       a.download = `${filename}-${new Date().toISOString().slice(0, 10)}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success('Export Excel réussi');
+      toast.success('Fichier Excel téléchargé');
     } catch (error) {
       console.error('Export error:', error);
-      toast.error("Erreur lors de l'export Excel");
+      toast.error(getErrorMessage(error, 'Impossible d’exporter en Excel. Réessayez.'));
     }
   }, []);
 

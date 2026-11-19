@@ -28,12 +28,15 @@ interface SortableHeaderProps<K extends string> {
   className?: string;
   /** Aligne l'icône à droite (colonnes numériques). */
   align?: 'left' | 'right';
+  /** Raccourci pour une colonne de montants / quantités (= `align="right"`). */
+  numeric?: boolean;
   buttonClassName?: string;
 }
 
 /**
- * En-tête de colonne triable : affiche une icône de direction,
- * expose aria-sort, et déclenche onSort au clic/clavier.
+ * En-tête de colonne triable : affiche une icône de direction, expose `aria-sort`
+ * sur la seule colonne triée, et déclenche onSort au clic/clavier. Le libellé ne
+ * passe jamais à la ligne (« Créée / par » sur deux lignes).
  */
 export function SortableHeader<K extends string>({
   columnKey,
@@ -41,31 +44,38 @@ export function SortableHeader<K extends string>({
   onSort,
   children,
   className,
-  align = 'left',
+  align,
+  numeric = false,
   buttonClassName,
 }: SortableHeaderProps<K>) {
+  const side = align ?? (numeric ? 'right' : 'left');
   const active = sort?.key === columnKey;
-  const ariaSort = active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : 'none';
+  // `aria-sort` uniquement sur la colonne active (APG) : `none` partout ailleurs
+  // faisait annoncer « non trié » à chaque en-tête.
+  const ariaSort = active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : undefined;
   const Icon = active ? (sort!.dir === 'asc' ? ArrowUp : ArrowDown) : ArrowUpDown;
+  const icon = (
+    <Icon
+      aria-hidden="true"
+      className={cn('h-3.5 w-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')}
+    />
+  );
 
   return (
-    <TableHead aria-sort={ariaSort} className={cn('p-0', className)}>
+    <TableHead aria-sort={ariaSort} numeric={side === 'right'} className={cn('p-0', className)}>
       <button
         type="button"
         onClick={() => onSort(columnKey)}
         className={cn(
-          'flex w-full items-center gap-1.5 px-2 sm:px-4 py-2 font-medium transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm',
-          align === 'right' ? 'justify-end' : 'justify-start',
+          'flex h-10 w-full items-center gap-1.5 whitespace-nowrap rounded-sm px-3 font-medium transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+          side === 'right' ? 'justify-end' : 'justify-start',
+          active && 'text-foreground',
           buttonClassName
         )}
       >
-        {align === 'right' && (
-          <Icon className={cn('h-3.5 w-3.5', active ? 'opacity-100' : 'opacity-40')} />
-        )}
+        {side === 'right' && icon}
         <span>{children}</span>
-        {align === 'left' && (
-          <Icon className={cn('h-3.5 w-3.5', active ? 'opacity-100' : 'opacity-40')} />
-        )}
+        {side === 'left' && icon}
       </button>
     </TableHead>
   );

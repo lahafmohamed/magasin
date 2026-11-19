@@ -14,6 +14,18 @@ interface NotificationState {
   error: string | null;
 }
 
+/** Lignes d'une réponse paginée `{ data, pagination }` ou d'un tableau brut. */
+function rowsOf(response: any): any[] {
+  if (Array.isArray(response)) return response;
+  return Array.isArray(response?.data) ? response.data : [];
+}
+
+/** Total réel (pagination) plutôt que le nombre de lignes reçues. */
+function totalOf(response: any, rows: any[]): number {
+  const total = Number(response?.pagination?.total);
+  return Number.isFinite(total) && total >= rows.length ? total : rows.length;
+}
+
 interface DemandeNotification {
   id: number;
   numero: string;
@@ -73,8 +85,10 @@ export function useDemandeNotifications(pollInterval = 300000) {
       if (hasPermissionRef.current(Permissions.DEMANDE_DECIDE) || userRoleRef.current === 'admin') {
         // Depot staff: demandes awaiting decision (envoyee)
         const decisionResponse = await demandeService.getAll({ statut: 'envoyee', limit: 10 });
-        const decisionDemandes = decisionResponse.data || decisionResponse || [];
-        pendingDecision = decisionDemandes.length;
+        const decisionDemandes = rowsOf(decisionResponse);
+        // Le décompte vient de la pagination : la liste est limitée à 10 lignes,
+        // la cloche plafonnait donc à « 10 » au-delà.
+        pendingDecision = totalOf(decisionResponse, decisionDemandes);
         
         decisionDemandes.forEach((d: any) => {
           newNotifications.push({
@@ -82,7 +96,9 @@ export function useDemandeNotifications(pollInterval = 300000) {
             numero: d.numero,
             statut: d.statut,
             type: 'awaiting_decision',
-            message: `Demande ${d.numero} de ${d.magasin_nom} attend votre décision`,
+            message: d.magasin_nom
+              ? `La demande ${d.numero} (${d.magasin_nom}) attend votre décision.`
+              : `La demande ${d.numero} attend votre décision.`,
             timestamp: d.date_envoi || d.date_creation,
           });
         });
@@ -94,8 +110,8 @@ export function useDemandeNotifications(pollInterval = 300000) {
           statut: ['approuvee', 'partiellement_approuvee'].join(','),
           limit: 10 
         });
-        const execDemandes = execResponse.data || execResponse || [];
-        pendingExecution = execDemandes.length;
+        const execDemandes = rowsOf(execResponse);
+        pendingExecution = totalOf(execResponse, execDemandes);
         
         execDemandes.forEach((d: any) => {
           newNotifications.push({
@@ -103,7 +119,7 @@ export function useDemandeNotifications(pollInterval = 300000) {
             numero: d.numero,
             statut: d.statut,
             type: 'awaiting_execution',
-            message: `Demande ${d.numero} approuvée - prête à être exécutée`,
+            message: `La demande ${d.numero} est approuvée — prête à être exécutée.`,
             timestamp: d.date_decision || d.date_creation,
           });
         });
@@ -112,8 +128,8 @@ export function useDemandeNotifications(pollInterval = 300000) {
       if (hasPermissionRef.current(Permissions.DEMANDE_CLOSE) || userRoleRef.current === 'admin') {
         // Magasin staff: delivered demandes awaiting closure
         const closeResponse = await demandeService.getAll({ statut: 'livree', limit: 10 });
-        const closeDemandes = closeResponse.data || closeResponse || [];
-        pendingClosure = closeDemandes.length;
+        const closeDemandes = rowsOf(closeResponse);
+        pendingClosure = totalOf(closeResponse, closeDemandes);
         
         closeDemandes.forEach((d: any) => {
           newNotifications.push({
@@ -121,7 +137,7 @@ export function useDemandeNotifications(pollInterval = 300000) {
             numero: d.numero,
             statut: d.statut,
             type: 'awaiting_closure',
-            message: `Demande ${d.numero} livrée - en attente de clôture`,
+            message: `La demande ${d.numero} est livrée — en attente de clôture.`,
             timestamp: d.date_livraison || d.date_creation,
           });
         });
@@ -134,7 +150,7 @@ export function useDemandeNotifications(pollInterval = 300000) {
 
       setNotifications(newNotifications.slice(0, 20)); // Keep top 20
       setState({
-        unreadCount: newNotifications.length,
+        unreadCount: pendingDecision + pendingExecution + pendingClosure,
         pendingDecisionCount: pendingDecision,
         pendingExecutionCount: pendingExecution,
         pendingClosureCount: pendingClosure,
@@ -155,7 +171,7 @@ export function useDemandeNotifications(pollInterval = 300000) {
       setState((prev) => ({
         ...prev,
         isLoading: false,
-        error: error?.response?.status === 429 ? null : 'Erreur lors de la récupération des notifications',
+        error: error?.response?.status === 429 ? null : 'Impossible de charger les notifications.',
       }));
     }
   }, []);

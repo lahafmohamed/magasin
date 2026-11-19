@@ -5,6 +5,11 @@ import { commandeService } from '../services/CommandeService';
 import { factureFournisseurService } from '../services/FactureFournisseurService';
 import { pdfService } from '../services/PDFService';
 import { successResponse } from '../utils/response';
+import { PURCHASE_MONEY_KEYS, redactForRole, seesAmounts } from '../utils/roleRedaction';
+
+/** E2: dépôt staff may follow an order's quantities, never its prices or value. */
+const redact = <T>(req: Request, data: T): T =>
+  redactForRole((req as AuthRequest).user?.role, data, PURCHASE_MONEY_KEYS);
 
 export class CommandeController {
 
@@ -21,7 +26,7 @@ export class CommandeController {
 
       res.json({
         success: true,
-        data,
+        data: redact(req, data),
         pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
       });
     } catch (error) {
@@ -37,7 +42,7 @@ export class CommandeController {
         res.status(404).json({ success: false, error: 'Commande non trouvée' });
         return;
       }
-      successResponse(res, commande);
+      successResponse(res, redact(req, commande));
     } catch (error) {
       console.error('Erreur GET /api/commandes/:id:', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -114,6 +119,13 @@ export class CommandeController {
       }
 
       const match = await factureFournisseurService.computeMatch(parseInt(id));
+      const amounts = seesAmounts((req as AuthRequest).user?.role);
+      // Without amounts, a price gap is not something this role can act on.
+      const violations = amounts
+        ? match.violations
+        : match.violations
+            .map((v: any) => ({ ...v, reasons: (v.reasons ?? []).filter((r: string) => !r.startsWith('prix')) }))
+            .filter((v: any) => v.reasons.length > 0);
 
       successResponse(res, {
         commande_id: header.id,
@@ -123,8 +135,8 @@ export class CommandeController {
         coherent: match.coherent,
         within_tolerance: match.within_tolerance,
         config: match.config,
-        violations: match.violations,
-        lignes: match.lignes,
+        violations,
+        lignes: redact(req, match.lignes),
       });
     } catch (error) {
       console.error('Erreur GET /api/commandes/:id/match:', error);

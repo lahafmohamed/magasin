@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { consoleError as loggerError } from '../utils/logError';
 import pool from '../db/connection';
-import { produitService } from '../services/ProduitService';
+import { produitService, EMPLACEMENT_INVALIDE } from '../services/ProduitService';
+import { codeBarreService } from '../services/CodeBarreService';
 import {
   buildMagasinProductsQuery,
   isMagasinLocationId,
@@ -12,6 +13,12 @@ import { successResponse } from '../utils/response';
 import { AuthRequest } from '../middleware/auth';
 import { logAudit } from '../middleware/audit';
 import { parsePagination } from '../utils/pagination';
+import { businessStatusOf } from '../utils/errors';
+import { PRODUCT_MONEY_KEYS, redactForRole, seesAmounts } from '../utils/roleRedaction';
+
+/** E2: dépôt staff see stock quantities, never purchase or sale prices. */
+const redact = <T>(req: Request, data: T): T =>
+  redactForRole((req as AuthRequest).user?.role, data, PRODUCT_MONEY_KEYS);
 
 /** `produits` carries two UNIQUE columns — name the offending one. */
 function uniqueViolationMessage(error: { constraint?: string }): string {
@@ -35,7 +42,7 @@ export class ProduitController {
       const locationId = location_id ? parseInt(location_id as string, 10) : undefined;
 
       if (location_id !== undefined && Number.isNaN(locationId)) {
-        res.status(400).json({ success: false, error: 'Location ID invalide' });
+        res.status(400).json({ success: false, error: 'Emplacement invalide.' });
         return;
       }
 
@@ -86,7 +93,7 @@ export class ProduitController {
 
       const total = parseInt(countResult.rows[0].total, 10);
       res.json(
-        successResponse(dataResult.rows, undefined, {
+        successResponse(redact(req, dataResult.rows), undefined, {
           total,
           page,
           limit,
@@ -129,7 +136,7 @@ export class ProduitController {
       const locationId = location_id ? parseInt(location_id as string, 10) : undefined;
 
       if (location_id && Number.isNaN(locationId)) {
-        res.status(400).json({ success: false, error: 'Location ID invalide' });
+        res.status(400).json({ success: false, error: 'Emplacement invalide.' });
         return;
       }
 
@@ -141,9 +148,9 @@ export class ProduitController {
         { page, limit, sort, order },
         locationId
       );
-      res.json(successResponse(result.data, undefined, result.pagination));
+      res.json(successResponse(redact(req, result.data), undefined, result.pagination));
     } catch (error: any) {
-      if (error?.message === 'Depot invalide ou inactif') {
+      if (error?.message === EMPLACEMENT_INVALIDE) {
         res.status(400).json({ success: false, error: error.message });
         return;
       }
@@ -159,7 +166,7 @@ export class ProduitController {
         res.status(404).json({ success: false, error: 'Produit non trouvé' });
         return;
       }
-      res.json(successResponse(produit));
+      res.json(successResponse(redact(req, produit)));
     } catch (error) {
       loggerError('GET /api/produits/:id', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -183,17 +190,40 @@ export class ProduitController {
         new_values: produit,
       });
 
-      res.status(201).json(successResponse(produit, 'Produit créé'));
+      res.status(201).json(successResponse(redact(req, produit), 'Produit créé'));
     } catch (error: any) {
       if (error.code === '23505') {
         res.status(400).json({ success: false, error: uniqueViolationMessage(error) });
         return;
       }
-      if (error.message === 'Depot invalide ou inactif' || error.message === 'Stock initial invalide') {
+      if (error.message === EMPLACEMENT_INVALIDE || error.message === 'Stock initial invalide') {
         res.status(400).json({ success: false, error: error.message });
         return;
       }
       loggerError('POST /api/produits', error);
+      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    }
+  }
+
+  /** POST /produits/codes-barres — EAN-13 internes pour les produits qui n'en ont pas. */
+  static async genererCodesBarres(req: Request, res: Response): Promise<void> {
+    try {
+      const authReq = req as AuthRequest;
+      const produits = await codeBarreService.genererCodesManquants(req.body.produit_ids, authReq.user?.id ?? null);
+      const crees = produits.filter((p) => p.cree).length;
+      const message = crees === 0
+        ? 'Ces produits avaient déjà un code-barres.'
+        : crees === 1
+          ? '1 code-barres créé.'
+          : `${crees} codes-barres créés.`;
+      res.json({ success: true, data: produits, message });
+    } catch (error: any) {
+      const status = businessStatusOf(error);
+      if (status) {
+        res.status(status).json({ success: false, error: error.message });
+        return;
+      }
+      loggerError('POST /api/produits/codes-barres', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
@@ -205,8 +235,17 @@ export class ProduitController {
         res.status(400).json({ success: false, error: 'Aucun champ à mettre à jour' });
         return;
       }
+      // A role that does not see prices does not change them (E2): a form
+      // without price fields must not reset them.
+      const body = seesAmounts(authReq.user?.role)
+        ? req.body
+        : (({ prix_achat: _pa, prix_vente: _pv, ...rest }) => rest)(req.body);
+      if (Object.keys(body).length === 0) {
+        res.status(400).json({ success: false, error: 'Aucun champ à mettre à jour' });
+        return;
+      }
       const produit = await produitService.update(parseInt(req.params.id), {
-        ...req.body,
+        ...body,
         modifie_par: authReq.user?.id,
       });
 
@@ -224,7 +263,7 @@ export class ProduitController {
         new_values: req.body,
       });
 
-      res.json(successResponse(produit, 'Produit modifié'));
+      res.json(successResponse(redact(req, produit), 'Produit modifié'));
     } catch (error: any) {
       if (error.message === 'Aucun champ à mettre à jour') {
         res.status(400).json({ success: false, error: error.message });
@@ -271,8 +310,8 @@ export class ProduitController {
   static async adjustStock(req: Request, res: Response): Promise<void> {
     try {
       const id = parseInt(req.params.id);
-      const { quantite, location_id } = req.body;
-      const result = await produitService.adjustStock(id, quantite, location_id);
+      const { quantite, location_id, raison } = req.body;
+      const result = await produitService.adjustStock(id, quantite, location_id, raison);
 
       if (!result) {
         res.status(404).json({ success: false, error: 'Produit non trouvé' });
@@ -285,24 +324,39 @@ export class ProduitController {
         table_name: 'produits',
         record_id: id,
         req,
-        new_values: { stock: result.stock, quantite, location_id: location_id || null },
+        new_values: {
+          stock: result.stock,
+          quantite,
+          location_id: result.location_id,
+          mouvement_id: result.mouvement_id,
+        },
       });
 
       res.json(successResponse(result, 'Stock mis à jour'));
     } catch (error: any) {
-      if (error.message === 'Depot invalide ou inactif' || error.message.startsWith('Stock insuffisant')) {
-        res.status(400).json({ success: false, error: error.message });
-        return;
-      }
-      loggerError('PATCH /api/produits/:id/stock', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
+      ProduitController.stockMovementError(res, error, 'PATCH /api/produits/:id/stock');
     }
+  }
+
+  /** Shared error mapping of the two stock-changing routes. */
+  private static stockMovementError(res: Response, error: any, context: string): void {
+    if (error?.message === EMPLACEMENT_INVALIDE) {
+      res.status(400).json({ success: false, error: error.message });
+      return;
+    }
+    const status = businessStatusOf(error);
+    if (status) {
+      res.status(status).json({ success: false, error: error.message, ...(error.code ? { code: error.code } : {}) });
+      return;
+    }
+    loggerError(context, error);
+    res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
 
   static async getStockValuation(req: Request, res: Response): Promise<void> {
     try {
       const data = await produitService.getStockValuation();
-      res.json(successResponse(data));
+      res.json(successResponse(redact(req, data)));
     } catch (error) {
       loggerError('GET /api/produits/stock-valuation', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -312,17 +366,17 @@ export class ProduitController {
   static async getStockByCategory(req: Request, res: Response): Promise<void> {
     try {
       const data = await produitService.getStockByCategory();
-      res.json(successResponse(data));
+      res.json(successResponse(redact(req, data)));
     } catch (error) {
       loggerError('GET /api/produits/stock-by-category', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
     }
   }
 
-  static async getReorderSuggestions(_req: Request, res: Response): Promise<void> {
+  static async getReorderSuggestions(req: Request, res: Response): Promise<void> {
     try {
       const data = await produitService.getReorderSuggestions();
-      res.json(successResponse(data));
+      res.json(successResponse(redact(req, data)));
     } catch (error) {
       loggerError('GET /api/produits/reorder-suggestions', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });
@@ -357,13 +411,12 @@ export class ProduitController {
         table_name: 'produits',
         record_id: id,
         req,
-        new_values: { type_mouvement, quantite },
+        new_values: { type_mouvement, quantite, location_id: result.location_id, mouvement_id: result.mouvement_id },
       });
 
       res.status(201).json(successResponse(result, 'Mouvement enregistré'));
-    } catch (error) {
-      loggerError('POST /api/produits/:id/mouvements', error);
-      res.status(500).json({ success: false, error: 'Erreur serveur' });
+    } catch (error: any) {
+      ProduitController.stockMovementError(res, error, 'POST /api/produits/:id/mouvements');
     }
   }
 
@@ -494,6 +547,37 @@ export class ProduitController {
       const recentPurchase = recentPurchaseResult.rows[0];
       const priceStats = priceStatsResult.rows[0];
 
+      // E2: dépôt staff get the supplier side only — who supplies it, when it
+      // was last bought and in what quantity — never a price nor a customer.
+      if (!seesAmounts((req as AuthRequest).user?.role)) {
+        res.json(
+          successResponse({
+            default_supplier: defaultSupplier.raison_sociale
+              ? { id: defaultSupplier.id, raison_sociale: defaultSupplier.raison_sociale, telephone: defaultSupplier.telephone, email: defaultSupplier.email }
+              : null,
+            prix_achat: null,
+            price_stats: null,
+            recent_purchase: recentPurchase
+              ? { fournisseur: recentPurchase.fournisseur_nom, source: recentPurchase.source, date: recentPurchase.date_achat }
+              : null,
+            purchase_history: purchaseHistoryResult.rows.map((r) => ({
+              fournisseur: r.fournisseur_nom,
+              numero: r.numero_facture_fournisseur,
+              date: r.date_facture,
+              quantite: r.quantite,
+            })),
+            order_history: orderHistoryResult.rows.map((r) => ({
+              fournisseur: r.fournisseur_nom,
+              numero: r.numero_commande,
+              date: r.date_commande,
+              quantite: r.quantite,
+            })),
+            top_buyer: null,
+          }),
+        );
+        return;
+      }
+
       res.json(
         successResponse({
           default_supplier: defaultSupplier.raison_sociale
@@ -555,13 +639,36 @@ export class ProduitController {
    */
   static async searchFuzzy(req: Request, res: Response): Promise<void> {
     try {
-      const { q, limit, threshold } = req.query;
+      const { q, limit, threshold, location_id } = req.query;
+
+      let locationId: number | undefined;
+      if (location_id !== undefined && location_id !== '') {
+        locationId = parseInt(location_id as string, 10);
+        const { rows } = Number.isInteger(locationId) && locationId > 0
+          ? await pool.query('SELECT id FROM stock_locations WHERE id = $1 AND actif = true', [locationId])
+          : { rows: [] as any[] };
+        if (!rows[0]) {
+          res.status(400).json({ success: false, error: 'Emplacement invalide ou inactif.' });
+          return;
+        }
+      }
+
       const results = await produitService.searchFuzzy(
         q as string,
         limit ? parseInt(limit as string, 10) : 10,
-        threshold ? parseFloat(threshold as string) : 0.1
+        threshold ? parseFloat(threshold as string) : 0.1,
+        locationId
       );
-      res.json(successResponse(results));
+
+      // Le coût d'achat reste réservé au gérant et à l'administrateur (U-26) :
+      // la recherche sert aussi les formulaires de vente du caissier.
+      const role = (req as AuthRequest).user?.role;
+      const canSeeCost = role === 'admin' || role === 'manager';
+      const data = redact(req, canSeeCost
+        ? results
+        : results.map(({ prix_achat: _prixAchat, ...rest }) => rest));
+
+      res.json(successResponse(data));
     } catch (error) {
       loggerError('GET /api/produits/search/fuzzy', error);
       res.status(500).json({ success: false, error: 'Erreur serveur' });

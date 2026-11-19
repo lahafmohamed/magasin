@@ -10,7 +10,12 @@ export class ReturnController {
     try {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 20;
-      const data = await returnService.getAll(page, limit);
+      const rawStatut = typeof req.query.statut === 'string' ? req.query.statut.trim() : '';
+      if (rawStatut && !['en_attente', 'traite', 'annule'].includes(rawStatut)) {
+        res.status(400).json({ success: false, error: 'Statut de retour inconnu.' });
+        return;
+      }
+      const data = await returnService.getAll(page, limit, rawStatut || undefined);
       res.json({ success: true, ...data });
     } catch (error) {
       consoleError('GET /api/retours', error);

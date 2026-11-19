@@ -1,128 +1,193 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useForm, useFieldArray, useWatch, Controller } from 'react-hook-form';
+import { useForm, useFieldArray, useWatch, Controller, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { factureService, stockLocationService, ventesService } from '../services/api';
-import { TiersPicker } from '../components/TiersPicker';
+import { toast } from 'sonner';
+import { AlertTriangle, Minus, Package, Plus, X } from 'lucide-react';
+import { factureService, tiersService, ventesService } from '@/services/api';
+import { TiersPicker, type TiersPickerValue } from '@/components/TiersPicker';
+import { ProductCombobox } from '@/components/ProductCombobox';
+import { NumericField } from '@/components/NumericField';
+import { DocumentLines, type DocumentLineColumn } from '@/components/DocumentLines';
+import {
+  DocumentFormShell,
+  DraftNotice,
+  MarginSummary,
+  SummaryItem,
+  SummaryList,
+} from '@/components/DocumentFormShell';
+import {
+  InlineNotice,
+  SalesLocationField,
+  SalesProductOption,
+  type SalesSearchProduct,
+} from '@/components/SalesFormParts';
+import { defaultLocationId, useLocationStock, useSalesLocations } from '@/components/useSalesStock';
 import { useDraft } from '@/hooks/useDraft';
-import { Produit, Tiers } from '../types';
+import { useOptionalAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import { DatePicker } from '@/components/ui/date-picker';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { DocumentTotals } from '@/components/ui/document-totals';
+import { DocumentCode } from '@/components/ui/document-code';
 import { EmptyState } from '@/components/ui/empty-state';
 import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
-import { Spinner } from '@/components/ui/loading';
-import { ArrowLeft, Search, Minus, Plus, X, AlertCircle, ShoppingCart } from 'lucide-react';
-import { toast } from 'sonner';
-import { getValidSalePrice } from '../utils/salesPrice';
+import { Label } from '@/components/ui/label';
+import { Money } from '@/components/ui/money';
+import { RequiredMark } from '@/components/ui/required-mark';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 import { getErrorMessage } from '@/utils/errors';
+import { formatPercent, toNumber } from '@/utils/format';
+import {
+  computeSalesTotals,
+  getValidSalePrice,
+  isBelowCost,
+  netUnitPrice,
+  saleDisabledReason,
+} from '@/utils/salesPrice';
+import {
+  SALES_MESSAGES as M,
+  describeDueDate,
+  insufficientStockMessage,
+  lineFieldLabel,
+  plural,
+} from '@/validation/salesForms';
 
-interface StockLocation {
-  id: number;
-  code: string;
-  nom: string;
-  est_principal: boolean;
-}
+/** Code du client de passage (`GET /tiers/comptoir`). */
+const COMPTOIR_CODE = 'PASS';
 
-interface StockLevel {
-  produit_id: number;
-  quantite_disponible: number;
-}
-
-import { formatFCFA as formatXOF } from '../utils/format';
-
-// --- Validation schema (react-hook-form + zod) -----------------------------
-// Mirrors the fields that were previously validated manually before submit:
-//  - a client (tiers) must be selected
-//  - at least one line
-//  - per line: quantité > 0, prix unitaire > 0, remise 0..100
-// The stock-availability rule (quantité <= stock_dispo) stays in onValid so we
-// keep the exact original toast UX (it depends on per-location live stock).
 const ligneSchema = z.object({
   produit_id: z.number(),
   produit_nom: z.string(),
   produit_reference: z.string(),
-  quantite: z.number().min(1, 'Quantité invalide'),
-  prix_unitaire: z.number().positive('Le prix doit être supérieur à zéro'),
+  quantite: z.number({ error: M.quantity }).int(M.quantityInteger).min(1, M.quantity),
+  prix_unitaire: z.number({ error: M.price }).positive(M.price),
+  /** Prix catalogue au moment de l'ajout (repère « prix modifié »). */
   prix_unitaire_default: z.number(),
   prix_revient: z.number(),
-  remise_pct: z.number().min(0).max(100),
+  remise_pct: z.number({ error: M.discount }).min(0, M.discount).max(100, M.discount),
   stock_dispo: z.number(),
 });
 
-const factureSchema = z
-  .object({
-    client: z.custom<Tiers | null>(),
-    location_id: z.number().nullable(),
-    echeance: z.string().min(1, 'Échéance requise'),
-    notes: z.string(),
-    lignes: z.array(ligneSchema).min(1, 'Ajoutez au moins un produit'),
-  })
-  // Object-level check so the field output type stays `Tiers | null`
-  // (a field-level type-guard refine would narrow it and break RHF typing).
-  .superRefine((val, ctx) => {
-    if (val.client == null) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['client'],
-        message: 'Sélectionnez un tiers (client)',
-      });
-    }
-  });
+const factureSchema = z.object({
+  client: z.custom<TiersPickerValue | null>((v) => v != null, { error: M.clientRequired }),
+  location_id: z.number().nullable(),
+  notes: z.string(),
+  lignes: z.array(ligneSchema).min(1, M.linesRequired),
+});
 
 type FactureFormValues = z.infer<typeof factureSchema>;
 type LigneFacture = z.infer<typeof ligneSchema>;
 
-function defaultEcheance(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 14);
-  return d.toISOString().slice(0, 10);
+const ID = {
+  client: 'facture-client',
+  search: 'facture-produit-search',
+  searchHint: 'facture-produit-aide',
+  lignes: 'facture-lignes',
+  location: 'facture-location',
+  notes: 'facture-notes',
+  quantite: (i: number) => `facture-ligne-${i}-quantite`,
+  prix: (i: number) => `facture-ligne-${i}-prix`,
+  remise: (i: number) => `facture-ligne-${i}-remise`,
+  stock: (i: number) => `facture-ligne-${i}-stock`,
+};
+
+/** Colonnes des lignes : tableau quand la colonne du formulaire a la place, cartes sinon (`DocumentLines`). */
+/**
+ * GV-52 : à 1 366 px la colonne du formulaire fait 692 px et le tableau en
+ * demandait 690 — un total à sept chiffres suffisait à faire passer la vente
+ * en cartes. Le produit passe à la ligne dès 10 rem et la cellule de prix ne
+ * réserve plus que la largeur de son champ (`w-32`) : environ 32 px de marge.
+ */
+const LINE_COLUMNS: DocumentLineColumn[] = [
+  { id: 'produit', header: 'Produit', mobile: 'title', cellClassName: 'min-w-[10rem]' },
+  { id: 'quantite', header: 'Quantité', mobile: 'field', headClassName: 'text-center' },
+  {
+    id: 'prix',
+    header: 'Prix unitaire',
+    mobile: 'field',
+    headClassName: 'text-right',
+    cellClassName: 'text-right',
+  },
+  { id: 'remise', header: 'Remise', mobile: 'field', headClassName: 'text-right', cellClassName: 'text-right' },
+  { id: 'total', header: 'Total', numeric: true, mobile: 'field' },
+  {
+    id: 'retirer',
+    header: 'Retirer',
+    srOnlyHeader: true,
+    mobile: 'action',
+    headClassName: 'w-10',
+    cellClassName: 'px-1',
+  },
+];
+
+/** Premier champ en erreur, dans l'ordre de lecture de la page. */
+function firstErrorId(errors: FieldErrors<FactureFormValues>, lineCount: number): string | null {
+  if (errors.client) return ID.client;
+  for (let i = 0; i < lineCount; i++) {
+    const le = errors.lignes?.[i];
+    if (le?.quantite) return ID.quantite(i);
+    if (le?.prix_unitaire) return ID.prix(i);
+    if (le?.remise_pct) return ID.remise(i);
+  }
+  if (errors.lignes?.message || errors.lignes?.root?.message) return ID.search;
+  return null;
+}
+
+/** Focus après le rendu des messages, pour que le lecteur d'écran les lise avec le champ. */
+function focusById(id: string | null) {
+  if (!id) return;
+  window.setTimeout(() => document.getElementById(id)?.focus(), 0);
+}
+
+function clientName(c: TiersPickerValue): string {
+  return `${c.raison_sociale}${c.prenom ? ` ${c.prenom}` : ''}`;
 }
 
 export default function NouvelleFacture() {
   const navigate = useNavigate();
+  const auth = useOptionalAuth();
+  const canSeeCost = !!auth?.hasRole('admin', 'manager');
+  const isCashier = !!auth?.hasRole('caissier');
+  const clientTitleId = useId();
 
-  // --- Local (non-form) UI state -------------------------------------------
-  // Product search / dropdown are pure UX; only the selected product becomes a
-  // form line. Locations and the per-location stock map are loaded async and
-  // feed calculations / line stock — not form inputs themselves.
-  const [produits, setProduits] = useState<Produit[]>([]);
-  const [produitSearch, setProduitSearch] = useState('');
-  const [showProduitDropdown, setShowProduitDropdown] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [locations, setLocations] = useState<StockLocation[]>([]);
-  const [locationStockMap, setLocationStockMap] = useState<Record<number, number>>({});
+  const [clientDelai, setClientDelai] = useState<{ id: number; delai: string | null } | null>(null);
+  const [lineAnnounce, setLineAnnounce] = useState('');
 
-  // --- react-hook-form ------------------------------------------------------
   const {
     control,
     register,
     handleSubmit,
     setValue,
     getValues,
+    setError,
     watch,
     reset,
-    formState: { errors, isDirty },
+    formState: { errors, isDirty, isSubmitted },
   } = useForm<FactureFormValues>({
     resolver: zodResolver(factureSchema),
-    mode: 'onChange',
-    defaultValues: {
-      client: null,
-      location_id: null,
-      echeance: defaultEcheance(),
-      notes: '',
-      lignes: [],
-    },
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
+    shouldFocusError: false,
+    defaultValues: { client: null, location_id: null, notes: '', lignes: [] },
   });
 
-  // --- Draft autosave + unsaved-changes guard ------------------------------
+  const { fields, append, remove } = useFieldArray({ control, name: 'lignes' });
+
+  // --- Brouillon ------------------------------------------------------------
+  // Enregistré seulement pour une saisie de l'utilisateur : la présélection du
+  // client comptoir ou de l'emplacement par défaut ne crée pas de brouillon.
   const { draft, save, clear, hasDraft } = useDraft<FactureFormValues>('facture:new');
-  const [showDraftBanner, setShowDraftBanner] = useState(hasDraft);
+  const [showDraftBanner, setShowDraftBanner] = useState(
+    () => hasDraft && Array.isArray(draft?.lignes) && draft.lignes.length > 0
+  );
 
   useEffect(() => {
-    const sub = watch((v) => save(v as FactureFormValues));
+    const sub = watch((values, { name, type }) => {
+      if (type === 'change' || name?.startsWith('lignes')) save(values as FactureFormValues);
+    });
     return () => sub.unsubscribe();
   }, [watch, save]);
 
@@ -137,745 +202,534 @@ export default function NouvelleFacture() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
 
-  const { fields, append, remove } = useFieldArray({ control, name: 'lignes' });
-
-  // Live watched values drive totals, stock loading and the submit button.
-  const watchedClient = useWatch({ control, name: 'client' });
+  const client = useWatch({ control, name: 'client' });
   const selectedLocationId = useWatch({ control, name: 'location_id' });
-  const watchedLignesRaw = useWatch({ control, name: 'lignes' });
-  const lignes = (watchedLignesRaw ?? []) as LigneFacture[];
+  const watchedLignes = useWatch({ control, name: 'lignes' });
+  const lignes = useMemo(() => (watchedLignes ?? []) as LigneFacture[], [watchedLignes]);
 
-  useEffect(() => {
-    const loadLocations = async () => {
-      try {
-        const response = await ventesService.getLocations();
-        const magasinLocations: StockLocation[] = response.data || response;
-        setLocations(magasinLocations);
-        const defaultLocation = magasinLocations.find((l) => l.est_principal) || magasinLocations[0];
-        if (defaultLocation) {
-          setValue('location_id', defaultLocation.id);
-        } else {
-          toast.error('Aucun magasin actif disponible pour la facturation');
-        }
-      } catch (err) {
-        toast.error(getErrorMessage(err, 'Impossible de charger les magasins'));
-      }
-    };
-    void loadLocations();
-  }, [setValue]);
+  // --- Emplacement et stock -------------------------------------------------
+  const sales = useSalesLocations((list) =>
+    setValue('location_id', defaultLocationId(list, getValues('location_id')))
+  );
+  const stock = useLocationStock(selectedLocationId);
 
-  useEffect(() => {
-    if (!selectedLocationId) return;
-    const loadLocationStock = async () => {
-      try {
-        const response = await stockLocationService.getStockLevels(selectedLocationId);
-        const levels: StockLevel[] = response.data || response;
-        const nextMap: Record<number, number> = {};
-        for (const level of levels) {
-          nextMap[level.produit_id] = Number(level.quantite_disponible || 0);
-        }
-        setLocationStockMap(nextMap);
-      } catch (err) {
-        toast.error(getErrorMessage(err, "Impossible de charger le stock de l'emplacement"));
-      }
-    };
-    void loadLocationStock();
-  }, [selectedLocationId]);
-
-  // Re-sync each line's stock_dispo when the location stock map changes
-  // (preserves the original `stock_dispo: map[id] ?? 0` remap).
-  useEffect(() => {
-    if (!selectedLocationId) return;
-    const current = getValues('lignes');
-    current.forEach((ligne, i) => {
-      setValue(`lignes.${i}.stock_dispo`, locationStockMap[ligne.produit_id] ?? 0);
+  // Le stock de chaque ligne suit l'emplacement choisi.
+  const syncLineStock = useCallback(() => {
+    if (stock.state !== 'ready') return;
+    getValues('lignes').forEach((ligne, i) => {
+      const available = stock.stockMap[ligne.produit_id] ?? 0;
+      if (ligne.stock_dispo !== available) setValue(`lignes.${i}.stock_dispo`, available);
     });
-  }, [locationStockMap, selectedLocationId, getValues, setValue]);
+  }, [stock.stockMap, stock.state, getValues, setValue]);
 
   useEffect(() => {
-    if (produitSearch.length < 2) {
-      setProduits([]);
-      return;
-    }
-    ventesService
-      .searchFuzzy(produitSearch, 20, selectedLocationId || undefined)
-      .then((data) => {
-        setProduits(Array.isArray(data) ? data : []);
+    syncLineStock();
+  }, [syncLineStock]);
+
+  // --- Client comptoir présélectionné pour le caissier (D4) ----------------
+  useEffect(() => {
+    if (!isCashier) return;
+    let cancelled = false;
+    tiersService
+      .getComptoir()
+      .then((comptoir) => {
+        if (cancelled || !comptoir || getValues('client') != null) return;
+        setValue('client', comptoir);
+        // P-M5 : le client est choisi, la douchette part dans « Ajouter un
+        // produit » — sauf si la caissière est déjà dans un autre champ.
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          const active = document.activeElement;
+          const idle = !active || active === document.body || active.matches('h1, main');
+          if (idle) document.getElementById(ID.search)?.focus();
+        });
       })
-      .catch(console.error);
-  }, [produitSearch, selectedLocationId]);
-
-  const addProduit = (p: Produit) => {
-    const prixVente = getValidSalePrice(p.prix_vente);
-    if (prixVente === null) {
-      toast.error(
-        'Prix de vente non renseigné. Corrigez la fiche produit avant de continuer.'
-      );
-      return;
-    }
-
-    const current = getValues('lignes');
-    const existingIdx = current.findIndex((l) => l.produit_id === p.id);
-    if (existingIdx >= 0) {
-      setValue(`lignes.${existingIdx}.quantite`, current[existingIdx].quantite + 1, {
-        shouldValidate: true,
-        shouldDirty: true,
+      .catch(() => {
+        /* pas de présélection : le caissier choisit le client */
       });
-      setProduitSearch('');
-      setShowProduitDropdown(false);
+    return () => {
+      cancelled = true;
+    };
+  }, [isCashier, getValues, setValue]);
+
+  // --- Échéance : fixée par le serveur d'après le délai de paiement du client
+  const clientId = client?.id ?? null;
+  useEffect(() => {
+    if (!clientId) return;
+    let cancelled = false;
+    tiersService
+      .getById(clientId)
+      .then((t) => {
+        if (!cancelled) setClientDelai({ id: clientId, delai: t?.delai_paiement ?? null });
+      })
+      .catch(() => {
+        if (!cancelled) setClientDelai(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  // --- Produits ------------------------------------------------------------
+  const searchProducts = useCallback(
+    async (q: string): Promise<SalesSearchProduct[]> => {
+      const rows = await ventesService.searchFuzzy(q, 20, selectedLocationId ?? undefined);
+      return Array.isArray(rows) ? (rows as SalesSearchProduct[]) : [];
+    },
+    [selectedLocationId]
+  );
+
+  const addProduit = (p: SalesSearchProduct) => {
+    const prixVente = getValidSalePrice(p.prix_vente);
+    if (prixVente === null) return;
+    const current = getValues('lignes');
+    const existing = current.findIndex((l) => l.produit_id === p.id);
+    if (existing >= 0) {
+      const qty = current[existing].quantite;
+      setValue(`lignes.${existing}.quantite`, (Number.isFinite(qty) ? qty : 0) + 1, {
+        shouldDirty: true,
+        shouldValidate: isSubmitted,
+      });
       return;
     }
-    const prixAchat = parseFloat(p.prix_achat as any) || 0;
-    const fallbackStock =
-      typeof p.stock === 'string' ? parseInt(p.stock, 10) : Number(p.stock || 0);
-    const stock = selectedLocationId
-      ? locationStockMap[p.id] ?? fallbackStock
-      : fallbackStock;
-
-    append({
-      produit_id: p.id,
-      produit_nom: p.nom,
-      produit_reference: p.reference,
-      quantite: 1,
-      prix_unitaire: prixVente,
-      prix_unitaire_default: prixVente,
-      prix_revient: prixAchat,
-      remise_pct: 0,
-      stock_dispo: stock,
-    });
-    setProduitSearch('');
-    setShowProduitDropdown(false);
+    append(
+      {
+        produit_id: p.id,
+        produit_nom: p.nom,
+        produit_reference: p.reference ?? '',
+        quantite: 1,
+        prix_unitaire: prixVente,
+        prix_unitaire_default: prixVente,
+        prix_revient: toNumber(p.prix_achat) ?? 0,
+        remise_pct: 0,
+        stock_dispo: stock.stockOf(p.id, p.stock),
+      },
+      { shouldFocus: false }
+    );
   };
 
-  // Douchette code-barres : le scanner tape le code puis Entrée dans le champ de
-  // recherche. Un code-barres est unique, donc une correspondance exacte est sans
-  // ambiguïté — on ajoute la ligne directement au lieu d'obliger à cliquer.
-  useEffect(() => {
-    const scanned = produitSearch.trim();
-    if (!scanned) return;
-    const match = produits.find((p) => p.code_barre && p.code_barre === scanned);
-    if (match) {
-      setProduits([]);
-      addProduit(match);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [produits, produitSearch]);
+  const removeLigne = (index: number) => {
+    const nom = getValues(`lignes.${index}.produit_nom`);
+    remove(index);
+    setLineAnnounce(`${nom} retiré de la facture.`);
+    document.getElementById(ID.search)?.focus();
+  };
 
-  const removeLigne = (idx: number) => remove(idx);
+  const setQuantity = (index: number, quantite: number) =>
+    setValue(`lignes.${index}.quantite`, quantite, { shouldDirty: true, shouldValidate: isSubmitted });
 
-  const totals = useMemo(() => {
-    const subtotal = lignes.reduce(
-      (s, l) => s + l.quantite * l.prix_unitaire * (1 - l.remise_pct / 100),
-      0,
-    );
-    const totalCost = lignes.reduce((s, l) => s + l.quantite * l.prix_revient, 0);
-    const margin = subtotal - totalCost;
-    const marginPct = subtotal > 0 ? (margin / subtotal) * 100 : 0;
-    const totalUnits = lignes.reduce((s, l) => s + l.quantite, 0);
-    return { subtotal, totalCost, margin, marginPct, total: subtotal, totalUnits };
-  }, [lignes]);
+  const totals = useMemo(() => computeSalesTotals(lignes), [lignes]);
 
-  const isValid = !!watchedClient && lignes.length > 0;
-  const disabledReason = !watchedClient
-    ? 'Sélectionnez un tiers (client)'
-    : lignes.length === 0
-    ? 'Ajoutez au moins un produit'
-    : null;
+  // --- Envoi ---------------------------------------------------------------
+  const onInvalid = (errs: FieldErrors<FactureFormValues>) => focusById(firstErrorId(errs, fields.length));
 
   const onValid = async (data: FactureFormValues) => {
-    // Defensive guards kept identical to the original manual validation so the
-    // exact toast messages are preserved (the schema already blocks these,
-    // but we keep the UX 1:1).
-    if (!data.client) {
-      toast.error('Veuillez sélectionner un client');
+    // Le stock dépend de l'emplacement chargé en direct : vérifié ici, affiché
+    // sous la quantité de chaque ligne concernée.
+    const overstock = data.lignes.flatMap((l, i) => (l.quantite > l.stock_dispo ? [i] : []));
+    if (overstock.length > 0) {
+      for (const i of overstock) {
+        setError(`lignes.${i}.quantite`, {
+          type: 'stock',
+          message: insufficientStockMessage(data.lignes[i].stock_dispo),
+        });
+      }
+      focusById(ID.quantite(overstock[0]));
       return;
     }
-    if (data.lignes.length === 0) {
-      toast.error('Veuillez ajouter au moins un produit');
-      return;
-    }
-    for (const ligne of data.lignes) {
-      if (ligne.quantite > ligne.stock_dispo) {
-        toast.error(`Stock insuffisant pour "${ligne.produit_nom}" (disponible: ${ligne.stock_dispo})`);
-        return;
-      }
-      if (ligne.quantite <= 0) {
-        toast.error(`Quantité invalide pour "${ligne.produit_nom}"`);
-        return;
-      }
-    }
+    if (!data.client) return;
     setSubmitting(true);
     try {
       const result = await factureService.create({
         tiers_id: data.client.id,
-        location_id: data.location_id || undefined,
+        location_id: data.location_id ?? undefined,
         lignes: data.lignes.map((l) => ({
           produit_id: l.produit_id,
           quantite: l.quantite,
-          prix_unitaire: l.prix_unitaire * (1 - l.remise_pct / 100),
+          prix_unitaire: netUnitPrice(l.prix_unitaire, l.remise_pct),
         })),
-        notes: data.notes || undefined,
+        notes: data.notes.trim() || undefined,
       });
       clear();
-      toast.success(`Facture ${result.numero_facture} créée avec succès!`);
-      navigate('/factures');
+      toast.success(`Facture ${result.numero_facture} créée`);
+      navigate(`/factures/${result.id}`, { replace: true, state: { justCreated: true } });
     } catch (error) {
-      toast.error(getErrorMessage(error, 'Erreur lors de la création de la facture'));
-    } finally {
+      toast.error(getErrorMessage(error, 'Impossible de créer la facture. Vérifiez les lignes puis réessayez.'));
       setSubmitting(false);
     }
   };
 
-  const sectionLabel =
-    'text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground';
-  const cardCls = 'rounded-xl border bg-card p-5 shadow-sm';
+  const restoreDraft = () => {
+    if (draft) {
+      reset(
+        {
+          client: draft.client ?? null,
+          location_id: draft.location_id ?? getValues('location_id'),
+          notes: draft.notes ?? '',
+          lignes: Array.isArray(draft.lignes) ? draft.lignes : [],
+        },
+        { keepDefaultValues: true }
+      );
+      window.setTimeout(syncLineStock, 0);
+    }
+    setShowDraftBanner(false);
+  };
 
-  return (
-    <form
-      onSubmit={handleSubmit(onValid)}
-      className="w-full p-4 sm:p-8 tabular-nums"
-      style={{ fontFeatureSettings: '"tnum"' }}
-    >
-      {/* Page header */}
-      <div className="flex items-center gap-4 mb-6">
-        <Button type="button" variant="outline" size="sm" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Retour
-        </Button>
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight">Nouvelle facture</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Brouillon · <span className="font-mono">FAC-{new Date().getFullYear()}-XXXX</span>
-          </p>
-        </div>
-      </div>
+  const discardDraft = () => {
+    clear();
+    setShowDraftBanner(false);
+  };
 
-      {showDraftBanner && (
-        <div className="rounded-lg border bg-muted/50 p-3 text-sm flex items-center justify-between gap-3 mb-5">
-          <span>Un brouillon non enregistré a été récupéré.</span>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                if (draft) reset(draft);
-                setShowDraftBanner(false);
-              }}
-            >
-              Restaurer
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                clear();
-                setShowDraftBanner(false);
-              }}
-            >
-              Ignorer
-            </Button>
-          </div>
-        </div>
+  // --- Rendu ---------------------------------------------------------------
+  const location = sales.locations.find((l) => l.id === selectedLocationId) ?? null;
+  const lignesError = errors.lignes?.message ?? errors.lignes?.root?.message;
+  const isComptoir = client?.code === COMPTOIR_CODE;
+  const dueLabel = !client
+    ? '—'
+    : clientDelai?.id === client.id
+      ? describeDueDate(clientDelai.delai)
+      : 'Selon le délai de paiement du client';
+
+  const summary = (
+    <>
+      <SummaryList>
+        <SummaryItem label="Client">
+          {client ? clientName(client) : <span className="font-normal text-muted-foreground">Non choisi</span>}
+        </SummaryItem>
+        {location && <SummaryItem label="Emplacement">{location.nom}</SummaryItem>}
+        <SummaryItem label="Échéance">{dueLabel}</SummaryItem>
+        <SummaryItem label="Produits" numeric>
+          {totals.lines === 0
+            ? '—'
+            : `${plural(totals.lines, 'ligne', 'lignes')} · ${plural(totals.units, 'unité', 'unités')}`}
+        </SummaryItem>
+      </SummaryList>
+      <DocumentTotals
+        className={cn('mt-0 w-full sm:w-full', totals.discount > 0 ? undefined : 'pt-2')}
+        aria-label="Totaux de la facture"
+        rows={
+          totals.discount > 0
+            ? [
+                { label: 'Sous-total', value: totals.gross },
+                { label: 'Remises', value: -totals.discount },
+              ]
+            : []
+        }
+        total={{ label: 'Total', value: totals.total }}
+      />
+      {/* Marge seulement une fois une ligne saisie : « 0 FCFA » de marge sur une facture vide ne dit rien. */}
+      {canSeeCost && totals.lines > 0 && (
+        <MarginSummary margin={totals.margin} cost={totals.cost} marginPct={totals.marginPct} />
       )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
-        {/* Left column */}
-        <div className="grid gap-4 min-w-0">
-          {/* Client + meta */}
-          <section className={cardCls}>
-            <div className="flex items-baseline justify-between mb-3">
-              <h2 className={sectionLabel}>Client (Tiers)<span className="text-destructive"> *</span></h2>
-            </div>
-            <Controller
-              control={control}
-              name="client"
-              render={({ field, fieldState }) => (
-                <>
-                  <TiersPicker
-                    role="client"
-                    value={field.value}
-                    onChange={field.onChange}
-                    {...fieldErrorProps('facture-client', fieldState.error)}
-                  />
-                  <FieldError id="facture-client" className="mt-1.5">
-                    {fieldState.error?.message}
-                  </FieldError>
-                </>
-              )}
-            />
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-              <div>
-                <Label
-                  htmlFor="facture-location"
-                  className="text-xs text-muted-foreground block mb-1.5 font-normal"
-                >
-                  Emplacement de vente
-                </Label>
-                <Controller
-                  control={control}
-                  name="location_id"
-                  render={({ field }) => (
-                    <Select
-                      value={field.value ? String(field.value) : ''}
-                      onValueChange={(v) => field.onChange(parseInt(v, 10))}
-                    >
-                      <SelectTrigger id="facture-location" className="w-full" aria-label="Emplacement de vente">
-                        <SelectValue placeholder="Choisir un emplacement" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {locations.map((l) => (
-                          <SelectItem key={l.id} value={String(l.id)}>
-                            {l.nom} ({l.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                />
-              </div>
-              <div>
-                <Label
-                  htmlFor="facture-echeance"
-                  className="text-xs text-muted-foreground block mb-1.5 font-normal"
-                >
-                  Échéance<span className="text-destructive"> *</span>
-                </Label>
-                <Controller
-                  control={control}
-                  name="echeance"
-                  render={({ field }) => (
-                    <DatePicker
-                      id="facture-echeance"
-                      value={field.value}
-                      onChange={field.onChange}
-                      required
-                      {...fieldErrorProps('facture-echeance', errors.echeance)}
-                    />
-                  )}
-                />
-                <FieldError id="facture-echeance">{errors.echeance?.message}</FieldError>
-              </div>
-            </div>
-          </section>
-
-          {/* Products */}
-          <section className={cardCls}>
-            <div className="flex items-baseline justify-between mb-3">
-              <h2 className={sectionLabel}>
-                Produits{' '}
-                <span className="text-muted-foreground/60 font-medium normal-case tracking-normal">
-                  · {lignes.length}
-                </span>
-              </h2>
-            </div>
-
-            <Label
-              htmlFor="facture-produit-search"
-              className="text-xs text-muted-foreground block mb-1.5 font-normal"
-            >
-              Rechercher un produit
-            </Label>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                id="facture-produit-search"
-                className="w-full pl-10 pr-3 py-2.5 text-sm rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="Rechercher un produit par nom, référence ou code-barres…"
-                value={produitSearch}
-                onChange={(e) => {
-                  setProduitSearch(e.target.value);
-                  setShowProduitDropdown(true);
-                }}
-                onFocus={() => setShowProduitDropdown(true)}
-                onBlur={() => setTimeout(() => setShowProduitDropdown(false), 150)}
-              />
-              {showProduitDropdown && produitSearch.length >= 2 && produits.length === 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-popover border rounded-lg shadow-lg">
-                  <EmptyState
-                    icon={Search}
-                    title={`Aucun produit ne correspond à « ${produitSearch} »`}
-                    description="Essayez une autre orthographe ou vérifiez le stock de l'emplacement sélectionné."
-                    className="py-6"
-                  />
-                </div>
-              )}
-              {showProduitDropdown && produits.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 z-20 bg-popover border rounded-lg shadow-lg overflow-hidden max-h-80 overflow-y-auto">
-                  {produits.map((p) => {
-                    const prixVente = getValidSalePrice(p.prix_vente);
-                    const prixManquant = prixVente === null;
-                    const apiStock =
-                      typeof p.stock === 'string' ? parseInt(p.stock, 10) : Number(p.stock || 0);
-                    const stock = selectedLocationId
-                      ? locationStockMap[p.id] ?? apiStock
-                      : apiStock;
-                    const stockMin =
-                      typeof p.stock_min === 'string'
-                        ? parseInt(p.stock_min, 10)
-                        : Number(p.stock_min || 0);
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        disabled={prixManquant}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          if (!prixManquant) addProduit(p);
-                        }}
-                        title={prixManquant ? 'Renseignez le prix de vente dans la fiche produit' : undefined}
-                        className={`flex items-center gap-3 w-full px-3 py-2.5 text-left border-b last:border-b-0 ${
-                          prixManquant
-                            ? 'cursor-not-allowed bg-destructive/5 opacity-70'
-                            : 'hover:bg-muted'
-                        }`}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">{p.nom}</div>
-                          <div className="text-xs text-muted-foreground font-mono">
-                            {p.reference} · stock: {stock}
-                            {(p as any).similarity && (p as any).similarity < 0.5 && (
-                              <span className="text-warning-500 ml-1">(résultat approximatif)</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm font-semibold font-mono">
-                            {prixManquant ? 'Prix non renseigné' : formatXOF(prixVente)}
-                          </div>
-                          <div
-                            className={`text-[11px] ${
-                              prixManquant || stock <= stockMin
-                                ? 'text-destructive'
-                                : 'text-success-600'
-                            }`}
-                          >
-                            {prixManquant
-                              ? 'Corriger dans l’inventaire'
-                              : stock <= stockMin
-                                ? 'Stock bas'
-                                : 'Disponible'}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {fields.length > 0 ? (
-              <div className="mt-4 border rounded-lg overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50">
-                      <tr className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                        <th className="text-left font-semibold px-3 py-2.5">Produit</th>
-                        <th className="text-center font-semibold px-3 py-2.5 w-[110px]">Qté<span className="text-destructive"> *</span></th>
-                        <th className="text-right font-semibold px-3 py-2.5 w-[150px]">
-                          Prix unitaire<span className="text-destructive"> *</span>
-                        </th>
-                        <th className="text-right font-semibold px-3 py-2.5 w-[110px]">Marge</th>
-                        <th className="text-right font-semibold px-3 py-2.5 w-[80px]">Remise</th>
-                        <th className="text-right font-semibold px-3 py-2.5 w-[120px]">Total</th>
-                        <th className="w-8 px-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {fields.map((field, i) => {
-                        const l = (lignes[i] ?? field) as LigneFacture;
-                        const lineErrors = errors.lignes?.[i];
-                        const effPrice = l.prix_unitaire * (1 - l.remise_pct / 100);
-                        const lineTotal = l.quantite * effPrice;
-                        const lineCost = l.quantite * l.prix_revient;
-                        const marginAbs = lineTotal - lineCost;
-                        const marginPct =
-                          effPrice > 0 ? ((effPrice - l.prix_revient) / effPrice) * 100 : 0;
-                        const belowCost = l.prix_revient > 0 && effPrice < l.prix_revient;
-                        const overstock = l.quantite > l.stock_dispo;
-                        const priceOverridden = l.prix_unitaire !== l.prix_unitaire_default;
-                        return (
-                          <tr key={field.id} className="border-t align-middle">
-                            <td className="px-3 py-3">
-                              <div className="font-medium">{l.produit_nom}</div>
-                              <div className="text-xs font-mono text-muted-foreground">
-                                {l.produit_reference}
-                              </div>
-                              {overstock && (
-                                <div className="inline-flex items-center gap-1 mt-1 text-[11px] text-destructive">
-                                  <AlertCircle className="h-3 w-3" />
-                                  Stock insuffisant ({l.stock_dispo} dispo)
-                                </div>
-                              )}
-                            </td>
-                            <td className="px-3 py-3 text-center">
-                              <div className="inline-flex items-center border rounded-md overflow-hidden">
-                                <button
-                                  type="button"
-                                  aria-label="Diminuer la quantité"
-                                  className="px-2 py-1 text-muted-foreground hover:bg-muted"
-                                  onClick={() =>
-                                    setValue(`lignes.${i}.quantite`, Math.max(1, l.quantite - 1), {
-                                      shouldValidate: true,
-                                      shouldDirty: true,
-                                    })
-                                  }
-                                >
-                                  <Minus className="h-3.5 w-3.5" />
-                                </button>
-                                <Controller
-                                  control={control}
-                                  name={`lignes.${i}.quantite`}
-                                  render={({ field: qField }) => (
-                                    <input
-                                      id={`facture-ligne-${i}-quantite`}
-                                      aria-label={`Quantité pour ${l.produit_nom}`}
-                                      {...fieldErrorProps(
-                                        `facture-ligne-${i}-quantite`,
-                                        lineErrors?.quantite,
-                                      )}
-                                      className="w-10 text-center text-sm border-x py-1 font-mono bg-background focus-visible:ring-2 focus-visible:ring-ring"
-                                      value={qField.value === 0 ? '' : qField.value}
-                                      onChange={(e) => {
-                                        const n = parseInt(e.target.value, 10);
-                                        qField.onChange(Number.isNaN(n) ? 0 : n);
-                                      }}
-                                      onBlur={(e) => {
-                                        if (!e.target.value || parseInt(e.target.value, 10) < 1) {
-                                          qField.onChange(1);
-                                        }
-                                        qField.onBlur();
-                                      }}
-                                    />
-                                  )}
-                                />
-                                <button
-                                  type="button"
-                                  aria-label="Augmenter la quantité"
-                                  className="px-2 py-1 text-muted-foreground hover:bg-muted"
-                                  onClick={() =>
-                                    setValue(`lignes.${i}.quantite`, l.quantite + 1, {
-                                      shouldValidate: true,
-                                      shouldDirty: true,
-                                    })
-                                  }
-                                >
-                                  <Plus className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                              <FieldError id={`facture-ligne-${i}-quantite`}>
-                                {lineErrors?.quantite?.message}
-                              </FieldError>
-                            </td>
-                            <td className="px-3 py-3 text-right">
-                              <Controller
-                                control={control}
-                                name={`lignes.${i}.prix_unitaire`}
-                                render={({ field: pField }) => (
-                                  <input
-                                    id={`facture-ligne-${i}-prix`}
-                                    type="number" inputMode="decimal"
-                                    step="0.01"
-                                    {...fieldErrorProps(
-                                      `facture-ligne-${i}-prix`,
-                                      lineErrors?.prix_unitaire,
-                                    )}
-                                    value={pField.value === 0 ? '' : pField.value}
-                                    onChange={(e) => {
-                                      const n = parseFloat(e.target.value);
-                                      pField.onChange(Number.isNaN(n) ? 0 : Math.max(0, n));
-                                    }}
-                                    onBlur={pField.onBlur}
-                                    className={`w-28 px-2 py-1 text-right text-sm border rounded font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                                      priceOverridden ? 'bg-primary/10 border-primary/30' : 'bg-background'
-                                    }`}
-                                  />
-                                )}
-                              />
-                              <div className="text-[10px] text-muted-foreground mt-1 flex justify-end items-baseline gap-1">
-                                <span className="uppercase tracking-wider">P. revient</span>
-                                <span className="font-mono">{formatXOF(l.prix_revient)}</span>
-                              </div>
-                              <FieldError id={`facture-ligne-${i}-prix`}>
-                                {lineErrors?.prix_unitaire?.message}
-                              </FieldError>
-                            </td>
-                            <td className="px-3 py-3 text-right">
-                              <div
-                                className={`inline-flex flex-col items-end px-2 py-1 rounded font-mono text-xs font-semibold leading-tight ${
-                                  belowCost
-                                    ? 'bg-destructive/10 text-destructive'
-                                    : 'bg-success-500/10 text-success-700'
-                                }`}
-                              >
-                                <span>
-                                  {marginPct >= 0 ? '+' : ''}
-                                  {marginPct.toFixed(1)}%
-                                </span>
-                                <span className="text-[10px] font-medium opacity-80">
-                                  {marginAbs >= 0 ? '+' : '−'}
-                                  {formatXOF(Math.abs(marginAbs))}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-3 py-3 text-right">
-                              <div className="inline-flex items-baseline gap-0.5">
-                                <Controller
-                                  control={control}
-                                  name={`lignes.${i}.remise_pct`}
-                                  render={({ field: rField }) => (
-                                    <input
-                                      type="number" inputMode="decimal"
-                                      min={0}
-                                      max={100}
-                                      value={rField.value}
-                                      onChange={(e) =>
-                                        rField.onChange(
-                                          Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)),
-                                        )
-                                      }
-                                      onBlur={rField.onBlur}
-                                      className="w-12 px-1.5 py-1 text-right text-sm border rounded font-mono bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                    />
-                                  )}
-                                />
-                                <span className="text-xs text-muted-foreground">%</span>
-                              </div>
-                            </td>
-                            <td className="px-3 py-3 text-right font-mono font-semibold">
-                              {formatXOF(lineTotal)}
-                            </td>
-                            <td className="px-2 py-3 text-center">
-                              <button
-                                type="button"
-                                className="text-muted-foreground hover:text-destructive p-1"
-                                onClick={() => removeLigne(i)}
-                                aria-label="Retirer cette ligne"
-                                title="Retirer cette ligne"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-4 bg-muted/30 rounded-lg">
-                <EmptyState
-                  icon={ShoppingCart}
-                  title="Aucun article ajouté à la facture"
-                  description="Recherchez un produit ci-dessus pour l'ajouter à la facture."
-                  className="py-8"
-                />
-              </div>
-            )}
-            <FieldError id="facture-lignes" className="mt-2">
-              {errors.lignes?.message}
-            </FieldError>
-          </section>
-        </div>
-
-        {/* Right column */}
-        <aside className="grid gap-4 lg:sticky lg:top-4">
-          {/* Summary card */}
-          <section className="rounded-md border bg-card p-5 shadow-sm">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-              Résumé
-            </h2>
-
-            <SummaryRow label="Total" value={formatXOF(totals.total)} large />
-
-            <div
-              className={`mt-4 p-3 rounded-md border ${
-                totals.margin >= 0
-                  ? 'bg-success-50 border-success-200'
-                  : 'bg-danger-50 border-danger-200'
-              }`}
-            >
-              <div className="flex items-baseline justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Marge brute
-                </span>
-                <span
-                  className={`tabular-nums text-sm font-semibold ${
-                    totals.margin >= 0 ? 'text-success-700' : 'text-danger-700'
-                  }`}
-                >
-                  {totals.margin >= 0 ? '+' : '−'}
-                  {formatXOF(Math.abs(totals.margin))}
-                </span>
-              </div>
-              <div className="flex justify-between mt-1 text-xs text-muted-foreground">
-                <span className="tabular-nums">P. revient {formatXOF(totals.totalCost)}</span>
-                <span className="tabular-nums">
-                  {totals.marginPct >= 0 ? '+' : ''}
-                  {totals.marginPct.toFixed(1)}%
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-3 px-3 py-2 rounded-md bg-muted text-xs text-muted-foreground">
-              {lignes.length} ligne{lignes.length > 1 ? 's' : ''} · {totals.totalUnits} unité
-              {totals.totalUnits > 1 ? 's' : ''}
-            </div>
-          </section>
-
-          {/* Notes */}
-          <section className={cardCls}>
-            <label className="text-sm font-semibold block mb-2">Notes</label>
-            <textarea
-              rows={3}
-              placeholder="Notes optionnelles visibles sur la facture…"
-              className="w-full px-3 py-2 text-sm rounded-md border bg-background resize-y focus:outline-none focus:ring-2 focus:ring-ring"
-              {...register('notes')}
-            />
-          </section>
-
-          <Button
-            type="submit"
-            disabled={!isValid || submitting}
-            className="w-full h-12 text-base font-semibold"
-          >
-            {submitting ? (
-              <>
-                <Spinner className="mr-2" />
-                Création en cours…
-              </>
-            ) : (
-              <>Créer la facture · {formatXOF(totals.total)}</>
-            )}
-          </Button>
-          {disabledReason && !submitting && (
-            <div className="text-xs text-muted-foreground text-center -mt-2">{disabledReason}</div>
-          )}
-        </aside>
-      </div>
-    </form>
+    </>
   );
-}
 
-function SummaryRow({
-  label,
-  value,
-  large = false,
-}: {
-  label: string;
-  value: string;
-  large?: boolean;
-}) {
   return (
-    <div
-      className={`flex justify-between items-baseline ${
-        large ? 'py-1 text-base font-semibold text-foreground' : 'py-1 text-sm text-muted-foreground'
-      }`}
+    <DocumentFormShell
+      title="Nouvelle facture"
+      description="Le stock sort de l’emplacement dès l’enregistrement. Le numéro de facture est attribué à ce moment-là."
+      backTo="/factures"
+      onSubmit={handleSubmit(onValid, onInvalid)}
+      notice={showDraftBanner ? <DraftNotice onRestore={restoreDraft} onDiscard={discardDraft} /> : null}
+      summary={summary}
+      total={totals.total}
+      submitLabel="Créer la facture"
+      submittingLabel="Création de la facture…"
+      submitting={submitting}
     >
-      <span>{label}</span>
-      <span className="tabular-nums">{value}</span>
-    </div>
+      {/* Client */}
+      <Card>
+        <CardHeader>
+          <CardTitle id={clientTitleId}>
+            Client
+            <RequiredMark />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Controller
+            control={control}
+            name="client"
+            render={({ field, fieldState }) => (
+              <TiersPicker
+                ref={field.ref}
+                id={ID.client}
+                role="client"
+                value={field.value}
+                onChange={field.onChange}
+                aria-labelledby={clientTitleId}
+                {...fieldErrorProps(ID.client, fieldState.error)}
+              />
+            )}
+          />
+          <FieldError id={ID.client}>{errors.client?.message}</FieldError>
+          {isComptoir && (
+            <p className="text-sm text-muted-foreground">
+              Vente au comptoir. Pour une facture au nom du client, choisissez-le ou créez-le.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Produits */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Produits
+            <RequiredMark />
+          </CardTitle>
+          <CardDescription id={ID.searchHint}>
+            Scannez un code-barres ou tapez au moins 2 caractères, puis Entrée pour ajouter le produit
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor={ID.search}>Ajouter un produit</Label>
+            <ProductCombobox<SalesSearchProduct>
+              id={ID.search}
+              search={searchProducts}
+              searchKey={selectedLocationId}
+              onSelect={addProduit}
+              describedBy={[ID.searchHint, lignesError ? `${ID.lignes}-error` : null].filter(Boolean).join(' ')}
+              aria-invalid={lignesError ? true : undefined}
+              getDisabledReason={saleDisabledReason}
+              addedMessage={(p) => `${p.nom} ajouté à la facture.`}
+              noResultsHint="Seuls les produits en stock sont proposés. Vérifiez l’orthographe ou le code-barres."
+              renderOption={(p, { disabledReason }) => (
+                <SalesProductOption product={p} stock={stock.stockOf(p.id, p.stock)} disabledReason={disabledReason} />
+              )}
+            />
+            <FieldError id={ID.lignes}>{lignesError}</FieldError>
+          </div>
+
+          {/* Un seul magasin : rien ici, le récapitulatif le nomme. Plusieurs : la
+              liste vient après la recherche, sans couper la consigne de son champ. */}
+          <SalesLocationField
+            id={ID.location}
+            label="Emplacement de vente"
+            locations={sales.locations}
+            state={sales.state}
+            error={sales.error}
+            onRetry={() => void sales.reload()}
+            value={selectedLocationId}
+            onChange={(id) => setValue('location_id', id, { shouldDirty: true })}
+          />
+          {stock.state === 'error' && selectedLocationId && (
+            <InlineNotice tone="warning" onRetry={() => void stock.reload()}>
+              Stock de l’emplacement indisponible : les quantités affichées sont celles de tous les emplacements.
+            </InlineNotice>
+          )}
+
+          <p role="status" className="sr-only">
+            {lineAnnounce}
+          </p>
+
+          {/* La consigne est déjà sous le titre de la carte : l'état vide ne la répète pas. */}
+          {fields.length === 0 ? (
+            <div className="rounded-md bg-muted/40">
+              <EmptyState compact icon={Package} title="Aucun produit sur la facture" />
+            </div>
+          ) : (
+            <DocumentLines
+              label="Lignes de la facture"
+              columns={LINE_COLUMNS}
+              rows={fields.map((field, i) => {
+                const l = (lignes[i] ?? field) as LigneFacture;
+                const lineErrors = errors.lignes?.[i];
+                const net = netUnitPrice(l.prix_unitaire, l.remise_pct);
+                const qty = Number.isFinite(l.quantite) ? l.quantite : 0;
+                const lineTotal = qty * net;
+                const marginAbs = qty * (net - l.prix_revient);
+                const marginPct = net > 0 ? ((net - l.prix_revient) / net) * 100 : null;
+                const belowCost = isBelowCost(l);
+                const showStockHint = qty > l.stock_dispo && !lineErrors?.quantite;
+                const priceChanged = Number.isFinite(l.prix_unitaire) && l.prix_unitaire !== l.prix_unitaire_default;
+                const qtyDescribedBy =
+                  [lineErrors?.quantite ? `${ID.quantite(i)}-error` : null, showStockHint ? ID.stock(i) : null]
+                    .filter(Boolean)
+                    .join(' ') || undefined;
+                return {
+                  key: field.id,
+                  cells: {
+                    produit: (
+                      <>
+                        <p className="font-medium">{l.produit_nom}</p>
+                        {l.produit_reference && (
+                          <DocumentCode className="block text-xs text-muted-foreground">{l.produit_reference}</DocumentCode>
+                        )}
+                        {showStockHint && (
+                          <p id={ID.stock(i)} className="mt-1 flex items-start gap-1 text-xs text-warning-700">
+                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                            {insufficientStockMessage(l.stock_dispo)}
+                          </p>
+                        )}
+                        {belowCost && (
+                          <p className="mt-1 flex items-start gap-1 text-xs text-warning-700">
+                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                            {canSeeCost
+                              ? 'Prix inférieur au prix de revient.'
+                              : 'Prix inférieur au prix de revient : demandez l’accord d’un gérant avant d’enregistrer.'}
+                          </p>
+                        )}
+                      </>
+                    ),
+                    quantite: (
+                      <>
+                        {/* −/+ sur les cartes (téléphone, gants) ; dans le tableau la saisie suffit et libère la place du total (GV-04). */}
+                        <div className="flex items-center gap-1 group-data-[layout=table]/lines:justify-center">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-9 w-9 shrink-0 group-data-[layout=table]/lines:hidden"
+                            aria-label={lineFieldLabel('Diminuer la quantité', l.produit_nom)}
+                            disabled={qty <= 1}
+                            onClick={() => setQuantity(i, Math.max(1, qty - 1))}
+                          >
+                            <Minus className="h-3.5 w-3.5" aria-hidden="true" />
+                          </Button>
+                          <Controller
+                            control={control}
+                            name={`lignes.${i}.quantite`}
+                            render={({ field: f }) => (
+                              <NumericField
+                                ref={f.ref}
+                                id={ID.quantite(i)}
+                                mode="integer"
+                                value={f.value}
+                                onValueChange={f.onChange}
+                                onBlur={f.onBlur}
+                                aria-label={lineFieldLabel('Quantité', l.produit_nom)}
+                                aria-invalid={lineErrors?.quantite ? true : undefined}
+                                aria-describedby={qtyDescribedBy}
+                                className="h-9 w-14 px-2 text-center group-data-[layout=table]/lines:h-8"
+                              />
+                            )}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-9 w-9 shrink-0 group-data-[layout=table]/lines:hidden"
+                            aria-label={lineFieldLabel('Augmenter la quantité', l.produit_nom)}
+                            onClick={() => setQuantity(i, qty + 1)}
+                          >
+                            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                          </Button>
+                        </div>
+                        <FieldError id={ID.quantite(i)} className="group-data-[layout=table]/lines:max-w-[12rem] group-data-[layout=table]/lines:text-center">
+                          {lineErrors?.quantite?.message}
+                        </FieldError>
+                      </>
+                    ),
+                    prix: (
+                      <>
+                        <Controller
+                          control={control}
+                          name={`lignes.${i}.prix_unitaire`}
+                          render={({ field: f }) => (
+                            <NumericField
+                              ref={f.ref}
+                              id={ID.prix(i)}
+                              mode="decimal"
+                              value={f.value}
+                              onValueChange={f.onChange}
+                              onBlur={f.onBlur}
+                              aria-label={lineFieldLabel('Prix unitaire', l.produit_nom)}
+                              {...fieldErrorProps(ID.prix(i), lineErrors?.prix_unitaire)}
+                              containerClassName="w-full group-data-[layout=table]/lines:ms-auto group-data-[layout=table]/lines:w-32"
+                              className="h-9 group-data-[layout=table]/lines:h-8"
+                            />
+                          )}
+                        />
+                        <FieldError id={ID.prix(i)}>{lineErrors?.prix_unitaire?.message}</FieldError>
+                        {priceChanged && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Prix catalogue : <Money value={l.prix_unitaire_default} />
+                          </p>
+                        )}
+                        {canSeeCost && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Prix de revient : <Money value={l.prix_revient} />
+                          </p>
+                        )}
+                      </>
+                    ),
+                    remise: (
+                      <>
+                        <Controller
+                          control={control}
+                          name={`lignes.${i}.remise_pct`}
+                          render={({ field: f }) => (
+                            <NumericField
+                              ref={f.ref}
+                              id={ID.remise(i)}
+                              mode="decimal"
+                              suffix="%"
+                              value={f.value}
+                              onValueChange={f.onChange}
+                              onBlur={f.onBlur}
+                              aria-label={lineFieldLabel('Remise en %', l.produit_nom)}
+                              {...fieldErrorProps(ID.remise(i), lineErrors?.remise_pct)}
+                              containerClassName="w-full group-data-[layout=table]/lines:ms-auto group-data-[layout=table]/lines:w-20"
+                              className="h-9 pr-7 group-data-[layout=table]/lines:h-8"
+                            />
+                          )}
+                        />
+                        <FieldError id={ID.remise(i)} className="group-data-[layout=table]/lines:max-w-[9rem]">
+                          {lineErrors?.remise_pct?.message}
+                        </FieldError>
+                      </>
+                    ),
+                    total: (
+                      <>
+                        <Money value={lineTotal} className="font-medium" />
+                        {canSeeCost && marginPct !== null && (
+                          <span
+                            className={cn(
+                              'mt-1 block text-xs',
+                              marginAbs < 0 ? 'font-medium text-danger-700' : 'text-muted-foreground'
+                            )}
+                          >
+                            Marge {formatPercent(marginPct, 1)}
+                          </span>
+                        )}
+                      </>
+                    ),
+                    retirer: (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-muted-foreground hover:text-danger-700 group-data-[layout=table]/lines:h-8 group-data-[layout=table]/lines:w-8"
+                        aria-label={`Retirer ${l.produit_nom} de la facture`}
+                        title="Retirer de la facture"
+                        onClick={() => removeLigne(i)}
+                      >
+                        <X className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    ),
+                  },
+                };
+              })}
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Notes */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <Label htmlFor={ID.notes} className="text-base">
+              Notes
+            </Label>
+          </CardTitle>
+          <CardDescription>Facultatif. Notes internes : elles ne sont pas imprimées sur la facture.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Textarea id={ID.notes} rows={3} {...register('notes')} />
+        </CardContent>
+      </Card>
+    </DocumentFormShell>
   );
 }

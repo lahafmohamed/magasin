@@ -1,23 +1,52 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { produitService, tiersService, stockLocationService } from '../services/api';
-import { Produit } from '../types';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useRouteAccess } from '@/hooks/useRouteAccess';
+import { useSearchParamsPatch } from '@/hooks/useUrlState';
+import {
+  AlertTriangle,
+  Barcode,
+  Download,
+  Equal,
+  History,
+  Minus,
+  MoreHorizontal,
+  Package,
+  Pencil,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  Tags,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { caisseService, produitService, stockLocationService, tiersService } from '../services/api';
+import { useAuth } from '@/lib/AuthContext';
+import { PageShell } from '@/components/ui/page-shell';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { MoneyInput } from '@/components/ui/money-input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Pagination } from '@/components/ui/pagination';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { MoneyInput } from '@/components/ui/money-input';
+import { Money } from '@/components/ui/money';
+import { DocumentCode } from '@/components/ui/document-code';
+import { RequiredMark } from '@/components/ui/required-mark';
+import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
+import { ChoiceGroup, ToggleChip } from '@/components/ui/choice-chips';
+import { BulkActionBar } from '@/components/ui/bulk-action-bar';
+import { EmptyState } from '@/components/ui/empty-state';
+import { QueryErrorState } from '@/components/ui/query-state';
 import { LoadingState, Spinner } from '@/components/ui/loading';
-import { QueryState } from '@/components/ui/query-state';
-import { TableSkeleton } from '@/components/ui/skeleton';
-import { SortableHeader, SortState } from '@/components/ui/sortable-header';
-import { useConfirm } from '@/components/ui/confirm-dialog';
+import { ListSkeleton, TableSkeleton } from '@/components/ui/skeleton';
+import { Pagination } from '@/components/ui/pagination';
+import { ResponsiveTable } from '@/components/ui/responsive-table';
+import { SortableHeader, type SortState } from '@/components/ui/sortable-header';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,12 +54,68 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-
-import { Plus, Search, Pencil, Trash2, AlertCircle, XCircle, Package, Download, Filter, History, Clock, ArrowUpCircle, ArrowDownCircle, RefreshCw, MoreVertical } from 'lucide-react';
-import { toast } from 'sonner';
-import { formatCurrency, normalizeSearch } from '@/utils/format';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { cn } from '@/lib/utils';
 import { downloadCsv } from '@/utils/csv';
 import { getErrorMessage } from '@/utils/errors';
+import {
+  MINUS,
+  formatDate,
+  formatDateTime,
+  formatNumber,
+  formatPercent,
+  normalizeSearch,
+  toNumber,
+} from '@/utils/format';
+import { canSeePrices } from '@/utils/roles';
+
+// ---------------------------------------------------------------------------
+// Rôles — miroir des `authorize(...)` de backend/src/routes/produits.ts : un
+// contrôle que l'API refuserait n'est pas proposé (U-13).
+// ---------------------------------------------------------------------------
+const WRITE_ROLES = ['admin', 'manager', 'depot_staff'];
+/**
+ * Créer un produit, c'est fixer son prix : réservé aux responsables (E2 —
+ * `POST /produits` refusé au personnel dépôt, qui ajuste et corrige le stock).
+ */
+const CREATE_ROLES = ['admin', 'manager'];
+const DELETE_ROLES = ['admin', 'manager'];
+/** Prix de revient et marge : jamais sur un écran de comptoir (U-26). */
+const COST_ROLES = ['admin', 'manager'];
+/**
+ * Fournisseur, prix d'achat et meilleur client d'un produit : métier des
+ * achats, réservé aux responsables. Le personnel dépôt voit des quantités
+ * seulement (E2, 2026-10-24) — ni prix, ni client.
+ */
+const PURCHASE_INFO_ROLES = ['admin', 'manager'];
+
+/** Valeur du filtre « Tous les emplacements » (paramètre d'URL `location_id`). */
+const ALL_LOCATIONS = 'tous';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+interface InventoryProduct {
+  id: number;
+  reference: string;
+  nom: string;
+  code_barre: string | null;
+  description: string | null;
+  categorie: string | null;
+  prix_achat: number;
+  prix_vente: number;
+  /** Stock à l'emplacement filtré, ou tous emplacements confondus. */
+  stock: number;
+  stock_min: number;
+  /**
+   * `GET /produits?location_id=X` : le produit a-t-il une ligne de stock à
+   * cet emplacement ? `false` = jamais stocké ici (pas une rupture) ; `null`
+   * quand l'API ne le dit pas (tous emplacements, ancienne API).
+   */
+  stocke_ici: boolean | null;
+}
+
+type RawRecord = Record<string, unknown>;
 
 interface StockLocation {
   id: number;
@@ -38,1424 +123,2181 @@ interface StockLocation {
   nom: string;
   actif: boolean;
   est_principal: boolean;
+  location_type?: 'depot' | 'magasin' | null;
 }
 
+interface MagasinRow {
+  location_id: number | null;
+}
+
+interface StockLevelRow {
+  produit_id: number;
+  quantite: number | string;
+}
+
+interface StockMovement {
+  id: number;
+  type_mouvement: string;
+  quantite: number | string;
+  stock_avant: number | string | null;
+  stock_apres: number | string | null;
+  raison: string | null;
+  reference_liee?: string | null;
+  location_id: number | null;
+  date_mouvement: string;
+}
+
+interface PurchaseLine {
+  fournisseur: string | null;
+  numero: string | null;
+  date: string | null;
+  prix_unitaire: number;
+  quantite: number | string;
+}
+
+interface PurchaseInfo {
+  default_supplier: { id: number; raison_sociale: string; telephone: string | null; email: string | null } | null;
+  prix_achat: number;
+  price_stats: { total_achats: number; prix_min: number; prix_max: number; prix_moyen: number } | null;
+  recent_purchase: { prix_unitaire: number; fournisseur: string | null; source: string; date: string | null } | null;
+  purchase_history: PurchaseLine[];
+  order_history: PurchaseLine[];
+  top_buyer: {
+    raison_sociale: string;
+    prenom: string | null;
+    telephone: string | null;
+    total_quantite: number;
+    total_depense: number;
+    nombre_factures: number;
+  } | null;
+}
+
+interface FournisseurOption {
+  id: number;
+  raison_sociale: string;
+}
+
+type SortKey = 'reference' | 'nom' | 'categorie' | 'prix_vente' | 'stock';
+type AdjustMode = 'ajouter' | 'retirer' | 'fixer';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const num = (value: unknown): number => toNumber(value as number | string | null | undefined) ?? 0;
+
+function toProduct(raw: RawRecord): InventoryProduct {
+  return {
+    id: Number(raw.id),
+    reference: String(raw.reference ?? ''),
+    nom: String(raw.nom ?? ''),
+    code_barre: typeof raw.code_barre === 'string' && raw.code_barre ? raw.code_barre : null,
+    description: typeof raw.description === 'string' ? raw.description : null,
+    categorie: typeof raw.categorie === 'string' && raw.categorie ? raw.categorie : null,
+    prix_achat: num(raw.prix_achat),
+    prix_vente: num(raw.prix_vente),
+    stock: Math.trunc(num(raw.stock)),
+    stock_min: Math.trunc(num(raw.stock_min)),
+    stocke_ici: typeof raw.stocke_ici === 'boolean' ? raw.stocke_ici : null,
+  };
+}
+
+/** Pluriel français : 0 et 1 au singulier. */
+const plural = (n: number, one: string, many: string) => `${formatNumber(n)} ${n > 1 ? many : one}`;
+
+/** Marge sur prix de revient, en % ; `null` quand le prix de revient ou de vente manque. */
+function marginPercent(p: InventoryProduct): number | null {
+  if (p.prix_achat <= 0 || p.prix_vente <= 0) return null;
+  return ((p.prix_vente - p.prix_achat) / p.prix_achat) * 100;
+}
+
+/** Libellés des types de mouvement (`mouvements_stock.type_mouvement`). */
+const MOVEMENT_LABELS: Record<string, string> = {
+  vente: 'Vente',
+  retour: 'Retour client',
+  ajustement: 'Ajustement',
+  commande: 'Réception fournisseur',
+  perte: 'Perte',
+  transfert: 'Transfert',
+  autre: 'Autre mouvement',
+};
+
+/** Fournisseur par défaut d'un produit (absent de la liste : fiche complète). */
+async function fetchProduitFournisseurId(produitId: number): Promise<number | null> {
+  const produit = await produitService.getById(produitId);
+  return toNumber(produit?.fournisseur_id ?? null);
+}
+
+// ---------------------------------------------------------------------------
+// Niveau de stock : le mot, pas seulement la couleur (VB-INV-01).
+// ---------------------------------------------------------------------------
+function StockLevel({
+  stock,
+  stockMin,
+  notStockedHere = false,
+}: {
+  stock: number;
+  stockMin: number;
+  /** Aucun stock tenu à l'emplacement filtré : pas une rupture (G-STOCK-01). */
+  notStockedHere?: boolean;
+}) {
+  if (notStockedHere && stock <= 0) {
+    return <span className="whitespace-nowrap text-sm text-muted-foreground">Non stocké ici</span>;
+  }
+  if (stock <= 0) {
+    return <Badge variant="destructive">Rupture</Badge>;
+  }
+  if (stock <= stockMin) {
+    // Pastille d'abord, chiffre en dernier : les chiffres restent alignés sur
+    // le bord droit de la colonne, comme ceux des autres lignes.
+    return (
+      <span className="inline-flex items-center justify-end gap-2 whitespace-nowrap">
+        <Badge variant="warning">Stock bas</Badge>
+        <span className="font-medium tabular-nums text-warning-700">{formatNumber(stock)}</span>
+      </span>
+    );
+  }
+  return <span className="font-medium tabular-nums">{formatNumber(stock)}</span>;
+}
+
+// ===========================================================================
+// Page
+// ===========================================================================
 export default function Inventaire() {
+  const { user } = useAuth();
+  const role = user?.role ?? '';
+  const canWrite = WRITE_ROLES.includes(role);
+  const canCreate = CREATE_ROLES.includes(role);
+  const canDelete = DELETE_ROLES.includes(role);
+  const canSeeCost = COST_ROLES.includes(role);
+  const canSeePurchaseInfo = PURCHASE_INFO_ROLES.includes(role);
+  /** Prix de vente : tout le monde sauf le personnel dépôt (E2). */
+  const canSeeSalePrice = canSeePrices(role);
   const confirm = useConfirm();
-  const [produits, setProduits] = useState<Produit[]>([]);
-  const [search, setSearch] = useState('');
-  const [showForm, setShowForm] = useState(false);
-  const [editingProduit, setEditingProduit] = useState<Produit | null>(null);
-  const [lowStockOnly, setLowStockOnly] = useState(false);
+  const navigate = useNavigate();
+  const canOpen = useRouteAccess();
   const [searchParams] = useSearchParams();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<unknown>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [deleting, setDeleting] = useState<number | null>(null);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [produitToDelete, setProduitToDelete] = useState<Produit | null>(null);
-  
-  // Stock history
-  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
-  const [selectedProductForHistory, setSelectedProductForHistory] = useState<Produit | null>(null);
-  const [stockHistory, setStockHistory] = useState<any[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
-  
-  // Purchase info (supplier, price, top buyer)
-  const [purchaseInfoDialogOpen, setPurchaseInfoDialogOpen] = useState(false);
-  const [selectedProductForPurchaseInfo, setSelectedProductForPurchaseInfo] = useState<Produit | null>(null);
-  const [purchaseInfo, setPurchaseInfo] = useState<any>(null);
-  const [loadingPurchaseInfo, setLoadingPurchaseInfo] = useState(false);
-  
-  // Bulk selection
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  
-  // Bulk operations state
-  const [bulkAdjustQuantity, setBulkAdjustQuantity] = useState('');
-  const [bulkAdjustType, setBulkAdjustType] = useState<'add' | 'subtract' | 'set'>('add');
-  const [bulkCategory, setBulkCategory] = useState('');
-  
-  // Category filter
-  const [categorieFilter, setCategorieFilter] = useState<string>('all');
-  const [categories, setCategories] = useState<string[]>([]);
-  
-  // Fournisseurs
-  const [fournisseurs, setFournisseurs] = useState<any[]>([]);
-  const [stockLocations, setStockLocations] = useState<StockLocation[]>([]);
-  const [selectedAdjustLocationId, setSelectedAdjustLocationId] = useState<string>('');
-  
-  // Pagination & Sorting — default 50/page so the row virtualizer (windowed
-  // rendering below) actually earns its keep on large catalogs; the page-size
-  // selector still offers 10/20/50/100.
+  const patchParams = useSearchParamsPatch();
+
+  // --- Filtres -------------------------------------------------------------
+  const urlSearch = searchParams.get('search') ?? '';
+  const [search, setSearch] = useState(urlSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(normalizeSearch(urlSearch));
+  const [lowStockOnly, setLowStockOnly] = useState(searchParams.get('low_stock') === 'true');
+  const [categorieFilter, setCategorieFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(50);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
-  const [sort, setSort] = useState('nom');
-  const [order, setOrder] = useState('asc');
+  const [sort, setSort] = useState<SortState<SortKey>>({ key: 'nom', dir: 'asc' });
 
-  const [formData, setFormData] = useState({
-    reference: '',
-    nom: '',
-    code_barre: '',
-    description: '',
-    categorie: '',
-    prix_achat: 0,
-    prix_vente: 0,
-    stock: 0,
-    initial_stock: 0,
-    location_id: '',
-    stock_min: 5,
-    fournisseur_id: null as number | null,
-  });
+  // --- Emplacements et emplacement de l'utilisateur (U-22) ---------------
+  const [locations, setLocations] = useState<StockLocation[]>([]);
+  const [locationsError, setLocationsError] = useState<unknown>(null);
+  const [locationsReady, setLocationsReady] = useState(false);
+  const [userLocationId, setUserLocationId] = useState<string | null>(null);
 
-  // Debounced search
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  
+  const loadLocations = useCallback(async () => {
+    setLocationsError(null);
+    let active: StockLocation[] = [];
+    try {
+      const response: unknown = await stockLocationService.getAll();
+      const rows = (Array.isArray(response) ? response : (response as { data?: unknown })?.data) as
+        | StockLocation[]
+        | undefined;
+      active = (rows ?? []).filter((l) => l.actif);
+      setLocations(active);
+    } catch (err) {
+      setLocationsError(err);
+      setLocations([]);
+    }
+
+    // L'emplacement « à soi » : le magasin de la caisse pour le personnel de
+    // magasin, le dépôt pour le personnel dépôt. Les responsables voient tout.
+    let own: string | null = null;
+    if (role === 'magasin_staff' || role === 'caissier') {
+      try {
+        const magasins = (await caisseService.getMagasins()) as MagasinRow[];
+        const match = magasins.find((m) => m.location_id && active.some((l) => l.id === m.location_id));
+        own = match?.location_id ? String(match.location_id) : null;
+      } catch {
+        own = null;
+      }
+    } else if (role === 'depot_staff') {
+      const depot = active.find((l) => l.location_type === 'depot');
+      own = depot ? String(depot.id) : null;
+    }
+    setUserLocationId(own);
+    setLocationsReady(true);
+  }, [role]);
+
+  useEffect(() => {
+    void loadLocations();
+  }, [loadLocations]);
+
+  // `location_id` : liens du tableau de bord (« Stock bas » de son magasin ou
+  // du dépôt) ; `emplacement` : ancien nom du paramètre, encore lu.
+  const urlLocation = searchParams.get('location_id') ?? searchParams.get('emplacement');
+  const locationFilter: string | null = useMemo(() => {
+    if (urlLocation === ALL_LOCATIONS) return ALL_LOCATIONS;
+    if (urlLocation) {
+      // Lien périmé vers un emplacement inactif : on retombe sur tous.
+      if (locationsReady && !locations.some((l) => String(l.id) === urlLocation)) return ALL_LOCATIONS;
+      return urlLocation;
+    }
+    if (!locationsReady) return null;
+    return userLocationId ?? ALL_LOCATIONS;
+  }, [urlLocation, locationsReady, locations, userLocationId]);
+
+  const setLocationFilter = (value: string) => {
+    patchParams({ location_id: value, emplacement: null });
+    setPage(1);
+  };
+
+  /** Filtre « Stock bas », gardé dans l'adresse comme le lien du tableau de bord qui l'active. */
+  const setLowStockFilter = (on: boolean) => {
+    setLowStockOnly(on);
+    patchParams({ low_stock: on ? 'true' : null });
+    setPage(1);
+  };
+
+  const locationName = useCallback(
+    (id: string | number | null | undefined) => locations.find((l) => String(l.id) === String(id))?.nom ?? null,
+    [locations]
+  );
+
+  /** Emplacement proposé par défaut pour un ajustement ou un stock initial. */
+  const defaultWriteLocationId =
+    (locationFilter && locationFilter !== ALL_LOCATIONS ? locationFilter : null) ??
+    userLocationId ??
+    (locations.find((l) => l.est_principal) ?? locations[0])?.id?.toString() ??
+    '';
+
+  // Lien profond (recherche globale Ctrl+K, tableau de bord « Stock bas »).
+  useEffect(() => {
+    if (!urlSearch) return;
+    setSearch(urlSearch);
+    setDebouncedSearch(normalizeSearch(urlSearch));
+    setPage(1);
+  }, [urlSearch]);
+  const urlLowStock = searchParams.get('low_stock') === 'true';
+  useEffect(() => {
+    if (urlLowStock) setLowStockOnly(true);
+  }, [urlLowStock]);
+
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearch(normalizeSearch(search));
+      const next = normalizeSearch(search);
+      if (next !== debouncedSearch) {
+        setDebouncedSearch(next);
+        setPage(1);
+      }
     }, 300);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, debouncedSearch]);
 
-  useEffect(() => {
-    if (searchParams.get('low_stock') === 'true') {
-      setLowStockOnly(true);
-    }
-    // Deep-link depuis la recherche globale (Ctrl+K) : ?search=<référence>
-    const q = searchParams.get('search');
-    if (q) {
-      setSearch(q);
-      setDebouncedSearch(normalizeSearch(q));
-    }
-  }, [searchParams]);
+  const hasFilters = search.trim() !== '' || lowStockOnly || categorieFilter !== 'all';
+  const clearFilters = () => {
+    setSearch('');
+    setDebouncedSearch('');
+    setLowStockOnly(false);
+    setCategorieFilter('all');
+    setPage(1);
+    // Sinon un rafraîchissement rendrait la recherche ou le stock bas du lien d'arrivée.
+    patchParams({ search: null, low_stock: null });
+  };
 
+  // --- Catégories (liste complète, pas seulement la page affichée) --------
+  const [categories, setCategories] = useState<string[]>([]);
   useEffect(() => {
-    loadStockLocations();
+    let ignore = false;
+    produitService
+      .getStockByCategory()
+      .then((rows: unknown) => {
+        if (ignore || !Array.isArray(rows)) return;
+        const names = (rows as RawRecord[])
+          .map((r) => (typeof r.categorie === 'string' ? r.categorie : ''))
+          .filter((c) => c && c !== 'Sans catégorie');
+        setCategories((prev) => [...new Set([...prev, ...names])].sort((a, b) => a.localeCompare(b, 'fr')));
+      })
+      .catch(() => {
+        /* Repli : les catégories des produits chargés (ci-dessous). */
+      });
+    return () => {
+      ignore = true;
+    };
   }, []);
 
-  useEffect(() => {
-    if (showForm) {
-      tiersService.getAll({ role: 'fournisseur', limit: 200 })
-        .then((response) => {
-          const fournisseursList = Array.isArray(response)
-            ? response
-            : Array.isArray(response?.data)
-              ? response.data
-              : [];
-          setFournisseurs(fournisseursList);
-        })
-        .catch((error) => {
-          console.error('Erreur chargement fournisseurs:', error);
-          setFournisseurs([]);
-        });
-      loadStockLocations();
-    }
-  }, [showForm]);
+  // --- Produits ------------------------------------------------------------
+  const [produits, setProduits] = useState<InventoryProduct[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  const getDefaultLocationId = (locations: StockLocation[]): string => {
-    const activeLocations = locations.filter((location) => location.actif);
-    const principal = activeLocations.find((location) => location.est_principal);
-    if (principal) return String(principal.id);
-    if (activeLocations[0]) return String(activeLocations[0].id);
-    return '';
-  };
-
-  const loadStockLocations = async () => {
-    try {
-      const response = await stockLocationService.getAll();
-      const locations = (response.data || response || []) as StockLocation[];
-      const activeLocations = locations.filter((location) => location.actif);
-      setStockLocations(activeLocations);
-
-      const defaultLocation = getDefaultLocationId(activeLocations);
-      if (!selectedAdjustLocationId && defaultLocation) {
-        setSelectedAdjustLocationId(defaultLocation);
-      }
-
-      setFormData((prev) => {
-        if (prev.location_id || !defaultLocation) return prev;
-        return { ...prev, location_id: defaultLocation };
-      });
-    } catch (error) {
-      console.error('Erreur chargement locations:', error);
-    }
-  };
+  const locationParam = locationFilter && locationFilter !== ALL_LOCATIONS ? Number(locationFilter) : undefined;
 
   const loadProduits = useCallback(async () => {
+    if (locationFilter === null) return;
     setLoading(true);
     setError(null);
+    setSelected(new Set());
     try {
-      const categorie = categorieFilter === 'all' ? undefined : categorieFilter;
-      const locationId = selectedAdjustLocationId ? parseInt(selectedAdjustLocationId, 10) : undefined;
-      const response = await produitService.getAll(debouncedSearch, categorie, lowStockOnly, page, limit, sort, order, locationId);
-      const produitsData = response?.data ?? response ?? [];
-      setProduits(Array.isArray(produitsData) ? produitsData : []);
-      setTotal(response.pagination?.total ?? 0);
-      setTotalPages(response.pagination?.totalPages ?? 0);
-
-      // Extract categories from data
-      const cats = [...new Set((Array.isArray(produitsData) ? produitsData : []).map((p: Produit) => p.categorie).filter(Boolean))] as string[];
-      setCategories(cats);
+      const response = (await produitService.getAll(
+        debouncedSearch || undefined,
+        categorieFilter === 'all' ? undefined : categorieFilter,
+        lowStockOnly,
+        page,
+        limit,
+        sort.key,
+        sort.dir,
+        locationParam
+      )) as { data?: RawRecord[]; pagination?: { total?: number; totalPages?: number } } | RawRecord[];
+      const rows = Array.isArray(response) ? response : response?.data ?? [];
+      const list = rows.map(toProduct);
+      setProduits(list);
+      const pagination = Array.isArray(response) ? undefined : response?.pagination;
+      setTotal(pagination?.total ?? list.length);
+      setTotalPages(pagination?.totalPages ?? (list.length > 0 ? 1 : 0));
+      setCategories((prev) => {
+        const fromPage = list.map((p) => p.categorie).filter((c): c is string => !!c);
+        const merged = [...new Set([...prev, ...fromPage])];
+        return merged.length === prev.length ? prev : merged.sort((a, b) => a.localeCompare(b, 'fr'));
+      });
     } catch (err) {
       setError(err);
       setProduits([]);
       setTotal(0);
       setTotalPages(0);
-      toast.error(getErrorMessage(err, 'Erreur lors du chargement des produits'));
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, lowStockOnly, categorieFilter, page, limit, sort, order, selectedAdjustLocationId]);
+  }, [locationFilter, debouncedSearch, categorieFilter, lowStockOnly, page, limit, sort.key, sort.dir, locationParam]);
 
   useEffect(() => {
-    loadProduits();
+    void loadProduits();
   }, [loadProduits]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submitting) return; // guard against double-submit (duplicate product)
-
-    const reference = formData.reference.trim();
-    const nom = formData.nom.trim();
-
-    if (!reference) {
-      toast.error('La référence est obligatoire');
-      return;
-    }
-    if (!nom) {
-      toast.error('Le nom du produit est obligatoire');
-      return;
-    }
-    if (!Number.isFinite(formData.prix_achat) || formData.prix_achat < 0) {
-      toast.error("Le prix d'achat doit être un nombre positif ou nul");
-      return;
-    }
-    if (!Number.isFinite(formData.prix_vente) || formData.prix_vente < 0) {
-      toast.error('Le prix de vente doit être un nombre positif ou nul');
-      return;
-    }
-    if (!Number.isFinite(formData.stock_min) || formData.stock_min < 0) {
-      toast.error('Le stock minimum doit être un nombre positif ou nul');
-      return;
-    }
-    const quantite = editingProduit ? formData.stock : formData.initial_stock;
-    if (!Number.isFinite(quantite) || quantite < 0) {
-      toast.error('Le stock doit être un nombre positif ou nul');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      if (editingProduit) {
-        await produitService.update(editingProduit.id, {
-          reference,
-          nom,
-          code_barre: formData.code_barre.trim(),
-          description: formData.description,
-          categorie: formData.categorie,
-          prix_achat: formData.prix_achat,
-          prix_vente: formData.prix_vente,
-          stock: formData.stock,
-          stock_min: formData.stock_min,
-          fournisseur_id: formData.fournisseur_id,
-        });
-      } else {
-        await produitService.create({
-          reference,
-          nom,
-          code_barre: formData.code_barre.trim(),
-          description: formData.description,
-          categorie: formData.categorie,
-          prix_achat: formData.prix_achat,
-          prix_vente: formData.prix_vente,
-          stock: formData.initial_stock,
-          initial_stock: formData.initial_stock,
-          location_id: formData.location_id ? parseInt(formData.location_id, 10) : undefined,
-          stock_min: formData.stock_min,
-          fournisseur_id: formData.fournisseur_id,
-        });
-      }
-      resetForm();
-      loadProduits();
-      toast.success(editingProduit ? 'Produit modifié avec succès' : 'Produit ajouté avec succès');
-    } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur lors de l\'enregistrement'));
-    } finally {
-      setSubmitting(false);
-    }
+  const handleSort = (key: SortKey) => {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
+    setPage(1);
   };
 
-  const handleEdit = (produit: Produit) => {
-    setEditingProduit(produit);
-    setFormData({
-      reference: produit.reference,
-      nom: produit.nom,
-      code_barre: produit.code_barre || '',
-      description: produit.description || '',
-      categorie: produit.categorie || '',
-      prix_achat: parseFloat(produit.prix_achat as any) || 0,
-      prix_vente: parseFloat(produit.prix_vente as any) || 0,
-      stock: typeof produit.stock === 'string' ? parseInt(produit.stock) : produit.stock,
-      initial_stock: 0,
-      location_id: getDefaultLocationId(stockLocations),
-      stock_min: typeof produit.stock_min === 'string' ? parseInt(produit.stock_min) : produit.stock_min,
-      fournisseur_id: (produit as any).fournisseur_id || null,
+  // --- Sélection -----------------------------------------------------------
+  const allSelected = produits.length > 0 && produits.every((p) => selected.has(p.id));
+  const someSelected = produits.some((p) => selected.has(p.id));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(produits.map((p) => p.id)));
+  const toggleOne = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
     });
-    setShowForm(true);
-  };
+  const selectedProducts = produits.filter((p) => selected.has(p.id));
 
-  const handleDeleteClick = (produit: Produit) => {
-    setProduitToDelete(produit);
-    setDeleteDialogOpen(true);
-  };
+  // --- Dialogues -----------------------------------------------------------
+  const [adjustTargets, setAdjustTargets] = useState<InventoryProduct[] | null>(null);
+  const [formState, setFormState] = useState<{ mode: 'create' } | { mode: 'edit'; produit: InventoryProduct } | null>(
+    null
+  );
+  const [historyProduct, setHistoryProduct] = useState<InventoryProduct | null>(null);
+  const [purchaseProduct, setPurchaseProduct] = useState<InventoryProduct | null>(null);
+  const [categoryTargets, setCategoryTargets] = useState<InventoryProduct[] | null>(null);
 
-  const confirmDelete = async () => {
-    if (!produitToDelete) return;
-    setDeleting(produitToDelete.id);
-    try {
-      await produitService.delete(produitToDelete.id);
-      loadProduits();
-      toast.success('Produit supprimé avec succès');
-    } catch (err) {
-      toast.error(getErrorMessage(err, 'Ce produit est peut-être lié à des factures'));
-    } finally {
-      setDeleting(null);
-      setDeleteDialogOpen(false);
-      setProduitToDelete(null);
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    if (selectedIds.length === 0) return;
-    if (!(await confirm({ title: `Supprimer ${selectedIds.length} produit(s) ?`, description: 'Cette action est irréversible.', confirmLabel: 'Supprimer', destructive: true }))) return;
-    
-    let successCount = 0;
-    for (const id of selectedIds) {
-      try {
-        await produitService.delete(id);
-        successCount++;
-      } catch {
-        // Continue with others
-      }
-    }
-    
-    if (successCount > 0) {
-      toast.success(`${successCount} produit(s) supprimé(s) avec succès`);
-      setSelectedIds([]);
-      loadProduits();
-    }
-  };
-
-  const handleBulkStockAdjust = async () => {
-    if (selectedIds.length === 0 || !bulkAdjustQuantity) return;
-    
-    const quantity = parseInt(bulkAdjustQuantity);
-    if (isNaN(quantity) || quantity < 0) {
-      toast.error('Veuillez entrer une quantité valide');
-      return;
-    }
-
-    const locationId = selectedAdjustLocationId ? parseInt(selectedAdjustLocationId, 10) : undefined;
-    let successCount = 0;
-
-    for (const id of selectedIds) {
-      try {
-        let delta = quantity;
-        if (bulkAdjustType === 'subtract') delta = -quantity;
-        if (bulkAdjustType === 'set') {
-          // For set operation, we need to get current stock first
-          const product = produits.find(p => p.id === id);
-          if (product) {
-            const currentStock = typeof product.stock === 'string' ? parseInt(product.stock) : product.stock;
-            delta = quantity - currentStock;
-          }
-        }
-        
-        await produitService.adjustStock(id, delta, locationId);
-        successCount++;
-      } catch (error) {
-        console.error(`Failed to adjust stock for product ${id}:`, error);
-      }
-    }
-
-    if (successCount > 0) {
-      const operation = bulkAdjustType === 'add' ? 'ajouté(s)' : bulkAdjustType === 'subtract' ? 'retiré(s)' : 'défini(s)';
-      toast.success(`Stock ${operation} pour ${successCount} produit(s) avec succès`);
-      setBulkAdjustQuantity('');
-      setSelectedIds([]);
-      loadProduits();
-    }
-  };
-
-  const handleBulkCategoryChange = async () => {
-    if (selectedIds.length === 0 || !bulkCategory) return;
-
-    let successCount = 0;
-    for (const id of selectedIds) {
-      try {
-        await produitService.update(id, { categorie: bulkCategory });
-        successCount++;
-      } catch (error) {
-        console.error(`Failed to update category for product ${id}:`, error);
-      }
-    }
-
-    if (successCount > 0) {
-      toast.success(`Catégorie changée pour ${successCount} produit(s) avec succès`);
-      setBulkCategory('');
-      setSelectedIds([]);
-      loadProduits();
-    }
-  };
-
-  const resetForm = () => {
-    const defaultLocation = getDefaultLocationId(stockLocations);
-    setShowForm(false);
-    setEditingProduit(null);
-    setFormData({
-      reference: '',
-      nom: '',
-      code_barre: '',
-      description: '',
-      categorie: '',
-      prix_achat: 0,
-      prix_vente: 0,
-      stock: 0,
-      initial_stock: 0,
-      location_id: defaultLocation,
-      stock_min: 5,
-      fournisseur_id: null,
+  // --- Suppression ----------------------------------------------------------
+  const deleteOne = async (p: InventoryProduct) => {
+    const ok = await confirm({
+      title: `Supprimer « ${p.nom} » ?`,
+      description:
+        'Le produit disparaîtra du catalogue et ne pourra plus être vendu ni commandé. Les factures et commandes existantes ne changent pas.',
+      confirmLabel: 'Supprimer le produit',
+      destructive: true,
     });
-  };
-
-  const getStockBadge = (stock: number, stock_min: number) => {
-    if (stock <= 0) {
-      return <Badge variant="destructive" className="gap-1"><XCircle className="h-3 w-3" /> Rupture</Badge>;
-    }
-    const color = stock <= stock_min ? 'text-warning' : 'text-foreground';
-    return <span className={`num font-semibold ${color}`}>{stock}</span>;
-  };
-
-  const handleSort = (column: string) => {
-    if (sort === column) {
-      setOrder(order === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSort(column);
-      setOrder('asc');
-    }
-  };
-
-  const toggleSelection = (id: number) => {
-    setSelectedIds(prev => 
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-    );
-  };
-
-  const selectAll = () => {
-    if (selectedIds.length === produits.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(produits.map(p => p.id));
-    }
-  };
-
-
-
-  const openHistory = async (produit: Produit) => {
-    setSelectedProductForHistory(produit);
-    setHistoryDialogOpen(true);
-    setLoadingHistory(true);
+    if (!ok) return;
     try {
-      const history = await produitService.getStockHistory(produit.id, 50);
-      setStockHistory(history ?? []);
+      await produitService.delete(p.id);
+      toast.success(`Produit « ${p.nom} » supprimé`);
+      void loadProduits();
     } catch (err) {
-      setStockHistory([]);
-      toast.error(getErrorMessage(err, 'Erreur lors du chargement de l\'historique'));
-    } finally {
-      setLoadingHistory(false);
+      toast.error(getErrorMessage(err, 'Impossible de supprimer le produit.'));
     }
   };
 
-  const openPurchaseInfo = async (produit: Produit) => {
-    setSelectedProductForPurchaseInfo(produit);
-    setPurchaseInfoDialogOpen(true);
-    setLoadingPurchaseInfo(true);
-    setPurchaseInfo(null);
+  const deleteSelected = async () => {
+    const targets = selectedProducts;
+    if (targets.length === 0) return;
+    const n = targets.length;
+    const ok = await confirm({
+      title: n > 1 ? `Supprimer ${formatNumber(n)} produits ?` : `Supprimer « ${targets[0].nom} » ?`,
+      description:
+        n > 1
+          ? 'Les produits disparaîtront du catalogue et ne pourront plus être vendus ni commandés. Les factures et commandes existantes ne changent pas.'
+          : 'Le produit disparaîtra du catalogue et ne pourra plus être vendu ni commandé. Les factures et commandes existantes ne changent pas.',
+      confirmLabel: n > 1 ? `Supprimer les ${formatNumber(n)} produits` : 'Supprimer le produit',
+      destructive: true,
+    });
+    if (!ok) return;
+    let done = 0;
+    let firstError: string | null = null;
+    for (const p of targets) {
+      try {
+        await produitService.delete(p.id);
+        done++;
+      } catch (err) {
+        firstError ??= getErrorMessage(err, `Impossible de supprimer « ${p.nom} ».`);
+      }
+    }
+    if (done > 0) toast.success(done > 1 ? `${formatNumber(done)} produits supprimés` : '1 produit supprimé');
+    const failed = n - done;
+    if (failed > 0) {
+      toast.error(
+        `${failed > 1 ? `${formatNumber(failed)} suppressions ont échoué` : 'Une suppression a échoué'} : ${firstError}`
+      );
+    }
+    void loadProduits();
+  };
+
+  // --- Export CSV (U-26 : coût et marge réservés aux responsables) --------
+  const [exporting, setExporting] = useState(false);
+  const exportToCSV = async () => {
+    if (locationFilter === null) return;
+    setExporting(true);
     try {
-      const info = await produitService.getPurchaseInfo(produit.id);
-      setPurchaseInfo(info);
-    } catch (err) {
-      toast.error(getErrorMessage(err, 'Erreur lors du chargement des informations d\'achat'));
-    } finally {
-      setLoadingPurchaseInfo(false);
-    }
-  };
-
-  const exportToCSV = () => {
-    const headers = ['Référence', 'Code-barres', 'Nom', 'Catégorie', 'Prix Achat', 'Prix Vente', 'Marge', 'Stock', 'Stock Min'];
-    const rows = produits.map(p => {
-      const prixAchat = parseFloat(p.prix_achat as any) || 0;
-      const prixVente = parseFloat(p.prix_vente as any) || 0;
-      const marge = prixVente - prixAchat;
-      const margePercent = prixAchat > 0 ? ((marge / prixAchat) * 100).toFixed(1) : '0';
-      return [
-        p.reference,
-        p.code_barre || '',
-        p.nom,
-        p.categorie || '',
-        prixAchat.toFixed(2),
-        prixVente.toFixed(2),
-        `${margePercent}%`,
-        typeof p.stock === 'string' ? parseInt(p.stock) : p.stock,
-        typeof p.stock_min === 'string' ? parseInt(p.stock_min) : p.stock_min,
+      const response = (await produitService.getAll(
+        debouncedSearch || undefined,
+        categorieFilter === 'all' ? undefined : categorieFilter,
+        lowStockOnly,
+        1,
+        1000,
+        sort.key,
+        sort.dir,
+        locationParam
+      )) as { data?: RawRecord[] } | RawRecord[];
+      const rows = (Array.isArray(response) ? response : response?.data ?? []).map(toProduct);
+      const headers = [
+        'Référence',
+        'Code-barres',
+        'Nom',
+        'Catégorie',
+        ...(canSeeCost ? ['Prix d’achat'] : []),
+        ...(canSeeSalePrice ? ['Prix de vente'] : []),
+        ...(canSeeCost ? ['Marge'] : []),
+        'Stock',
+        'Stock minimum',
       ];
-    });
-    
-    downloadCsv(`inventaire_${new Date().toISOString().split('T')[0]}.csv`, headers, rows);
-    toast.success('Export CSV réussi');
+      const lines = rows.map((p) => {
+        const marge = marginPercent(p);
+        return [
+          p.reference,
+          p.code_barre ?? '',
+          p.nom,
+          p.categorie ?? '',
+          ...(canSeeCost ? [p.prix_achat.toFixed(2)] : []),
+          ...(canSeeSalePrice ? [p.prix_vente.toFixed(2)] : []),
+          ...(canSeeCost ? [marge === null ? '' : formatPercent(marge, 1)] : []),
+          p.stock,
+          p.stock_min,
+        ];
+      });
+      downloadCsv(`inventaire_${new Date().toISOString().split('T')[0]}.csv`, headers, lines);
+      toast.success('Fichier CSV téléchargé');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Impossible d’exporter en CSV. Réessayez.'));
+    } finally {
+      setExporting(false);
+    }
   };
 
-  const sortState: SortState<'reference' | 'nom' | 'categorie' | 'prix_vente' | 'stock'> = {
-    key: sort as 'reference' | 'nom' | 'categorie' | 'prix_vente' | 'stock',
-    dir: order === 'desc' ? 'desc' : 'asc',
-  };
-
-  // --- Virtualization of the product table rows ---
-  const tableScrollRef = useRef<HTMLDivElement>(null);
-  const rowVirtualizer = useVirtualizer({
-    count: produits.length,
-    getScrollElement: () => tableScrollRef.current,
-    estimateSize: () => 48, // estimated row height in px (refined via measureElement)
-    overscan: 10,
-  });
-  const virtualRows = rowVirtualizer.getVirtualItems();
-  const totalSize = rowVirtualizer.getTotalSize();
-  const paddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
-  const paddingBottom =
-    virtualRows.length > 0 ? totalSize - virtualRows[virtualRows.length - 1].end : 0;
-
-  const renderProductRow = (p: Produit, index: number) => {
-    const prixVente = parseFloat(p.prix_vente as any) || 0;
-    const prixAchat = parseFloat(p.prix_achat as any) || 0;
-    const marge = prixVente - prixAchat;
-    const margeNum = prixVente > 0 && prixAchat > 0 ? (marge / prixAchat) * 100 : null;
-    const stock = typeof p.stock === 'string' ? parseInt(p.stock) : p.stock;
-    const stockMin = typeof p.stock_min === 'string' ? parseInt(p.stock_min) : p.stock_min;
-
-    return (
-      <TableRow
-        key={p.id}
-        data-index={index}
-        ref={rowVirtualizer.measureElement}
-        className={`${selectedIds.includes(p.id) ? 'bg-primary/5' : index % 2 === 1 ? 'bg-muted/30' : ''} hover:bg-muted/50 transition-colors`}
+  // --- Rendu des lignes -------------------------------------------------------
+  const referenceControl = (p: InventoryProduct, className?: string) =>
+    canSeePurchaseInfo ? (
+      <button
+        type="button"
+        onClick={() => setPurchaseProduct(p)}
+        className={cn(
+          'inline-flex min-h-6 max-w-full items-center break-all rounded-sm text-left font-mono text-sm text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          className
+        )}
+        aria-label={`${p.reference} — informations d’achat`}
       >
-        <TableCell>
-          <input
-            type="checkbox"
-            checked={selectedIds.includes(p.id)}
-            onChange={() => toggleSelection(p.id)}
-            aria-label={`Sélectionner ${p.nom}`}
-            className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
-          />
-        </TableCell>
-        <TableCell className="font-mono text-sm">
-          <span
-            onClick={() => openPurchaseInfo(p)}
-            className="cursor-pointer hover:underline hover:text-primary transition-colors"
-            title="Voir infos d'achat"
-          >
-            {p.reference}
-          </span>
-        </TableCell>
-        <TableCell className="font-semibold">
-          <span className="font-semibold">{p.nom}</span>
-          {p.code_barre && (
-            <span className="block text-xs font-mono font-normal text-muted-foreground">
-              Code-barres {p.code_barre}
-            </span>
-          )}
-        </TableCell>
-        <TableCell>
-          {p.categorie
-            ? <span className="text-sm">{p.categorie}</span>
-            : <span className="text-xs text-muted-foreground">—</span>}
-        </TableCell>
-        <TableCell className="text-right">
-          {prixVente > 0 ? (
-            <span className="font-semibold whitespace-nowrap num">{formatCurrency(prixVente)}</span>
-          ) : (
-            <span className="text-xs font-medium text-warning-700">Prix non renseigné</span>
-          )}
-        </TableCell>
-        <TableCell className="text-right whitespace-nowrap">
-          {margeNum === null ? (
-            <span className="text-xs text-muted-foreground">—</span>
-          ) : (
-            <span
-              className={`text-sm font-medium num ${margeNum >= 0 ? 'text-success' : 'text-destructive'}`}
-            >
-              {margeNum >= 0 ? '+' : ''}{margeNum.toFixed(1)}%
-            </span>
-          )}
-        </TableCell>
-        <TableCell className="text-right">{getStockBadge(stock, stockMin)}</TableCell>
-
-        <TableCell className="text-right">
-          <div className="flex justify-end gap-0.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => openHistory(p)}
-              title="Historique des mouvements"
-              aria-label="Historique des mouvements"
-            >
-              <History className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => handleEdit(p)}
-              title="Modifier le produit"
-              aria-label="Modifier le produit"
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-destructive hover:text-destructive"
-              onClick={() => handleDeleteClick(p)}
-              disabled={deleting === p.id}
-              title="Supprimer le produit"
-              aria-label="Supprimer le produit"
-            >
-              {deleting === p.id ? (
-                <Spinner />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
-        </TableCell>
-      </TableRow>
+        {p.reference}
+      </button>
+    ) : (
+      <span className={cn('break-all font-mono text-sm text-muted-foreground', className)}>{p.reference}</span>
     );
+
+  const rowMenu = (p: InventoryProduct, touch = false) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size={touch ? 'icon-touch' : 'icon'}
+          className="shrink-0"
+          aria-label={`Actions pour ${p.nom}`}
+          title={`Actions pour ${p.nom}`}
+        >
+          <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuItem className="min-h-11 gap-2 sm:min-h-9" onSelect={() => setHistoryProduct(p)}>
+          <History className="h-4 w-4" aria-hidden="true" />
+          Historique du stock
+        </DropdownMenuItem>
+        {canSeePurchaseInfo && (
+          <DropdownMenuItem className="min-h-11 gap-2 sm:min-h-9" onSelect={() => setPurchaseProduct(p)}>
+            <Package className="h-4 w-4" aria-hidden="true" />
+            Informations d’achat
+          </DropdownMenuItem>
+        )}
+        {canOpen('/etiquettes') && (
+          <DropdownMenuItem className="min-h-11 gap-2 sm:min-h-9" onSelect={() => navigate(`/etiquettes?produits=${p.id}`)}>
+            <Barcode className="h-4 w-4" aria-hidden="true" />
+            Imprimer l’étiquette
+          </DropdownMenuItem>
+        )}
+        {canWrite && (
+          <>
+            <DropdownMenuItem className="min-h-11 gap-2 sm:min-h-9" onSelect={() => setAdjustTargets([p])}>
+              <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+              Ajuster le stock
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 gap-2 sm:min-h-9"
+              onSelect={() => setFormState({ mode: 'edit', produit: p })}
+            >
+              <Pencil className="h-4 w-4" aria-hidden="true" />
+              Modifier le produit
+            </DropdownMenuItem>
+          </>
+        )}
+        {canDelete && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="min-h-11 gap-2 text-danger-700 focus:bg-danger-50 focus:text-danger-800 sm:min-h-9"
+              onSelect={() => void deleteOne(p)}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              Supprimer le produit
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const priceCell = (p: InventoryProduct) =>
+    p.prix_vente > 0 ? (
+      <Money value={p.prix_vente} />
+    ) : (
+      <span className="text-xs font-medium text-warning-700">Prix non renseigné</span>
+    );
+
+  const marginCell = (p: InventoryProduct) => {
+    const marge = marginPercent(p);
+    if (marge === null) {
+      return (
+        <span className="text-muted-foreground">
+          <span aria-hidden="true">—</span>
+          <span className="sr-only">Marge non calculable</span>
+        </span>
+      );
+    }
+    // Une marge n'est pas une variation : pas de « + », rouge seulement sous 0.
+    return <span className={cn('font-medium', marge < 0 && 'text-danger-700')}>{formatPercent(marge, 1)}</span>;
   };
 
-  const renderProductCard = (p: Produit) => {
-    const prixVente = parseFloat(p.prix_vente as any) || 0;
-    const stock = typeof p.stock === 'string' ? parseInt(p.stock) : p.stock;
-    const stockMin = typeof p.stock_min === 'string' ? parseInt(p.stock_min) : p.stock_min;
+  const singleLocation = !!locationFilter && locationFilter !== ALL_LOCATIONS;
+  const stockHeader = singleLocation ? 'Stock à l’emplacement' : 'Stock total';
+  const colCount = 4 + (canSeeSalePrice ? 1 : 0) + (canWrite ? 1 : 0) + (canSeeCost ? 1 : 0) + 1;
+  /** « Non stocké ici » plutôt que « Rupture » : seulement quand un emplacement est choisi. */
+  const stockCell = (p: InventoryProduct) => (
+    <StockLevel stock={p.stock} stockMin={p.stock_min} notStockedHere={singleLocation && p.stocke_ici === false} />
+  );
 
-    return (
-      <article
-        key={p.id}
-        className={`rounded-lg border bg-card p-3 shadow-xs ${
-          selectedIds.includes(p.id) ? 'border-primary bg-primary/5' : ''
-        }`}
-      >
-        <div className="flex items-start gap-3">
-          <label className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border">
-            <input
-              type="checkbox"
-              checked={selectedIds.includes(p.id)}
-              onChange={() => toggleSelection(p.id)}
+  const tableNode = (
+    <Table aria-label="Produits">
+      <TableHeader>
+        <TableRow>
+          {canWrite && (
+            <TableHead className="w-10">
+              <Checkbox
+                checked={allSelected}
+                indeterminate={someSelected && !allSelected}
+                onChange={toggleAll}
+                aria-label="Sélectionner tous les produits de la page"
+              />
+            </TableHead>
+          )}
+          <SortableHeader columnKey="reference" sort={sort} onSort={handleSort}>
+            Référence
+          </SortableHeader>
+          <SortableHeader columnKey="nom" sort={sort} onSort={handleSort}>
+            Produit
+          </SortableHeader>
+          <SortableHeader columnKey="categorie" sort={sort} onSort={handleSort}>
+            Catégorie
+          </SortableHeader>
+          {canSeeSalePrice && (
+            <SortableHeader columnKey="prix_vente" sort={sort} onSort={handleSort} numeric>
+              Prix de vente
+            </SortableHeader>
+          )}
+          {canSeeCost && <TableHead numeric>Marge</TableHead>}
+          <SortableHeader columnKey="stock" sort={sort} onSort={handleSort} numeric>
+            {stockHeader}
+          </SortableHeader>
+          <TableHead className="w-14">
+            <span className="sr-only">Actions</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {produits.map((p) => (
+          <TableRow key={p.id} className={cn(selected.has(p.id) && 'bg-muted/40')}>
+            {canWrite && (
+              <TableCell>
+                <Checkbox
+                  checked={selected.has(p.id)}
+                  onChange={() => toggleOne(p.id)}
+                  aria-label={`Sélectionner ${p.nom}`}
+                />
+              </TableCell>
+            )}
+            <TableCell className="max-w-[10rem]">{referenceControl(p)}</TableCell>
+            <TableCell className="min-w-[12rem]">
+              <span className="font-medium">{p.nom}</span>
+              {p.code_barre && (
+                <span className="block font-mono text-xs text-muted-foreground" title="Code-barres">
+                  <span className="sr-only">Code-barres </span>
+                  {p.code_barre}
+                </span>
+              )}
+            </TableCell>
+            <TableCell>
+              {p.categorie ? (
+                p.categorie
+              ) : (
+                <span className="text-muted-foreground">
+                  <span aria-hidden="true">—</span>
+                  <span className="sr-only">Sans catégorie</span>
+                </span>
+              )}
+            </TableCell>
+            {canSeeSalePrice && <TableCell numeric>{priceCell(p)}</TableCell>}
+            {canSeeCost && <TableCell numeric>{marginCell(p)}</TableCell>}
+            <TableCell numeric>{stockCell(p)}</TableCell>
+            <TableCell className="text-right">{rowMenu(p)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+
+  const cardsNode = produits.map((p) => (
+    <article
+      key={p.id}
+      className={cn('rounded-lg border bg-card p-3 shadow-xs', selected.has(p.id) && 'border-primary-300 bg-primary-50')}
+    >
+      <div className="flex items-start gap-3">
+        {canWrite && (
+          <label className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center">
+            <Checkbox
+              checked={selected.has(p.id)}
+              onChange={() => toggleOne(p.id)}
               aria-label={`Sélectionner ${p.nom}`}
-              className="h-5 w-5 rounded border-input text-primary focus:ring-2 focus:ring-ring"
+              className="h-5 w-5"
             />
           </label>
-
-          <div className="min-w-0 flex-1">
-            <h2 className="break-words font-semibold leading-snug">{p.nom}</h2>
-            <button
-              type="button"
-              onClick={() => openPurchaseInfo(p)}
-              className="mt-1 min-h-11 max-w-full break-all text-left font-mono text-sm text-primary underline-offset-2 hover:underline"
-            >
-              {p.reference}
-            </button>
-          </div>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-11 w-11 shrink-0"
-                aria-label={`Actions pour ${p.nom}`}
-              >
-                <MoreVertical className="h-5 w-5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem className="min-h-11 gap-2" onSelect={() => openHistory(p)}>
-                <History className="h-4 w-4" />
-                Historique du stock
-              </DropdownMenuItem>
-              <DropdownMenuItem className="min-h-11 gap-2" onSelect={() => handleEdit(p)}>
-                <Pencil className="h-4 w-4" />
-                Modifier
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                className="min-h-11 gap-2 text-destructive focus:text-destructive"
-                disabled={deleting === p.id}
-                onSelect={() => handleDeleteClick(p)}
-              >
-                <Trash2 className="h-4 w-4" />
-                Supprimer
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+        )}
+        <div className="min-w-0 flex-1">
+          <h2 className="break-words font-medium leading-snug">{p.nom}</h2>
+          {referenceControl(p, 'mt-1 inline-flex min-h-11 items-center')}
         </div>
-
-        <dl className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-sm">
+        {rowMenu(p, true)}
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-3 border-t pt-3 text-sm">
+        {canSeeSalePrice && (
           <div className="min-w-0">
             <dt className="text-xs text-muted-foreground">Prix de vente</dt>
-            <dd className="mt-1 break-words font-semibold">
-              {prixVente > 0 ? (
-                formatCurrency(prixVente)
-              ) : (
-                <span className="text-warning-700">Prix non renseigné</span>
-              )}
-            </dd>
+            <dd className="mt-1">{priceCell(p)}</dd>
           </div>
+        )}
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">{stockHeader}</dt>
+          <dd className="mt-1">{stockCell(p)}</dd>
+        </div>
+        {/* Trois cases (prix, stock, catégorie) : la catégorie prend la ligne entière. */}
+        <div className={cn('min-w-0', canSeeSalePrice && !canSeeCost && 'col-span-2')}>
+          <dt className="text-xs text-muted-foreground">Catégorie</dt>
+          <dd className="mt-1 break-words">{p.categorie || 'Sans catégorie'}</dd>
+        </div>
+        {canSeeCost && (
           <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">Stock disponible</dt>
-            <dd className="mt-1">{getStockBadge(stock, stockMin)}</dd>
+            <dt className="text-xs text-muted-foreground">Marge</dt>
+            <dd className="mt-1">{marginCell(p)}</dd>
           </div>
-          <div className="col-span-2 min-w-0">
-            <dt className="text-xs text-muted-foreground">Catégorie</dt>
-            <dd className="mt-1 break-words">{p.categorie || 'Non renseignée'}</dd>
-          </div>
-        </dl>
-      </article>
+        )}
+      </dl>
+    </article>
+  ));
+
+  // --- États vides ------------------------------------------------------------
+  const emptyNode = (() => {
+    const query = search.trim();
+    if (query) {
+      return (
+        <EmptyState
+          icon={Search}
+          title={`Aucun produit ne correspond à « ${query} »`}
+          description="Cherchez par nom, référence ou code-barres"
+          action={
+            <Button variant="outline" onClick={() => setSearch('')} className="gap-2">
+              <X className="h-4 w-4" aria-hidden="true" /> Effacer la recherche
+            </Button>
+          }
+        />
+      );
+    }
+    if (lowStockOnly && categorieFilter === 'all') {
+      return (
+        <EmptyState
+          icon={Package}
+          title="Aucun produit en stock bas"
+          description="Tous les produits sont au-dessus de leur stock minimum"
+          action={
+            <Button variant="outline" onClick={() => setLowStockFilter(false)} className="gap-2">
+              <X className="h-4 w-4" aria-hidden="true" /> Afficher tous les produits
+            </Button>
+          }
+        />
+      );
+    }
+    if (hasFilters) {
+      return (
+        <EmptyState
+          icon={Package}
+          title="Aucun produit ne correspond à ces filtres"
+          description="Changez de catégorie ou retirez le filtre Stock bas"
+          action={
+            <Button variant="outline" onClick={clearFilters} className="gap-2">
+              <X className="h-4 w-4" aria-hidden="true" /> Effacer les filtres
+            </Button>
+          }
+        />
+      );
+    }
+    return (
+      <EmptyState
+        icon={Package}
+        title="Aucun produit dans le catalogue"
+        description={
+          canCreate
+            ? 'Ajoutez vos produits pour les vendre et suivre leur stock dans chaque dépôt'
+            : 'Les produits ajoutés par un gérant apparaîtront ici, avec leur stock par emplacement'
+        }
+        action={
+          canCreate ? (
+            <Button onClick={() => setFormState({ mode: 'create' })} className="gap-2">
+              <Plus className="h-4 w-4" aria-hidden="true" /> Nouveau produit
+            </Button>
+          ) : undefined
+        }
+      />
     );
-  };
+  })();
+
+  const busy = loading || locationFilter === null;
+  const errorNode = (
+    <QueryErrorState error={error} title="Impossible de charger les produits" onRetry={() => void loadProduits()} />
+  );
+
+  const status = busy || error ? '' : total === 0 ? '' : plural(total, 'produit', 'produits');
 
   return (
-    <div className="p-3 sm:p-6 w-full">
-      <div className="mx-auto space-y-4 sm:space-y-6">
-        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
-              <Package className="h-6 w-6 sm:h-8 sm:w-8" />
-              Inventaire
-            </h1>
-            <p className="text-sm sm:text-base text-muted-foreground mt-1">Gestion de vos produits et stocks</p>
-          </div>
-          <Button onClick={() => setShowForm(true)} className="gap-2 w-full sm:w-auto">
-            <Plus className="h-4 w-4" />
-            Ajouter Produit
+    <PageShell
+      title="Inventaire"
+      description={
+        canSeeSalePrice
+          ? 'Produits, prix et niveaux de stock, emplacement par emplacement'
+          : 'Produits et niveaux de stock, emplacement par emplacement'
+      }
+      actions={
+        <Button
+          variant="outline"
+          size="touch"
+          onClick={() => void exportToCSV()}
+          disabled={exporting || busy}
+          className="gap-2"
+        >
+          {exporting ? <Spinner /> : <Download className="h-4 w-4" aria-hidden="true" />}
+          Exporter en CSV
+        </Button>
+      }
+      primaryAction={
+        canCreate ? (
+          <Button size="touch" onClick={() => setFormState({ mode: 'create' })} className="gap-2">
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Nouveau produit
           </Button>
-        </div>
+        ) : undefined
+      }
+    >
+      <p role="status" className="sr-only">
+        {status}
+      </p>
 
-      {/* Filtres */}
+      {/* Recherche, emplacement, filtres */}
       <Card>
-        <CardContent className="pt-6">
-          <div className="flex gap-3 items-center flex-wrap">
-            <div className="relative flex-1 min-w-[250px]">
-              <Search className="pointer-events-none absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Rechercher par nom, référence ou code-barres…"
-                  className="pl-12 sm:pl-12 h-10"
-                  value={search}
-                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                />
+        <CardContent inset="standalone" className="space-y-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+            <div className="relative min-w-0 flex-1">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                type="search"
+                enterKeyHint="search"
+                aria-label="Rechercher un produit"
+                placeholder="Nom, référence ou code-barres…"
+                className="pl-10"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
-            
-            {/* Category Filter */}
-            {categories.length > 0 && (
-              <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-muted-foreground" />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:w-[30rem]">
+              <div className="min-w-0 space-y-1.5">
+                <Label htmlFor="inventaire-emplacement">Emplacement</Label>
                 <Select
-                  value={categorieFilter}
-                  onValueChange={(v) => { setCategorieFilter(v); setPage(1); }}
+                  value={locationFilter ?? ALL_LOCATIONS}
+                  onValueChange={setLocationFilter}
+                  disabled={!locationsReady}
                 >
-                  <SelectTrigger className="h-9 w-auto" aria-label="Filtrer par catégorie">
-                    <SelectValue placeholder="Toutes catégories" />
+                  <SelectTrigger id="inventaire-emplacement">
+                    <SelectValue placeholder="Tous les emplacements" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Toutes catégories</SelectItem>
-                    {categories.map(cat => (
-                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            
-            <Button
-              variant={lowStockOnly ? "default" : "outline"}
-              onClick={() => { setLowStockOnly(!lowStockOnly); setPage(1); }}
-              className="gap-2 h-10"
-            >
-              <AlertCircle className="h-4 w-4" />
-              Stock bas
-            </Button>
-
-            {stockLocations.length > 0 && (
-              <div className="flex items-center gap-2">
-                <Label htmlFor="adjust-location" className="text-xs text-muted-foreground">Dépôt :</Label>
-                <Select
-                  value={selectedAdjustLocationId}
-                  onValueChange={(v) => setSelectedAdjustLocationId(v)}
-                >
-                  <SelectTrigger id="adjust-location" className="h-9 w-auto" aria-label="Sélectionner le dépôt">
-                    <SelectValue placeholder="Dépôt" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {stockLocations.map((location) => (
-                      <SelectItem key={location.id} value={String(location.id)}>
-                        {location.nom} ({location.code})
+                    <SelectItem value={ALL_LOCATIONS}>Tous les emplacements</SelectItem>
+                    {locations.map((l) => (
+                      <SelectItem key={l.id} value={String(l.id)}>
+                        {l.nom}
+                        {userLocationId === String(l.id) ? ' (le vôtre)' : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-            )}
-
-            <div className="flex-1"></div>
-
-            {/* Export CSV */}
-            <Button variant="outline" onClick={exportToCSV} className="gap-2">
-              <Download className="h-4 w-4" />
-              Exporter
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Bulk Actions Bar */}
-      {selectedIds.length > 0 && (
-        <div className="sticky top-2 z-20 flex items-center gap-2 px-3 py-2 bg-primary/10 border border-primary/20 rounded-md flex-wrap shadow-sm">
-          <span className="text-sm font-medium text-primary">{selectedIds.length} sélectionné(s)</span>
-
-          {/* Bulk Stock Adjustment */}
-          <div className="flex items-center gap-1">
-            <Input
-              type="number" inputMode="numeric"
-              placeholder="Quantité"
-              className="w-20 h-8 text-xs"
-              value={bulkAdjustQuantity}
-              onChange={(e) => setBulkAdjustQuantity(e.target.value)}
-            />
-            <Select
-              value={bulkAdjustType}
-              onValueChange={(v) => setBulkAdjustType(v as 'add' | 'subtract' | 'set')}
-            >
-              <SelectTrigger className="h-8 w-16" aria-label="Type d'ajustement de stock">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="add">+</SelectItem>
-                <SelectItem value="subtract">-</SelectItem>
-                <SelectItem value="set">=</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleBulkStockAdjust}
-              className="gap-1 h-8"
-              disabled={!bulkAdjustQuantity}
-            >
-              <Package className="h-3 w-3" />
-              Stock
-            </Button>
-          </div>
-
-          {/* Bulk Category Change */}
-          <Select
-            value={bulkCategory === '' ? '__all' : bulkCategory}
-            onValueChange={(v) => setBulkCategory(v === '__all' ? '' : v)}
-          >
-            <SelectTrigger className="h-8 w-32" aria-label="Changer la catégorie">
-              <SelectValue placeholder="Catégorie…" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all">Catégorie…</SelectItem>
-              {categories.map(cat => (
-                <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleBulkCategoryChange}
-            className="gap-1 h-8"
-            disabled={!bulkCategory}
-          >
-            <Filter className="h-3 w-3" />
-            Catégorie
-          </Button>
-
-          <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="gap-2 h-8">
-            <Trash2 className="h-3 w-3" />
-            Supprimer
-          </Button>
-
-          <div className="flex-1"></div>
-
-          <Button variant="ghost" size="icon" onClick={() => setSelectedIds([])} className="h-8 w-8" title="Effacer la sélection" aria-label="Effacer la sélection">
-            <XCircle className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
-
-      {/* Formulaire Modal */}
-      <Dialog open={showForm} onOpenChange={(open) => !open && resetForm()}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {editingProduit ? 'Modifier Produit' : 'Ajouter Produit'}
-            </DialogTitle>
-            <DialogDescription>
-              {editingProduit ? 'Modifiez les informations du produit' : 'Remplissez les informations du nouveau produit'}
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSubmit}>
-            <div className="grid grid-cols-2 gap-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="reference">Référence *</Label>
-                <Input
-                  id="reference"
-                  required
-                  value={formData.reference}
-                  onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
-                  placeholder="REF-001"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="nom">Nom *</Label>
-                <Input
-                  id="nom"
-                  required
-                  value={formData.nom}
-                  onChange={(e) => setFormData({ ...formData, nom: e.target.value })}
-                  placeholder="Ex : Clavier Logitech K120"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="code_barre">Code-barres</Label>
-                <Input
-                  id="code_barre"
-                  value={formData.code_barre}
-                  onChange={(e) => setFormData({ ...formData, code_barre: e.target.value })}
-                  placeholder="Douchette ou saisie — ex : 3245678901234"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Permet de retrouver le produit en le scannant lors d'une vente.
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="categorie">Catégorie</Label>
-                <Input
-                  id="categorie"
-                  value={formData.categorie}
-                  onChange={(e) => setFormData({ ...formData, categorie: e.target.value })}
-                  placeholder="Ex : Périphériques"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="fournisseur">Fournisseur</Label>
+              <div className="min-w-0 space-y-1.5">
+                <Label htmlFor="inventaire-categorie">Catégorie</Label>
                 <Select
-                  value={formData.fournisseur_id ? String(formData.fournisseur_id) : '__all'}
-                  onValueChange={(v) => setFormData({ ...formData, fournisseur_id: v === '__all' ? null : parseInt(v) })}
+                  value={categorieFilter}
+                  onValueChange={(v) => {
+                    setCategorieFilter(v);
+                    setPage(1);
+                  }}
                 >
-                  <SelectTrigger id="fournisseur" className="h-9 w-full" aria-label="Fournisseur">
-                    <SelectValue placeholder="Aucun" />
+                  <SelectTrigger id="inventaire-categorie">
+                    <SelectValue placeholder="Toutes les catégories" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__all">Aucun</SelectItem>
-                    {(Array.isArray(fournisseurs) ? fournisseurs : []).map((f) => (
-                      <SelectItem key={f.id} value={String(f.id)}>{f.raison_sociale}</SelectItem>
+                    <SelectItem value="all">Toutes les catégories</SelectItem>
+                    {categories.map((cat) => (
+                      <SelectItem key={cat} value={cat}>
+                        {cat}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-              {editingProduit ? (
-                <div className="space-y-2">
-                  <Label htmlFor="stock">Stock</Label>
-                  <Input
-                    id="stock"
-                    type="number" inputMode="numeric"
-                    min="0"
-                    value={formData.stock}
-                    onChange={(e) => setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })}
-                  />
-                </div>
-              ) : (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="location_id">Dépôt cible</Label>
-                    <Select
-                      value={formData.location_id === '' ? '__all' : formData.location_id}
-                      onValueChange={(v) => setFormData({ ...formData, location_id: v === '__all' ? '' : v })}
-                    >
-                      <SelectTrigger id="location_id" className="h-9 w-full" aria-label="Dépôt cible">
-                        <SelectValue placeholder="Sélectionner…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all">Sélectionner…</SelectItem>
-                        {stockLocations.map((location) => (
-                          <SelectItem key={location.id} value={String(location.id)}>
-                            {location.nom} ({location.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="initial_stock">Stock initial du dépôt</Label>
-                    <Input
-                      id="initial_stock"
-                      type="number" inputMode="numeric"
-                      min="0"
-                      value={formData.initial_stock}
-                      onChange={(e) => setFormData({ ...formData, initial_stock: parseInt(e.target.value) || 0 })}
-                    />
-                  </div>
-                </>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="prix_achat">Prix d'achat</Label>
-                <MoneyInput
-                  id="prix_achat"
-                  value={formData.prix_achat || ''}
-                  onChange={(v) => setFormData({ ...formData, prix_achat: parseFloat(v) || 0 })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="prix_vente">Prix de vente *</Label>
-                <MoneyInput
-                  id="prix_vente"
-                  required
-                  value={formData.prix_vente || ''}
-                  onChange={(v) => setFormData({ ...formData, prix_vente: parseFloat(v) || 0 })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="stock_min">Stock minimum</Label>
-                <Input
-                  id="stock_min"
-                  type="number" inputMode="numeric"
-                  min="0"
-                  value={formData.stock_min}
-                  onChange={(e) => setFormData({ ...formData, stock_min: parseInt(e.target.value) || 5 })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="description">Description</Label>
-                <Input
-                  id="description"
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="Description optionnelle"
-                />
-              </div>
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={resetForm}>
-                Annuler
-              </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? 'Enregistrement…' : editingProduit ? 'Modifier' : 'Ajouter'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Tableau */}
-      <Card>
-          <CardContent className="p-0">
-            <div className="space-y-3 p-3 md:hidden">
-              <QueryState
-                loading={loading}
-                error={error}
-                onRetry={loadProduits}
-                skeleton={<TableSkeleton rows={6} columns={2} />}
-                isEmpty={produits.length === 0}
-                emptyIcon={Package}
-                emptyTitle="Aucun produit trouvé"
-              >
-                {produits.map(renderProductCard)}
-              </QueryState>
-            </div>
-            <div
-              ref={tableScrollRef}
-              className="relative hidden w-full overflow-auto max-h-[calc(100vh-320px)] md:block"
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <ToggleChip
+              size="md"
+              icon={AlertTriangle}
+              pressed={lowStockOnly}
+              onPressedChange={setLowStockFilter}
             >
-            <table className="w-full caption-bottom text-sm table-fixed [&_td]:py-2 [&_th]:py-2 [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:z-10 [&_thead_th]:bg-card [&_thead_th]:h-10">
-              <colgroup>
-                <col style={{ width: '4%' }} />
-                <col style={{ width: '13%' }} />
-                <col style={{ width: '24%' }} />
-                <col style={{ width: '16%' }} />
-                <col style={{ width: '14%' }} />
-                <col style={{ width: '10%' }} />
-                <col style={{ width: '12%' }} />
-                <col style={{ width: '7%' }} />
-              </colgroup>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.length === produits.length && produits.length > 0}
-                      onChange={selectAll}
-                      aria-label="Tout sélectionner"
-                      className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
-                    />
-                  </TableHead>
-                  <SortableHeader columnKey="reference" sort={sortState} onSort={handleSort}>Référence</SortableHeader>
-                  <SortableHeader columnKey="nom" sort={sortState} onSort={handleSort}>Nom</SortableHeader>
-                  <SortableHeader columnKey="categorie" sort={sortState} onSort={handleSort}>Catégorie</SortableHeader>
-                  <SortableHeader columnKey="prix_vente" sort={sortState} onSort={handleSort} align="right">Prix Vente</SortableHeader>
-                  <TableHead className="text-right">Marge</TableHead>
-                  <SortableHeader columnKey="stock" sort={sortState} onSort={handleSort} align="right">Stock</SortableHeader>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loading || error || produits.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={8} className="p-0">
-                      <QueryState
-                        loading={loading}
-                        error={error}
-                        onRetry={loadProduits}
-                        skeleton={<TableSkeleton rows={10} columns={8} />}
-                        isEmpty={produits.length === 0}
-                        emptyIcon={Package}
-                        emptyTitle="Aucun produit trouvé"
-                      >
-                        {null}
-                      </QueryState>
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  <>
-                    {paddingTop > 0 && (
-                      <tr aria-hidden="true">
-                        <td colSpan={8} style={{ height: paddingTop }} />
-                      </tr>
-                    )}
-                    {virtualRows.map((virtualRow) =>
-                      renderProductRow(produits[virtualRow.index], virtualRow.index)
-                    )}
-                    {paddingBottom > 0 && (
-                      <tr aria-hidden="true">
-                        <td colSpan={8} style={{ height: paddingBottom }} />
-                      </tr>
-                    )}
-                  </>
-                )}
-              </TableBody>
-            </table>
+              Stock bas
+            </ToggleChip>
+            {hasFilters && (
+              <Button variant="ghost" onClick={clearFilters} className="gap-1.5 text-muted-foreground">
+                <X className="h-4 w-4" aria-hidden="true" /> Effacer les filtres
+              </Button>
+            )}
+          </div>
+          {locationsError !== null && (
+            <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+              <span>Impossible de charger les emplacements : le stock affiché est celui de tous les emplacements.</span>
+              <Button variant="outline" onClick={() => void loadLocations()}>
+                Réessayer
+              </Button>
             </div>
-          </CardContent>
-        </Card>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirmer la suppression</DialogTitle>
-            <DialogDescription>
-              Êtes-vous sûr de vouloir supprimer le produit "{produitToDelete?.nom}" ({produitToDelete?.reference}) ?
-              Cette action est irréversible.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
-              Annuler
+      {canWrite && (
+        <BulkActionBar count={selected.size} onClear={() => setSelected(new Set())}>
+          <Button variant="outline" className="gap-1.5" onClick={() => setAdjustTargets(selectedProducts)}>
+            <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+            Ajuster le stock
+          </Button>
+          {canOpen('/etiquettes') && (
+            <Button
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => navigate(`/etiquettes?produits=${selectedProducts.map((p) => p.id).join(',')}`)}
+            >
+              <Barcode className="h-4 w-4" aria-hidden="true" />
+              Imprimer les étiquettes
             </Button>
-            <Button variant="destructive" onClick={confirmDelete} disabled={deleting === produitToDelete?.id}>
-              {deleting === produitToDelete?.id ? (
-                <>
-                  <Spinner className="mr-2" />
-                  Suppression...
-                </>
-              ) : (
-                <>
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Supprimer
-                </>
-              )}
+          )}
+          <Button variant="outline" className="gap-1.5" onClick={() => setCategoryTargets(selectedProducts)}>
+            <Tags className="h-4 w-4" aria-hidden="true" />
+            Changer la catégorie
+          </Button>
+          {canDelete && (
+            <Button
+              variant="outline"
+              className="gap-1.5 text-danger-700 hover:bg-danger-50 hover:text-danger-800"
+              onClick={() => void deleteSelected()}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              {selected.size > 1 ? `Supprimer les ${formatNumber(selected.size)} produits` : 'Supprimer le produit'}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          )}
+        </BulkActionBar>
+      )}
 
-      {/* Stock History Modal */}
-      <Dialog open={historyDialogOpen} onOpenChange={setHistoryDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <History className="h-5 w-5" />
-              Historique des mouvements - {selectedProductForHistory?.nom} ({selectedProductForHistory?.reference})
-            </DialogTitle>
-            <DialogDescription>
-              Stock actuel: <span className="font-bold">{selectedProductForHistory?.stock}</span> unités
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="flex-1 overflow-y-auto">
-            {loadingHistory ? (
-              <LoadingState inCell />
-            ) : stockHistory.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                <Clock className="h-12 w-12 mb-2 opacity-50" />
-                <p>Aucun mouvement enregistré</p>
+      {/* Liste — sous 768 px les cartes portent la surface. */}
+      <Card className="max-md:border-0 max-md:bg-transparent max-md:shadow-none">
+        <CardContent inset="flush">
+          {busy ? (
+            <>
+              <div className="hidden md:block" aria-busy="true">
+                <TableSkeleton rows={10} columns={colCount} />
               </div>
-            ) : (
-              <div className="space-y-3">
-                {stockHistory.map((movement) => {
-                  const quantite = parseInt(movement.quantite);
-                  const isPositive = quantite > 0;
-                  
-                  const getMovementIcon = () => {
-                    switch (movement.type_mouvement) {
-                      case 'vente':
-                        return <ArrowDownCircle className="h-4 w-4 text-danger-500" />;
-                      case 'retour':
-                        return <ArrowUpCircle className="h-4 w-4 text-success-500" />;
-                      case 'ajustement':
-                        return <RefreshCw className="h-4 w-4 text-warning-500" />;
-                      default:
-                        return <Clock className="h-4 w-4 text-muted-foreground" />;
-                    }
-                  };
-
-                  const getMovementLabel = () => {
-                    const labels: Record<string, string> = {
-                      vente: 'Vente',
-                      retour: 'Retour',
-                      ajustement: 'Ajustement',
-                      commande: 'Commande',
-                      perte: 'Perte',
-                      autre: 'Autre',
-                    };
-                    return labels[movement.type_mouvement] || 'Autre';
-                  };
-
-                  return (
-                    <div
-                      key={movement.id}
-                      className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                    >
-                      <div className="mt-1">
-                        {getMovementIcon()}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium">{getMovementLabel()}</span>
-                          <span className={`text-sm font-bold ${isPositive ? 'text-success-600' : 'text-danger-600'}`}>
-                            {isPositive ? '+' : ''}{quantite}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between mt-1">
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(movement.date_mouvement).toLocaleDateString('fr-FR', {
-                              year: 'numeric',
-                              month: 'long',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Stock: {movement.stock_avant} → {movement.stock_apres}
-                          </span>
-                        </div>
-                        {movement.raison && (
-                          <p className="text-xs text-muted-foreground mt-1 italic">
-                            Raison: {movement.raison}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="md:hidden" aria-busy="true">
+                <ListSkeleton items={6} />
               </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+            </>
+          ) : error ? (
+            errorNode
+          ) : produits.length === 0 ? (
+            emptyNode
+          ) : (
+            <ResponsiveTable table={tableNode} cards={cardsNode} />
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Purchase Info Dialog */}
-      <Dialog open={purchaseInfoDialogOpen} onOpenChange={setPurchaseInfoDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5" />
-              Informations d'achat - {selectedProductForPurchaseInfo?.nom} ({selectedProductForPurchaseInfo?.reference})
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-y-auto space-y-4">
-            {loadingPurchaseInfo ? (
-              <LoadingState inCell />
-            ) : purchaseInfo ? (
-              <>
-                {/* Default Supplier */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-4 rounded-lg bg-muted/50">
-                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Fournisseur par défaut</h4>
-                    {purchaseInfo.default_supplier ? (
-                      <div>
-                        <p className="font-medium">{purchaseInfo.default_supplier.raison_sociale}</p>
-                        {purchaseInfo.default_supplier.telephone && (
-                          <p className="text-sm text-muted-foreground">Tel: {purchaseInfo.default_supplier.telephone}</p>
-                        )}
-                        {purchaseInfo.default_supplier.email && (
-                          <p className="text-sm text-muted-foreground">Email: {purchaseInfo.default_supplier.email}</p>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">Aucun fournisseur par défaut</p>
-                    )}
-                  </div>
-
-                  {/* Purchase Price Stats */}
-                  <div className="p-4 rounded-lg bg-muted/50">
-                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Prix d'achat</h4>
-                    {purchaseInfo.price_stats ? (
-                      <div className="space-y-2">
-                        {purchaseInfo.price_stats.prix_min === purchaseInfo.price_stats.prix_max ? (
-                          <p className="text-2xl font-bold">{formatCurrency(purchaseInfo.price_stats.prix_min)}</p>
-                        ) : (
-                          <div>
-                            <p className="text-lg font-bold">
-                              {formatCurrency(purchaseInfo.price_stats.prix_min)} - {formatCurrency(purchaseInfo.price_stats.prix_max)}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              Moyenne: {formatCurrency(purchaseInfo.price_stats.prix_moyen)} · {purchaseInfo.price_stats.total_achats} achat(s)
-                            </p>
-                          </div>
-                        )}
-                        {purchaseInfo.recent_purchase && (
-                          <p className="text-xs text-muted-foreground border-t pt-1 mt-1">
-                            Dernier: {formatCurrency(purchaseInfo.recent_purchase.prix_unitaire)}
-                            {purchaseInfo.recent_purchase.fournisseur && ` chez ${purchaseInfo.recent_purchase.fournisseur}`}
-                            {purchaseInfo.recent_purchase.date && ` (${new Date(purchaseInfo.recent_purchase.date).toLocaleDateString('fr-FR')})`}
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <div>
-                        <p className="text-2xl font-bold">{formatCurrency(purchaseInfo.prix_achat)}</p>
-                        <p className="text-xs text-muted-foreground mt-1">Prix par défaut (aucun achat enregistré)</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* All Purchase History (combined) */}
-                {(purchaseInfo.purchase_history?.length > 0 || purchaseInfo.order_history?.length > 0) && (
-                  <div>
-                    <h4 className="text-sm font-semibold text-muted-foreground mb-2">Tous les achats</h4>
-                    <div className="overflow-x-auto rounded-lg border">
-                      <table className="w-full text-sm">
-                        <thead className="bg-muted/50">
-                          <tr>
-                            <th className="text-left p-2">Date</th>
-                            <th className="text-left p-2">Fournisseur</th>
-                            <th className="text-left p-2">Document</th>
-                            <th className="text-right p-2">Qté</th>
-                            <th className="text-right p-2">Prix unitaire</th>
-                            <th className="text-right p-2">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {[
-                            ...(purchaseInfo.purchase_history || []).map((item: any) => ({ ...item, source: 'Facture' })),
-                            ...(purchaseInfo.order_history || []).map((item: any) => ({ ...item, source: 'Commande' })),
-                          ]
-                            .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                            .map((item: any, i: number) => (
-                              <tr key={i} className="border-t hover:bg-muted/30">
-                                <td className="p-2 text-xs">{item.date ? new Date(item.date).toLocaleDateString('fr-FR') : '-'}</td>
-                                <td className="p-2">{item.fournisseur || '-'}</td>
-                                <td className="p-2">
-                                  <span className="text-xs font-mono">{item.numero || item.source || '-'}</span>
-                                  <span className="text-[10px] text-muted-foreground ml-1">{item.source}</span>
-                                </td>
-                                <td className="p-2 text-right">{item.quantite}</td>
-                                <td className="p-2 text-right font-semibold">{formatCurrency(item.prix_unitaire)}</td>
-                                <td className="p-2 text-right font-medium">{formatCurrency(parseFloat(item.prix_unitaire) * (item.quantite || 1))}</td>
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                {/* No purchase history */}
-                {(!purchaseInfo.purchase_history || purchaseInfo.purchase_history.length === 0) &&
-                 (!purchaseInfo.order_history || purchaseInfo.order_history.length === 0) && (
-                  <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                    <Package className="h-12 w-12 mb-2 opacity-50" />
-                    <p>Aucun achat enregistré pour ce produit</p>
-                  </div>
-                )}
-
-                {/* Top Buyer */}
-                <div className="p-4 rounded-lg bg-muted/50">
-                  <h4 className="text-sm font-semibold text-muted-foreground mb-2">Qui achète le plus ?</h4>
-                  {purchaseInfo.top_buyer ? (
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium text-lg">
-                          {purchaseInfo.top_buyer.prenom
-                            ? `${purchaseInfo.top_buyer.prenom} ${purchaseInfo.top_buyer.raison_sociale}`
-                            : purchaseInfo.top_buyer.raison_sociale}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          {purchaseInfo.top_buyer.telephone && `Tel: ${purchaseInfo.top_buyer.telephone}`}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-2xl font-bold">{purchaseInfo.top_buyer.total_quantite} unités</p>
-                        <p className="text-sm text-muted-foreground">
-                          {purchaseInfo.top_buyer.nombre_factures} facture(s) · {formatCurrency(purchaseInfo.top_buyer.total_depense)}
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">Aucune vente enregistrée pour ce produit</p>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                <Package className="h-12 w-12 mb-2 opacity-50" />
-                <p>Erreur de chargement</p>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Pagination */}
-      {!loading && total > 0 && (
+      {!busy && !error && total > 0 && (
         <Pagination
           page={page}
           totalPages={totalPages}
           total={total}
           limit={limit}
+          announce={false}
           onPageChange={setPage}
-          onLimitChange={(newLimit) => { setLimit(newLimit); setPage(1); }}
+          onLimitChange={(newLimit) => {
+            setLimit(newLimit);
+            setPage(1);
+          }}
         />
       )}
-      </div>
+
+      {adjustTargets && (
+        <AdjustStockDialog
+          products={adjustTargets}
+          locations={locations}
+          defaultLocationId={defaultWriteLocationId}
+          listLocationId={locationFilter && locationFilter !== ALL_LOCATIONS ? locationFilter : null}
+          onClose={() => setAdjustTargets(null)}
+          onDone={() => {
+            setAdjustTargets(null);
+            void loadProduits();
+          }}
+        />
+      )}
+
+      {formState && (
+        <ProductFormDialog
+          state={formState}
+          showPrices={canSeeSalePrice}
+          locations={locations}
+          defaultLocationId={defaultWriteLocationId}
+          categories={categories}
+          onClose={() => setFormState(null)}
+          onSaved={() => {
+            setFormState(null);
+            void loadProduits();
+          }}
+          onAdjustStock={(p) => {
+            setFormState(null);
+            setAdjustTargets([p]);
+          }}
+        />
+      )}
+
+      {categoryTargets && (
+        <CategoryDialog
+          products={categoryTargets}
+          categories={categories}
+          onClose={() => setCategoryTargets(null)}
+          onDone={() => {
+            setCategoryTargets(null);
+            void loadProduits();
+          }}
+        />
+      )}
+
+      {historyProduct && (
+        <HistoryDialog
+          product={historyProduct}
+          locationName={locationName}
+          onClose={() => setHistoryProduct(null)}
+        />
+      )}
+
+      {purchaseProduct && <PurchaseInfoDialog product={purchaseProduct} onClose={() => setPurchaseProduct(null)} />}
+    </PageShell>
+  );
+}
+
+// ===========================================================================
+// « Ajuster le stock » (U-21) : mode, quantité, emplacement en toutes lettres,
+// motif obligatoire, aperçu de l'effet ligne par ligne.
+// ===========================================================================
+const MODE_OPTIONS = [
+  { value: 'ajouter' as const, label: 'Ajouter', icon: Plus },
+  { value: 'retirer' as const, label: 'Retirer', icon: Minus },
+  { value: 'fixer' as const, label: 'Fixer à', icon: Equal },
+];
+
+const QUANTITY_LABEL: Record<AdjustMode, string> = {
+  ajouter: 'Quantité à ajouter',
+  retirer: 'Quantité à retirer',
+  fixer: 'Nouveau stock',
+};
+
+const SUCCESS_MESSAGE: Record<AdjustMode, [string, string]> = {
+  ajouter: ['Stock augmenté pour 1 produit', 'Stock augmenté pour {n} produits'],
+  retirer: ['Stock diminué pour 1 produit', 'Stock diminué pour {n} produits'],
+  fixer: ['Stock fixé pour 1 produit', 'Stock fixé pour {n} produits'],
+};
+
+interface AdjustLine {
+  product: InventoryProduct;
+  before: number;
+  after: number;
+  delta: number;
+  invalid: boolean;
+}
+
+function AdjustStockDialog({
+  products,
+  locations,
+  defaultLocationId,
+  listLocationId,
+  onClose,
+  onDone,
+}: {
+  products: InventoryProduct[];
+  locations: StockLocation[];
+  defaultLocationId: string;
+  /** Emplacement sur lequel la liste est filtrée : son stock est déjà connu. */
+  listLocationId: string | null;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [mode, setMode] = useState<AdjustMode>('ajouter');
+  const [quantity, setQuantity] = useState('');
+  const [locationId, setLocationId] = useState(defaultLocationId);
+  const [motif, setMotif] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const quantityRef = useRef<HTMLInputElement>(null);
+  const motifRef = useRef<HTMLTextAreaElement>(null);
+
+  // Stock de chaque produit À L'EMPLACEMENT choisi.
+  const [stockMap, setStockMap] = useState<Map<number, number> | null>(null);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockError, setStockError] = useState<unknown>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const knownFromList = !!locationId && locationId === listLocationId;
+
+  useEffect(() => {
+    if (!locationId) {
+      setStockMap(null);
+      setStockLoading(false);
+      return;
+    }
+    if (knownFromList) {
+      setStockMap(new Map(products.map((p) => [p.id, p.stock])));
+      setStockError(null);
+      setStockLoading(false);
+      return;
+    }
+    let ignore = false;
+    setStockLoading(true);
+    setStockError(null);
+    stockLocationService
+      .getStockLevels(Number(locationId))
+      .then((response: unknown) => {
+        if (ignore) return;
+        const rows = (Array.isArray(response) ? response : (response as { data?: unknown })?.data) as
+          | StockLevelRow[]
+          | undefined;
+        setStockMap(new Map((rows ?? []).map((r) => [Number(r.produit_id), Math.trunc(num(r.quantite))])));
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setStockMap(null);
+        setStockError(err);
+      })
+      .finally(() => {
+        if (!ignore) setStockLoading(false);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [locationId, knownFromList, products, reloadKey]);
+
+  const parsedQuantity = /^\d+$/.test(quantity.trim()) ? Number(quantity.trim()) : null;
+  const quantityError =
+    parsedQuantity === null
+      ? 'Saisissez une quantité en nombre entier.'
+      : mode !== 'fixer' && parsedQuantity === 0
+        ? 'Saisissez une quantité supérieure à 0.'
+        : null;
+  const motifError = motif.trim() ? null : 'Indiquez le motif de l’ajustement (inventaire, casse, erreur de saisie…).';
+  const locationError = locationId ? null : 'Choisissez l’emplacement à ajuster.';
+
+  const lines: AdjustLine[] = useMemo(() => {
+    if (!stockMap || parsedQuantity === null) return [];
+    return products.map((product) => {
+      const before = stockMap.get(product.id) ?? 0;
+      const after = mode === 'ajouter' ? before + parsedQuantity : mode === 'retirer' ? before - parsedQuantity : parsedQuantity;
+      return { product, before, after, delta: after - before, invalid: after < 0 };
+    });
+  }, [stockMap, parsedQuantity, products, mode]);
+
+  const changing = lines.filter((l) => l.delta !== 0 && !l.invalid);
+  const invalidLines = lines.filter((l) => l.invalid);
+  const locationLabel = locations.find((l) => String(l.id) === locationId)?.nom ?? '';
+  const submitLabel =
+    products.length > 1 ? `Ajuster le stock de ${formatNumber(products.length)} produits` : 'Ajuster le stock';
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setSubmitted(true);
+    setFormError(null);
+    if (locationError || quantityError || motifError) {
+      if (quantityError) quantityRef.current?.focus();
+      else if (motifError) motifRef.current?.focus();
+      return;
+    }
+    if (!stockMap) return;
+    if (invalidLines.length > 0) {
+      setFormError(
+        invalidLines.length > 1
+          ? `Le retrait rendrait le stock négatif pour ${formatNumber(invalidLines.length)} produits : réduisez la quantité.`
+          : `Le retrait rendrait le stock de « ${invalidLines[0].product.nom} » négatif : il n’en reste que ${formatNumber(invalidLines[0].before)}.`
+      );
+      return;
+    }
+    if (changing.length === 0) {
+      setFormError('Aucun stock ne change avec cette quantité : saisissez une autre valeur.');
+      return;
+    }
+
+    setSubmitting(true);
+    let done = 0;
+    let firstError: string | null = null;
+    for (const line of changing) {
+      try {
+        await produitService.addStockMovement(line.product.id, {
+          type_mouvement: 'ajustement',
+          quantite: line.delta,
+          location_id: Number(locationId),
+          raison: motif.trim(),
+        });
+        done++;
+      } catch (err) {
+        firstError ??= getErrorMessage(err, `Impossible d’ajuster le stock de « ${line.product.nom} ».`);
+      }
+    }
+    setSubmitting(false);
+
+    const failed = changing.length - done;
+    if (done > 0) {
+      const [one, many] = SUCCESS_MESSAGE[mode];
+      toast.success(done > 1 ? many.replace('{n}', formatNumber(done)) : one);
+    }
+    if (failed > 0) {
+      toast.error(
+        `${failed > 1 ? `${formatNumber(failed)} ajustements ont échoué` : 'Un ajustement a échoué'} : ${firstError}`
+      );
+    }
+    // Rien n'est passé : le formulaire reste ouvert pour réessayer sans ressaisir.
+    if (done === 0) {
+      setFormError(firstError ?? 'Impossible d’ajuster le stock. Réessayez.');
+      return;
+    }
+    onDone();
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !submitting && onClose()}>
+      <DialogContent className="sm:max-w-xl">
+        <form onSubmit={handleSubmit} noValidate className="space-y-5">
+          <DialogHeader>
+            <DialogTitle>Ajuster le stock</DialogTitle>
+            <DialogDescription>
+              {products.length > 1
+                ? `${formatNumber(products.length)} produits sélectionnés. L’ajustement est enregistré dans l’historique de chaque produit, avec son motif.`
+                : `« ${products[0]?.nom} ». L’ajustement est enregistré dans l’historique du produit, avec son motif.`}
+            </DialogDescription>
+          </DialogHeader>
+
+          <ChoiceGroup
+            label="Type d’ajustement"
+            value={mode}
+            onValueChange={setMode}
+            options={MODE_OPTIONS}
+            layout="grid-3"
+            shape="tile"
+            size="touch"
+          />
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="ajustement-quantite">
+                {QUANTITY_LABEL[mode]}
+                <RequiredMark />
+              </Label>
+              <Input
+                ref={quantityRef}
+                id="ajustement-quantite"
+                inputMode="numeric"
+                autoComplete="off"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value.replace(/[^\d]/g, ''))}
+                className="tabular-nums"
+                required
+                {...fieldErrorProps('ajustement-quantite', submitted && quantityError)}
+              />
+              <FieldError id="ajustement-quantite">{submitted ? quantityError : null}</FieldError>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ajustement-emplacement">
+                Emplacement
+                <RequiredMark />
+              </Label>
+              <Select value={locationId || undefined} onValueChange={setLocationId}>
+                <SelectTrigger
+                  id="ajustement-emplacement"
+                  {...fieldErrorProps('ajustement-emplacement', submitted && locationError)}
+                >
+                  <SelectValue placeholder="Choisir un emplacement…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {locations.map((l) => (
+                    <SelectItem key={l.id} value={String(l.id)}>
+                      {l.nom}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FieldError id="ajustement-emplacement">{submitted ? locationError : null}</FieldError>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="ajustement-motif">
+              Motif
+              <RequiredMark />
+            </Label>
+            <Textarea
+              ref={motifRef}
+              id="ajustement-motif"
+              rows={2}
+              maxLength={500}
+              value={motif}
+              onChange={(e) => setMotif(e.target.value)}
+              placeholder="Ex. : inventaire physique du jour, casse, erreur de saisie"
+              className="min-h-[64px]"
+              required
+              {...fieldErrorProps('ajustement-motif', submitted && motifError)}
+            />
+            <FieldError id="ajustement-motif">{submitted ? motifError : null}</FieldError>
+          </div>
+
+          {/* Aperçu de l'effet */}
+          <section aria-labelledby="ajustement-apercu-titre" className="space-y-2">
+            <h3 id="ajustement-apercu-titre" className="text-sm font-medium">
+              {locationLabel ? `Effet sur le stock à ${locationLabel}` : 'Effet sur le stock'}
+            </h3>
+            {!locationId ? (
+              <p className="text-sm text-muted-foreground">Choisissez un emplacement pour voir l’effet</p>
+            ) : stockLoading ? (
+              <LoadingState message="Chargement du stock de l’emplacement…" className="py-6" />
+            ) : stockError ? (
+              <QueryErrorState
+                error={stockError}
+                title="Impossible de charger le stock de cet emplacement"
+                onRetry={() => setReloadKey((k) => k + 1)}
+                className="py-6"
+              />
+            ) : parsedQuantity === null ? (
+              <p className="text-sm text-muted-foreground">Saisissez une quantité pour voir l’effet</p>
+            ) : (
+              <ul
+                className="max-h-56 divide-y overflow-y-auto rounded-md border text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Effet de l’ajustement par produit"
+                tabIndex={0}
+              >
+                {lines.map((line) => (
+                  <li key={line.product.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <span className="min-w-0 break-words">{line.product.nom}</span>
+                    {line.invalid ? (
+                      <span className="shrink-0 text-right text-xs font-medium text-danger-700">
+                        Seulement {formatNumber(line.before)} en stock
+                      </span>
+                    ) : (
+                      <span className="shrink-0 whitespace-nowrap text-right tabular-nums">
+                        {formatNumber(line.before)}
+                        <span aria-hidden="true"> → </span>
+                        <span className="sr-only"> passera à </span>
+                        <span className="font-medium">{formatNumber(line.after)}</span>
+                        {line.delta === 0 && <span className="ml-2 text-xs text-muted-foreground">inchangé</span>}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {formError && (
+            <p role="alert" className="rounded-md border border-danger-200 bg-danger-50 px-3 py-2 text-sm text-danger-700">
+              {formError}
+            </p>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+              Annuler
+            </Button>
+            <Button type="submit" disabled={submitting || stockLoading} className="gap-2">
+              {submitting ? <Spinner /> : <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />}
+              {submitLabel}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ===========================================================================
+// Fiche produit (création / modification). Le stock n'y est plus modifiable :
+// il ne bouge que par un mouvement tracé (« Ajuster le stock »).
+// ===========================================================================
+interface ProductFormValues {
+  reference: string;
+  nom: string;
+  code_barre: string;
+  categorie: string;
+  description: string;
+  prix_achat: string;
+  prix_vente: string;
+  stock_min: string;
+  initial_stock: string;
+  location_id: string;
+  fournisseur_id: string;
+}
+
+type ProductFormErrors = Partial<Record<keyof ProductFormValues, string>>;
+
+const NO_SUPPLIER = '__aucun';
+
+function ProductFormDialog({
+  state,
+  showPrices,
+  locations,
+  defaultLocationId,
+  categories,
+  onClose,
+  onSaved,
+  onAdjustStock,
+}: {
+  state: { mode: 'create' } | { mode: 'edit'; produit: InventoryProduct };
+  /**
+   * Prix d'achat et de vente dans la fiche. Faux pour le personnel dépôt
+   * (E2) : les champs disparaissent et une modification ne renvoie jamais de
+   * prix — l'API peut les lui masquer, renvoyer 0 effacerait le vrai prix.
+   */
+  showPrices: boolean;
+  locations: StockLocation[];
+  defaultLocationId: string;
+  categories: string[];
+  onClose: () => void;
+  onSaved: () => void;
+  onAdjustStock: (p: InventoryProduct) => void;
+}) {
+  const editing = state.mode === 'edit' ? state.produit : null;
+  const [values, setValues] = useState<ProductFormValues>(() => ({
+    reference: editing?.reference ?? '',
+    nom: editing?.nom ?? '',
+    code_barre: editing?.code_barre ?? '',
+    categorie: editing?.categorie ?? '',
+    description: editing?.description ?? '',
+    prix_achat: editing ? String(Math.round(editing.prix_achat)) : '',
+    prix_vente: editing ? String(Math.round(editing.prix_vente)) : '',
+    stock_min: editing ? String(editing.stock_min) : '5',
+    initial_stock: '0',
+    location_id: defaultLocationId,
+    fournisseur_id: NO_SUPPLIER,
+  }));
+  const [errors, setErrors] = useState<ProductFormErrors>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [fournisseurs, setFournisseurs] = useState<FournisseurOption[]>([]);
+  const [fournisseursError, setFournisseursError] = useState(false);
+  // En modification, le fournisseur actuel n'est pas dans la liste : il est lu
+  // sur la fiche. Tant qu'il n'est pas connu, il n'est pas renvoyé (sinon une
+  // simple correction de prix effaçait le fournisseur par défaut).
+  const [supplierKnown, setSupplierKnown] = useState(!editing);
+  const [supplierTouched, setSupplierTouched] = useState(false);
+  const supplierTouchedRef = useRef(false);
+  const editingId = editing?.id ?? null;
+
+  useEffect(() => {
+    let ignore = false;
+    tiersService
+      .getAll({ role: 'fournisseur', limit: 200 })
+      .then((response: unknown) => {
+        if (ignore) return;
+        const rows = (Array.isArray(response) ? response : (response as { data?: unknown })?.data) as
+          | FournisseurOption[]
+          | undefined;
+        setFournisseurs(rows ?? []);
+      })
+      .catch(() => {
+        if (!ignore) setFournisseursError(true);
+      });
+    if (editingId !== null) {
+      fetchProduitFournisseurId(editingId)
+        .then((id) => {
+          if (ignore) return;
+          setValues((v) => (supplierTouchedRef.current ? v : { ...v, fournisseur_id: id ? String(id) : NO_SUPPLIER }));
+          setSupplierKnown(true);
+        })
+        .catch(() => {
+          /* Fournisseur actuel inconnu : non renvoyé sauf choix explicite. */
+        });
+    }
+    return () => {
+      ignore = true;
+    };
+  }, [editingId]);
+
+  const set = (key: keyof ProductFormValues) => (value: string) => setValues((v) => ({ ...v, [key]: value }));
+
+  const validate = (): ProductFormErrors => {
+    const next: ProductFormErrors = {};
+    if (!values.reference.trim()) next.reference = 'Saisissez la référence du produit.';
+    if (!values.nom.trim()) next.nom = 'Saisissez le nom du produit.';
+    if (showPrices && !values.prix_vente.trim()) next.prix_vente = 'Saisissez le prix de vente.';
+    if (!/^\d+$/.test(values.stock_min.trim())) next.stock_min = 'Saisissez un stock minimum en nombre entier.';
+    if (!editing && !/^\d+$/.test(values.initial_stock.trim())) {
+      next.initial_stock = 'Saisissez un stock initial en nombre entier (0 si aucun).';
+    }
+    if (!editing && Number(values.initial_stock || 0) > 0 && !values.location_id) {
+      next.location_id = 'Choisissez l’emplacement qui reçoit le stock initial.';
+    }
+    return next;
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    const found = validate();
+    setErrors(found);
+    const firstKey = Object.keys(found)[0];
+    if (firstKey) {
+      document.getElementById(`produit-${firstKey}`)?.focus();
+      return;
+    }
+    setSubmitting(true);
+    const fournisseurId = values.fournisseur_id === NO_SUPPLIER ? null : Number(values.fournisseur_id);
+    const nom = values.nom.trim();
+    try {
+      if (editing) {
+        await produitService.update(editing.id, {
+          reference: values.reference.trim(),
+          nom,
+          code_barre: values.code_barre.trim(),
+          description: values.description,
+          categorie: values.categorie.trim() || null,
+          ...(showPrices
+            ? { prix_achat: Number(values.prix_achat || 0), prix_vente: Number(values.prix_vente) }
+            : {}),
+          stock_min: Number(values.stock_min),
+          ...(supplierKnown || supplierTouched ? { fournisseur_id: fournisseurId } : {}),
+        });
+        toast.success(`Produit « ${nom} » enregistré`);
+      } else {
+        const initialStock = Number(values.initial_stock || 0);
+        await produitService.create({
+          reference: values.reference.trim(),
+          nom,
+          code_barre: values.code_barre.trim(),
+          description: values.description,
+          categorie: values.categorie.trim() || null,
+          // Sans les champs de prix (dépôt), le produit est créé à 0 : il
+          // s'affiche « Prix non renseigné » jusqu'à ce qu'un gérant le fixe.
+          prix_achat: showPrices ? Number(values.prix_achat || 0) : 0,
+          prix_vente: showPrices ? Number(values.prix_vente) : 0,
+          stock_min: Number(values.stock_min),
+          stock: initialStock,
+          initial_stock: initialStock,
+          ...(values.location_id ? { location_id: Number(values.location_id) } : {}),
+          ...(fournisseurId ? { fournisseur_id: fournisseurId } : {}),
+        });
+        toast.success(`Produit « ${nom} » créé`);
+      }
+      onSaved();
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Impossible d’enregistrer le produit. Réessayez.'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const field = (
+    key: keyof ProductFormValues,
+    label: ReactNode,
+    input: ReactNode,
+    hint?: ReactNode,
+    className?: string
+  ) => (
+    <div className={cn('space-y-1.5', className)}>
+      <Label htmlFor={`produit-${key}`}>{label}</Label>
+      {input}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      <FieldError id={`produit-${key}`}>{errors[key]}</FieldError>
     </div>
+  );
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !submitting && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Modifier le produit' : 'Nouveau produit'}</DialogTitle>
+            <DialogDescription>
+              {editing
+                ? 'Modifiez la fiche du produit. Le stock se corrige avec « Ajuster le stock ».'
+                : 'Renseignez la fiche du nouveau produit. Les champs marqués d’un * sont obligatoires.'}
+              {!showPrices && ' Les prix sont fixés par un gérant.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {field(
+              'reference',
+              <>
+                Référence
+                <RequiredMark />
+              </>,
+              <Input
+                id="produit-reference"
+                value={values.reference}
+                onChange={(e) => set('reference')(e.target.value)}
+                placeholder="Ex. : REF-001"
+                autoComplete="off"
+                required
+                {...fieldErrorProps('produit-reference', errors.reference)}
+              />
+            )}
+            {field(
+              'nom',
+              <>
+                Nom
+                <RequiredMark />
+              </>,
+              <Input
+                id="produit-nom"
+                value={values.nom}
+                onChange={(e) => set('nom')(e.target.value)}
+                placeholder="Ex. : Clavier Logitech K120"
+                required
+                {...fieldErrorProps('produit-nom', errors.nom)}
+              />
+            )}
+            {field(
+              'code_barre',
+              'Code-barres',
+              <Input
+                id="produit-code_barre"
+                value={values.code_barre}
+                onChange={(e) => set('code_barre')(e.target.value)}
+                placeholder="Ex. : 3245678901234"
+                inputMode="numeric"
+                autoComplete="off"
+              />,
+              'Scannez-le ou saisissez-le : il permet de retrouver le produit à la vente'
+            )}
+            {field(
+              'categorie',
+              'Catégorie',
+              <>
+                <Input
+                  id="produit-categorie"
+                  value={values.categorie}
+                  onChange={(e) => set('categorie')(e.target.value)}
+                  placeholder="Ex. : Périphériques"
+                  list="produit-categories"
+                  autoComplete="off"
+                />
+                <datalist id="produit-categories">
+                  {categories.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+              </>
+            )}
+            {field(
+              'fournisseur_id',
+              'Fournisseur par défaut',
+              <Select
+                value={values.fournisseur_id}
+                onValueChange={(v) => {
+                  supplierTouchedRef.current = true;
+                  setSupplierTouched(true);
+                  set('fournisseur_id')(v);
+                }}
+              >
+                <SelectTrigger id="produit-fournisseur_id">
+                  <SelectValue placeholder="Aucun" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_SUPPLIER}>Aucun</SelectItem>
+                  {fournisseurs.map((f) => (
+                    <SelectItem key={f.id} value={String(f.id)}>
+                      {f.raison_sociale}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>,
+              fournisseursError ? 'Impossible de charger les fournisseurs : la liste est vide.' : undefined
+            )}
+            {field(
+              'stock_min',
+              'Stock minimum',
+              <Input
+                id="produit-stock_min"
+                inputMode="numeric"
+                value={values.stock_min}
+                onChange={(e) => set('stock_min')(e.target.value.replace(/[^\d]/g, ''))}
+                className="tabular-nums"
+                {...fieldErrorProps('produit-stock_min', errors.stock_min)}
+              />,
+              'Sous ce seuil, le produit passe en «\u00A0Stock bas\u00A0»'
+            )}
+            {showPrices &&
+              field(
+                'prix_achat',
+                'Prix d’achat',
+                <MoneyInput
+                  id="produit-prix_achat"
+                  value={values.prix_achat}
+                  onChange={set('prix_achat')}
+                  {...fieldErrorProps('produit-prix_achat', errors.prix_achat)}
+                />
+              )}
+            {showPrices &&
+              field(
+                'prix_vente',
+                <>
+                  Prix de vente
+                  <RequiredMark />
+                </>,
+                <MoneyInput
+                  id="produit-prix_vente"
+                  value={values.prix_vente}
+                  onChange={set('prix_vente')}
+                  required
+                  {...fieldErrorProps('produit-prix_vente', errors.prix_vente)}
+                />
+              )}
+            {!editing && (
+              <>
+                {field(
+                  'location_id',
+                  'Emplacement du stock initial',
+                  <Select value={values.location_id || undefined} onValueChange={set('location_id')}>
+                    <SelectTrigger
+                      id="produit-location_id"
+                      {...fieldErrorProps('produit-location_id', errors.location_id)}
+                    >
+                      <SelectValue placeholder="Choisir un emplacement…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {locations.map((l) => (
+                        <SelectItem key={l.id} value={String(l.id)}>
+                          {l.nom}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {field(
+                  'initial_stock',
+                  'Stock initial',
+                  <Input
+                    id="produit-initial_stock"
+                    inputMode="numeric"
+                    value={values.initial_stock}
+                    onChange={(e) => set('initial_stock')(e.target.value.replace(/[^\d]/g, ''))}
+                    className="tabular-nums"
+                    {...fieldErrorProps('produit-initial_stock', errors.initial_stock)}
+                  />
+                )}
+              </>
+            )}
+            {field(
+              'description',
+              'Description',
+              <Input
+                id="produit-description"
+                value={values.description}
+                onChange={(e) => set('description')(e.target.value)}
+                placeholder="Facultatif"
+              />,
+              undefined,
+              'sm:col-span-2'
+            )}
+          </div>
+
+          {editing && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              <span>
+                Stock affiché : <span className="font-medium tabular-nums">{formatNumber(editing.stock)}</span>. Pour
+                le corriger, ajustez-le avec un motif.
+              </span>
+              <Button type="button" variant="outline" className="gap-1.5" onClick={() => onAdjustStock(editing)}>
+                <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                Ajuster le stock
+              </Button>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+              Annuler
+            </Button>
+            <Button type="submit" disabled={submitting} className="gap-2">
+              {submitting && <Spinner />}
+              {editing ? 'Enregistrer les modifications' : 'Créer le produit'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ===========================================================================
+// Changer la catégorie de plusieurs produits.
+// ===========================================================================
+function CategoryDialog({
+  products,
+  categories,
+  onClose,
+  onDone,
+}: {
+  products: InventoryProduct[];
+  categories: string[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [categorie, setCategorie] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const n = products.length;
+  const error = categorie.trim() ? null : 'Saisissez ou choisissez une catégorie.';
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setSubmitted(true);
+    if (error) {
+      document.getElementById('categorie-groupee')?.focus();
+      return;
+    }
+    setSubmitting(true);
+    let done = 0;
+    let firstError: string | null = null;
+    for (const p of products) {
+      try {
+        await produitService.update(p.id, { categorie: categorie.trim() });
+        done++;
+      } catch (err) {
+        firstError ??= getErrorMessage(err, `Impossible de changer la catégorie de « ${p.nom} ».`);
+      }
+    }
+    setSubmitting(false);
+    if (done > 0) {
+      toast.success(
+        done > 1
+          ? `Catégorie « ${categorie.trim()} » appliquée à ${formatNumber(done)} produits`
+          : `Catégorie « ${categorie.trim()} » appliquée à 1 produit`
+      );
+    }
+    const failed = n - done;
+    if (failed > 0) {
+      toast.error(`${failed > 1 ? `${formatNumber(failed)} modifications ont échoué` : 'Une modification a échoué'} : ${firstError}`);
+    }
+    if (done > 0) onDone();
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !submitting && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4">
+          <DialogHeader>
+            <DialogTitle>Changer la catégorie</DialogTitle>
+            <DialogDescription>
+              {n > 1
+                ? `Les ${formatNumber(n)} produits sélectionnés passeront dans cette catégorie`
+                : `« ${products[0]?.nom} » passera dans cette catégorie`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="categorie-groupee">
+              Nouvelle catégorie
+              <RequiredMark />
+            </Label>
+            <Input
+              id="categorie-groupee"
+              list="categories-existantes"
+              value={categorie}
+              onChange={(e) => setCategorie(e.target.value)}
+              autoComplete="off"
+              required
+              {...fieldErrorProps('categorie-groupee', submitted && error)}
+            />
+            <datalist id="categories-existantes">
+              {categories.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+            <FieldError id="categorie-groupee">{submitted ? error : null}</FieldError>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+              Annuler
+            </Button>
+            <Button type="submit" disabled={submitting} className="gap-2">
+              {submitting && <Spinner />}
+              {n > 1 ? `Changer la catégorie des ${formatNumber(n)} produits` : 'Changer la catégorie'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ===========================================================================
+// Historique des mouvements d'un produit.
+// ===========================================================================
+function HistoryDialog({
+  product,
+  locationName,
+  onClose,
+}: {
+  product: InventoryProduct;
+  locationName: (id: number | null) => string | null;
+  onClose: () => void;
+}) {
+  const [movements, setMovements] = useState<StockMovement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const rows = (await produitService.getStockHistory(product.id, 50)) as unknown;
+      setMovements(Array.isArray(rows) ? (rows as StockMovement[]) : []);
+    } catch (err) {
+      setError(err);
+      setMovements([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [product.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="pr-8">Historique des mouvements — {product.nom}</DialogTitle>
+          <DialogDescription>
+            Référence <DocumentCode>{product.reference}</DocumentCode>. Les 50 derniers mouvements de stock, du plus
+            récent au plus ancien.
+          </DialogDescription>
+        </DialogHeader>
+        <div
+          className="min-h-0 flex-1 overflow-y-auto rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          tabIndex={0}
+          role="region"
+          aria-label="Mouvements de stock"
+        >
+          {loading ? (
+            <LoadingState inCell message="Chargement de l’historique…" />
+          ) : error ? (
+            <QueryErrorState error={error} title="Impossible de charger l’historique" onRetry={() => void load()} />
+          ) : movements.length === 0 ? (
+            <EmptyState
+              compact
+              icon={History}
+              title="Aucun mouvement enregistré"
+              description="Les ventes, réceptions, transferts et ajustements de ce produit apparaîtront ici"
+            />
+          ) : (
+            <ul className="divide-y rounded-md border">
+              {movements.map((m) => {
+                const quantite = Math.trunc(num(m.quantite));
+                const entrant = quantite > 0;
+                const where = locationName(m.location_id);
+                return (
+                  <li key={m.id} className="flex items-start justify-between gap-3 px-3 py-2.5">
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="text-sm font-medium">{MOVEMENT_LABELS[m.type_mouvement] ?? 'Autre mouvement'}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatDateTime(m.date_mouvement)}
+                        {where ? ` · ${where}` : ''}
+                      </p>
+                      {m.raison && <p className="break-words text-xs text-muted-foreground">Motif : {m.raison}</p>}
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p
+                        className={cn(
+                          'text-sm font-medium tabular-nums',
+                          entrant ? 'text-success-700' : quantite < 0 ? 'text-danger-700' : undefined
+                        )}
+                      >
+                        {entrant ? '+' : quantite < 0 ? MINUS : ''}
+                        {formatNumber(Math.abs(quantite))}
+                        <span className="sr-only">{entrant ? ' entrée' : quantite < 0 ? ' sortie' : ''}</span>
+                      </p>
+                      {m.stock_avant !== null && m.stock_apres !== null && (
+                        <p className="text-xs tabular-nums text-muted-foreground">
+                          Stock : {formatNumber(num(m.stock_avant))} → {formatNumber(num(m.stock_apres))}
+                        </p>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ===========================================================================
+// Informations d'achat d'un produit (fournisseur, prix d'achat, acheteurs).
+// ===========================================================================
+function PurchaseInfoDialog({ product, onClose }: { product: InventoryProduct; onClose: () => void }) {
+  const [info, setInfo] = useState<PurchaseInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setInfo((await produitService.getPurchaseInfo(product.id)) as PurchaseInfo);
+    } catch (err) {
+      setInfo(null);
+      setError(err);
+    } finally {
+      setLoading(false);
+    }
+  }, [product.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const history = info
+    ? [
+        ...(info.purchase_history ?? []).map((item) => ({ ...item, source: 'Facture fournisseur' })),
+        ...(info.order_history ?? []).map((item) => ({ ...item, source: 'Commande fournisseur' })),
+      ].sort((a, b) => new Date(b.date ?? 0).getTime() - new Date(a.date ?? 0).getTime())
+    : [];
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="pr-8">Informations d’achat — {product.nom}</DialogTitle>
+          <DialogDescription>
+            Référence <DocumentCode>{product.reference}</DocumentCode>. Fournisseur, prix d’achat et client qui achète
+            le plus ce produit.
+          </DialogDescription>
+        </DialogHeader>
+        <div
+          className="min-h-0 flex-1 space-y-4 overflow-y-auto rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          tabIndex={0}
+          role="region"
+          aria-label="Informations d’achat"
+        >
+          {loading ? (
+            <LoadingState inCell message="Chargement des informations d’achat…" />
+          ) : error || !info ? (
+            <QueryErrorState
+              error={error}
+              title="Impossible de charger les informations d’achat"
+              onRetry={() => void load()}
+            />
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <section className="space-y-1 rounded-lg border p-4">
+                  <h3 className="text-sm font-medium text-muted-foreground">Fournisseur par défaut</h3>
+                  {info.default_supplier ? (
+                    <>
+                      <p className="font-medium">{info.default_supplier.raison_sociale}</p>
+                      {info.default_supplier.telephone && (
+                        <p className="text-sm text-muted-foreground">Tél. : {info.default_supplier.telephone}</p>
+                      )}
+                      {info.default_supplier.email && (
+                        <p className="break-all text-sm text-muted-foreground">E-mail : {info.default_supplier.email}</p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Aucun fournisseur par défaut</p>
+                  )}
+                </section>
+                <section className="space-y-1 rounded-lg border p-4">
+                  <h3 className="text-sm font-medium text-muted-foreground">Prix d’achat</h3>
+                  {info.price_stats ? (
+                    <>
+                      {info.price_stats.prix_min === info.price_stats.prix_max ? (
+                        <p className="text-xl font-medium">
+                          <Money value={info.price_stats.prix_min} />
+                        </p>
+                      ) : (
+                        <p className="text-lg font-medium">
+                          <Money value={info.price_stats.prix_min} /> – <Money value={info.price_stats.prix_max} />
+                        </p>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        Moyenne : <Money value={info.price_stats.prix_moyen} /> ·{' '}
+                        {plural(info.price_stats.total_achats, 'achat', 'achats')}
+                      </p>
+                      {info.recent_purchase && (
+                        <p className="border-t pt-1 text-xs text-muted-foreground">
+                          Dernier achat : <Money value={info.recent_purchase.prix_unitaire} />
+                          {info.recent_purchase.fournisseur ? ` chez ${info.recent_purchase.fournisseur}` : ''}
+                          {info.recent_purchase.date ? `, le ${formatDate(info.recent_purchase.date)}` : ''}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xl font-medium">
+                        <Money value={info.prix_achat} />
+                      </p>
+                      <p className="text-xs text-muted-foreground">Prix de la fiche : aucun achat enregistré</p>
+                    </>
+                  )}
+                </section>
+              </div>
+
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium text-muted-foreground">Derniers achats</h3>
+                {history.length === 0 ? (
+                  <EmptyState
+                    compact
+                    icon={Package}
+                    title="Aucun achat enregistré pour ce produit"
+                    description="Les commandes et factures fournisseur de ce produit apparaîtront ici"
+                  />
+                ) : (
+                  <Table aria-label="Derniers achats" containerClassName="rounded-md border">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Fournisseur</TableHead>
+                        <TableHead>Document</TableHead>
+                        <TableHead numeric>Quantité</TableHead>
+                        <TableHead numeric>Prix unitaire</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {history.map((item, i) => (
+                        <TableRow key={`${item.source}-${item.numero ?? i}-${i}`}>
+                          <TableCell className="whitespace-nowrap">{formatDate(item.date)}</TableCell>
+                          <TableCell>{item.fournisseur || '—'}</TableCell>
+                          <TableCell>
+                            {item.numero ? <DocumentCode className="text-xs">{item.numero}</DocumentCode> : '—'}
+                            <span className="block text-xs text-muted-foreground">{item.source}</span>
+                          </TableCell>
+                          <TableCell numeric>{formatNumber(num(item.quantite))}</TableCell>
+                          <TableCell numeric>
+                            <Money value={item.prix_unitaire} />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </section>
+
+              <section className="space-y-1 rounded-lg border p-4">
+                <h3 className="text-sm font-medium text-muted-foreground">Client qui en achète le plus</h3>
+                {info.top_buyer ? (
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium">
+                        {[info.top_buyer.prenom, info.top_buyer.raison_sociale].filter(Boolean).join(' ')}
+                      </p>
+                      {info.top_buyer.telephone && (
+                        <p className="text-sm text-muted-foreground">Tél. : {info.top_buyer.telephone}</p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-medium tabular-nums">
+                        {plural(info.top_buyer.total_quantite, 'unité', 'unités')}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {plural(info.top_buyer.nombre_factures, 'facture', 'factures')} ·{' '}
+                        <Money value={info.top_buyer.total_depense} />
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Aucune vente enregistrée pour ce produit</p>
+                )}
+              </section>
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

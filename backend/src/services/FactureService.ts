@@ -1,16 +1,53 @@
+import type { PoolClient } from 'pg';
 import pool from '../db/connection';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
-import { calculateTotals } from './PricingService';
+import { calculateTotals, roundMoney } from './PricingService';
 import { generateDocumentNumber } from './NumberingService';
 import { businessError } from '../utils/errors';
+import { formatMontantFcfa } from '../utils/money';
+import { paiementAcompteLisible } from '../utils/caisseLibelle';
 import { ClientAllocationService } from './ClientAllocationService';
 import { checkPeriodIsOpen } from './PeriodService';
 import { creditService } from './CreditService';
 import { NotificationService } from './NotificationService';
+import { applyStockMovement } from './StockCostingService';
 import {
   resolveSalesLocationId,
 } from './StockMagasinService';
+
+/** Ce que l'annulation d'une facture a fait, pour le message et l'écran. */
+export interface FactureAnnulationResult {
+  id: number;
+  numero_facture: string;
+  statut: 'annulee';
+  /** Lignes de contre-passation écrites au grand livre. */
+  ecritures_contre_passees: number;
+  articles_remis_en_stock: Array<{
+    produit_id: number;
+    produit_nom: string;
+    quantite: number;
+    location_id: number;
+    location_nom: string;
+  }>;
+  emplacements: Array<{ id: number; nom: string }>;
+  /** Bons de livraison livrés de la vente, annulés avec elle. */
+  bons_livraison_annules: Array<{ id: number; numero_bl: string }>;
+  message: string;
+}
+
+/** Ligne de remise en stock, avant agrégation. */
+interface RestockItem {
+  produitId: number;
+  locationId: number;
+  quantite: number;
+}
+
+/** « 10/2026 » depuis le message du trigger 075 ou de PeriodService. */
+function periodFromMessage(message: string): string | null {
+  const match = /(\d{2})\/(\d{4})/.exec(message);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
 
 export interface FactureLigneInput {
   produit_id: number;
@@ -28,6 +65,12 @@ export interface CreateFactureInput {
   req?: any; // Express request for audit
   remise_globale?: number;
   remise_globale_pct?: number;
+}
+
+/** Product name for a user-facing message (never an internal id alone). */
+async function produitNom(client: { query: (text: string, params?: any[]) => Promise<{ rows: any[] }> }, produitId: number): Promise<string> {
+  const { rows } = await client.query('SELECT nom FROM produits WHERE id = $1', [produitId]);
+  return rows[0]?.nom ?? `n° ${produitId}`;
 }
 
 export class FactureService {
@@ -169,10 +212,19 @@ export class FactureService {
    * Get invoice by ID with lines and payments
    */
   async getById(id: number): Promise<any> {
+    // cree_par_nom : le vendeur, selon la règle des commissions (100) —
+    // créateur de la facture, sinon du BL, sinon du devis d'origine : une
+    // facture issue d'une conversion n'a souvent pas de cree_par.
     const { rows: factureRows } = await pool.query(
-      `SELECT f.*, t.raison_sociale as client_nom, t.prenom as client_prenom, t.email, t.telephone, t.adresse, t.nif
+      `SELECT f.*, t.raison_sociale as client_nom, t.prenom as client_prenom, t.code AS client_code, t.email, t.telephone, t.adresse, t.nif,
+              COALESCE(NULLIF(TRIM(u.nom_complet), ''), u.username) AS cree_par_nom
        FROM factures f
        LEFT JOIN tiers t ON f.tiers_id = t.id
+       LEFT JOIN utilisateurs u ON u.id = COALESCE(
+         f.cree_par,
+         (SELECT bl.cree_par FROM bons_livraison bl WHERE bl.id = f.bl_id),
+         (SELECT d.cree_par FROM devis d WHERE d.id = f.devis_id)
+       )
        WHERE f.id = $1 AND f.deleted_at IS NULL`,
       [id]
     );
@@ -204,17 +256,44 @@ export class FactureService {
       [id]
     );
 
+    // Chaque ligne dit si elle se supprime (`supprimable`) et sinon pourquoi
+    // (`suppression_bloquee`), avec les mêmes règles que DELETE /paiements/:id :
+    // une application d'acompte s'annule côté acompte (409 sinon), un
+    // encaissement d'une session de caisse clôturée ou d'une période fermée ne
+    // bouge plus. Les anciennes imputations d'acompte (avant 048, id négatif)
+    // ne sont pas des paiements : jamais supprimables ici.
     const { rows: paiementsRows } = await pool.query(
-      `SELECT id, montant, methode_paiement, date_paiement, reference
-       FROM paiements
-       WHERE facture_id = $1
+      `SELECT p.id, p.montant, p.methode_paiement, p.date_paiement, p.reference, p.notes, p.source,
+              (SELECT aa.acompte_id FROM acompte_applications aa WHERE aa.paiement_id = p.id LIMIT 1) AS acompte_id,
+              CASE
+                WHEN p.source = 'acompte_application'
+                  THEN 'Paiement pris sur un acompte : annulez l’application de l’acompte.'
+                WHEN s.statut IS NOT NULL AND s.statut <> 'ouverte'
+                  THEN 'Encaissé dans une session de caisse clôturée.'
+                WHEN pc.statut = 'fermee'
+                  THEN 'Période comptable clôturée.'
+              END AS suppression_bloquee
+       FROM paiements p
+       LEFT JOIN mouvements_caisse m ON m.id = p.mouvement_caisse_id
+       LEFT JOIN sessions_caisse s ON s.id = m.session_caisse_id
+       LEFT JOIN periodes_comptables pc
+         ON pc.exercice = EXTRACT(YEAR FROM p.date_paiement)::int
+        AND pc.periode = EXTRACT(MONTH FROM p.date_paiement)::int
+       WHERE p.facture_id = $1 AND p.deleted_at IS NULL
        UNION ALL
-       SELECT -id as id, montant, 'acompte' as methode_paiement, date_utilisation as date_paiement, 'Acompte #' || id as reference
-       FROM acomptes_clients
-       WHERE facture_id_applique = $1 AND statut = 'utilise'
+       SELECT -ac.id AS id, ac.montant, 'acompte' AS methode_paiement, ac.date_utilisation AS date_paiement,
+              'Acompte n° ' || ac.id AS reference, ac.notes, 'acompte_application' AS source,
+              ac.id AS acompte_id,
+              'Ancienne imputation d’acompte : elle ne se supprime pas ici.' AS suppression_bloquee
+       FROM acomptes_clients ac
+       WHERE ac.facture_id_applique = $1 AND ac.statut = 'utilise' AND ac.deleted_at IS NULL
        ORDER BY date_paiement DESC`,
       [id]
     );
+    const paiements = paiementsRows.map((p: any) => ({
+      ...paiementAcompteLisible(p),
+      supprimable: p.suppression_bloquee === null,
+    }));
 
     // Le lien d'origine est porté dans les deux sens selon le chemin de
     // création (factures.devis_id/bl_id côté conversions récentes,
@@ -251,10 +330,16 @@ export class FactureService {
       [id]
     );
 
+    // E1-R1 : quand les paiements listés ne font pas le montant payé (données
+    // ré-imputées selon E1, facture annulée), dire où est allé l'excédent et
+    // d'où vient ce qui a été reçu d'une autre facture.
+    const reports = await ClientAllocationService.getFactureReports(factureRows[0], paiementsRows);
+
     return {
       ...factureRows[0],
       lignes: lignesRows,
-      paiements: paiementsRows,
+      paiements,
+      ...reports,
       origine: originRows[0] || null,
     };
   }
@@ -267,7 +352,34 @@ export class FactureService {
 
     try {
       await client.query('BEGIN');
+      const { result, afterCommit } = await this.createInTransaction(client, input);
+      await client.query('COMMIT');
+      afterCommit();
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      logger.error({ err: error }, 'Error creating invoice');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 
+  /**
+   * Corps de `create`, dans une transaction ouverte par l'appelant (la vente
+   * comptoir y ajoute ses paiements avant le COMMIT). `afterCommit` envoie les
+   * notifications : à n'appeler qu'une fois la transaction validée.
+   *
+   * `paiementImmediat` : l'appelant encaisse le total dans la même
+   * transaction, la facture n'ouvre donc aucun crédit — le plafond du client
+   * n'a pas à être vérifié.
+   */
+  async createInTransaction(
+    client: PoolClient,
+    input: CreateFactureInput,
+    options: { paiementImmediat?: boolean } = {}
+  ): Promise<{ result: { id: number; numero_facture: string; total: number }; afterCommit: () => void }> {
+    {
       // Reject posts to closed accounting periods
       await checkPeriodIsOpen(new Date(), client);
 
@@ -301,12 +413,12 @@ export class FactureService {
         for (const ligne of lignes) {
           const info = infoByProduit.get(ligne.produit_id);
           if (!info) {
-            throw businessError(404, `Produit ID ${ligne.produit_id} non trouvé`);
+            throw businessError(404, `Produit introuvable (n° ${ligne.produit_id}) : il a peut-être été supprimé.`);
           }
           if (parseInt(info.stock_location, 10) < ligne.quantite) {
             throw businessError(
               422,
-              `Stock insuffisant pour "${info.nom}" dans cette location (disponible: ${info.stock_location}, demande: ${ligne.quantite})`
+              `Stock insuffisant pour « ${info.nom} » : ${info.stock_location} disponible(s) à cet emplacement, ${ligne.quantite} demandé(s).`
             );
           }
           purchasePricesMap.set(ligne.produit_id, parseFloat(info.prix_achat || '0.00'));
@@ -341,7 +453,9 @@ export class FactureService {
       );
 
       // Enforce client credit limit (live outstanding + row lock, shared with BL path)
-      await creditService.assertWithinCreditLimit(client, tiers_id, total);
+      if (!options.paiementImmediat) {
+        await creditService.assertWithinCreditLimit(client, tiers_id, total);
+      }
 
       const delaiPaiement = clientRows[0].delai_paiement || 'immediat';
       const dateEcheance = this.formatDateForPg(this.calculateDueDate(delaiPaiement));
@@ -435,7 +549,7 @@ export class FactureService {
         const balances = isLegacy ? legacyStock : splStock;
         const currentStock = balances.get(ligne.produit_id) ?? 0;
         if (currentStock < ligne.quantite) {
-          throw businessError(422, `Stock insuffisant pour le produit ${ligne.produit_id}. Stock location disponible: ${currentStock}, quantite demandee: ${ligne.quantite}`);
+          throw businessError(422, `Stock insuffisant pour « ${await produitNom(client, ligne.produit_id)} » : ${currentStock} disponible(s) à cet emplacement, ${ligne.quantite} demandé(s).`);
         }
         balances.set(ligne.produit_id, currentStock - ligne.quantite);
         const deductions = isLegacy ? deductLegacy : deductSpl;
@@ -461,7 +575,7 @@ export class FactureService {
         if (updated.length !== ids.length) {
           const ok = new Set(updated.map((r: any) => Number(r.produit_id)));
           const failed = ids.find((id) => !ok.has(id));
-          throw businessError(422, `Stock insuffisant (race) pour le produit ${failed} dans cette location`);
+          throw businessError(422, `Stock insuffisant pour « ${await produitNom(client, failed!)} » : il vient d’être vendu depuis un autre poste. Vérifiez le stock et réessayez.`);
         }
       }
       if (deductLegacy.size > 0) {
@@ -478,7 +592,7 @@ export class FactureService {
         if (updated.length !== ids.length) {
           const ok = new Set(updated.map((r: any) => Number(r.id)));
           const failed = ids.find((id) => !ok.has(id));
-          throw businessError(422, `Stock insuffisant (race) pour le produit ${failed}`);
+          throw businessError(422, `Stock insuffisant pour « ${await produitNom(client, failed!)} » : il vient d’être vendu depuis un autre poste. Vérifiez le stock et réessayez.`);
         }
       }
 
@@ -522,87 +636,75 @@ export class FactureService {
         ]
       );
 
-      await client.query('COMMIT');
-
       // Notifications temps réel — après le COMMIT et non bloquantes : une panne
       // de notification ne doit jamais annuler une vente déjà enregistrée.
-      NotificationService.safely(() =>
-        NotificationService.invoiceCreated({
-          id: factureId,
-          numero: numeroFacture,
-          total,
-          client_nom: clientRows[0].nom,
-        })
-      );
-      NotificationService.safely(() => NotificationService.checkLowStock(produitIds));
+      const afterCommit = () => {
+        NotificationService.safely(() =>
+          NotificationService.invoiceCreated({
+            id: factureId,
+            numero: numeroFacture,
+            total,
+            client_nom: clientRows[0].nom,
+          })
+        );
+        NotificationService.safely(() => NotificationService.checkLowStock(produitIds));
+      };
 
-      return { id: factureId, numero_facture: numeroFacture, total };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      logger.error({ err: error }, 'Error creating invoice');
-      throw error;
-    } finally {
-      client.release();
+      return { result: { id: factureId, numero_facture: numeroFacture, total }, afterCommit };
     }
   }
 
   /**
-   * Update invoice status
-   * Only 'annulee' and 'en_attente' may be set manually.
-   * 'payee' and 'partielle' are computed exclusively by the payment trigger.
+   * Update invoice status. Only 'annulee' and 'en_attente' may be asked for:
+   * 'payee' / 'partielle' derive from the payments.
+   *
+   * 'annulee' runs the full cancellation (see `annuler`): contra GL entries,
+   * restock, client balance. 'en_attente' never revives a cancelled invoice
+   * (its entries were reversed and its goods restocked) and never overrides a
+   * paid status; on an unpaid invoice it is a no-op.
    */
   async updateStatut(id: number, statut: string, userId?: number, req?: any): Promise<boolean> {
-    // Whitelist of manually-settable statuses ('payee'/'partielle' are trigger-computed)
-    const ALLOWED_STATUTS = ['en_attente', 'annulee'];
     if (statut === 'payee' || statut === 'partielle') {
-      throw new Error(`Le statut '${statut}' est calculé automatiquement par les paiements et ne peut pas être défini manuellement.`);
+      throw businessError(
+        400,
+        'Le statut « payée » ou « partiellement payée » découle des paiements : il ne se choisit pas.'
+      );
     }
-    if (!ALLOWED_STATUTS.includes(statut)) {
-      throw new Error(`Statut invalide: '${statut}'`);
+    if (statut !== 'en_attente' && statut !== 'annulee') {
+      throw businessError(400, 'Statut de facture inconnu.');
+    }
+
+    if (statut === 'annulee') {
+      return (await this.annuler(id, userId, req)) !== null;
     }
 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-
-      // Lock the invoice row so the payment check and the status change are atomic (no TOCTOU)
-      const { rows: factRows } = await client.query(
-        'SELECT id FROM factures WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      const { rows } = await client.query(
+        'SELECT numero_facture, statut, montant_paye FROM factures WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
         [id]
       );
-      if (factRows.length === 0) {
+      if (rows.length === 0) {
         await client.query('ROLLBACK');
         return false;
       }
-
-      if (statut === 'annulee') {
-        const { rows } = await client.query(
-          'SELECT COALESCE(SUM(montant), 0) as total_paye FROM paiements WHERE facture_id = $1',
-          [id]
+      const facture = rows[0];
+      if (facture.statut === 'annulee') {
+        throw businessError(
+          409,
+          `La facture ${facture.numero_facture} est annulée : ses écritures ont été contre-passées et ses articles remis en stock. Établissez une nouvelle facture.`,
+          'FACTURE_ANNULEE'
         );
-        if (parseFloat(rows[0].total_paye) > 0) {
-          throw new Error('Impossible d\'annuler une facture ayant des paiements enregistrés. Supprimez les paiements d\'abord.');
-        }
       }
-
-      const { rowCount } = await client.query(
-        'UPDATE factures SET statut = $1 WHERE id = $2 AND deleted_at IS NULL',
-        [statut, id]
-      );
-
-      if ((rowCount ?? 0) > 0 && userId) {
-        await logAudit({
-          utilisateur_id: userId,
-          action: 'update',
-          table_name: 'factures',
-          record_id: id,
-          req,
-          new_values: { statut },
-        });
+      if (parseFloat(facture.montant_paye) > 0) {
+        throw businessError(
+          409,
+          `Le statut de la facture ${facture.numero_facture} découle de ses paiements : il ne se modifie pas à la main.`
+        );
       }
-
       await client.query('COMMIT');
-      return (rowCount ?? 0) > 0;
+      return true;
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -612,7 +714,428 @@ export class FactureService {
   }
 
   /**
-   * Soft delete invoice with optional stock restoration
+   * Cancel an unpaid invoice (decision 2026-10-23: cancelling reverses its
+   * accounting and restocks). One transaction, invoice row locked:
+   *
+   *  1. Refused (409) when anything is settled on it (payments, acompte
+   *     applications, old-style acompte imputations, FIFO allocation), when a
+   *     pending/approved return or an active avoir refers to it, or when it is
+   *     already cancelled; refused (422 PERIOD_CLOSED) when the current
+   *     accounting period is closed — the 075 trigger enforces the same thing
+   *     on every contra line.
+   *  2. Contra entries: every line the 072 trigger posted for the invoice
+   *     (piece_type 'facture') is mirrored — same journal, account (compte_id
+   *     AND compte_numero, whichever the posting carried), tiers, debit/credit
+   *     swapped — dated today, libellé « Annulation facture FAC-… ». The
+   *     invoice's net effect on every account is then zero.
+   *  3. Restock with one mouvements_stock row per product: a counter invoice
+   *     returns its own lines at its location; an invoice issued from delivery
+   *     notes returns what those BLs delivered, at their location, and the BLs
+   *     are cancelled with it (they cannot be cancelled again → no double
+   *     restock). Inflows are costed at the sale-time unit cost (same rule as a
+   *     client return), so cmp/valeur_stock stay consistent (076).
+   *  4. Customer ledger credit line, FIFO recompute capped to the acompte money
+   *     already counted (no deposit gets spent as a side effect), so the
+   *     client's balance drops by the invoice total.
+   *
+   * Commissions need no write: payroll and the employee sheet already skip the
+   * commissions of cancelled invoices (100).
+   *
+   * Returns null when the invoice does not exist (or is deleted).
+   */
+  async annuler(id: number, userId?: number, req?: any): Promise<FactureAnnulationResult | null> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const { rows: factRows } = await client.query(
+        `SELECT id, numero_facture, statut, tiers_id, total, montant_paye, location_id, bl_id, devis_id
+         FROM factures
+         WHERE id = $1 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [id]
+      );
+      if (factRows.length === 0) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const facture = factRows[0];
+      const numero: string = facture.numero_facture;
+
+      if (facture.statut === 'annulee') {
+        throw businessError(409, `La facture ${numero} est déjà annulée.`, 'FACTURE_DEJA_ANNULEE');
+      }
+
+      // Nothing may be settled on it: payment rows (direct or from an acompte),
+      // pre-048 acompte imputations, or money the FIFO allocation put there.
+      const { rows: paidRows } = await client.query(
+        `SELECT
+           COALESCE((SELECT SUM(montant) FROM paiements
+                     WHERE facture_id = $1 AND deleted_at IS NULL), 0)
+         + COALESCE((SELECT SUM(montant) FROM acomptes_clients
+                     WHERE facture_id_applique = $1 AND statut = 'utilise' AND deleted_at IS NULL), 0) AS regle`,
+        [id]
+      );
+      const regle = Math.max(
+        roundMoney(parseFloat(paidRows[0].regle) || 0),
+        roundMoney(parseFloat(facture.montant_paye) || 0)
+      );
+      if (regle > 0) {
+        throw businessError(
+          409,
+          `Impossible d’annuler la facture ${numero} : ${formatMontantFcfa(regle)} y sont déjà réglés. Supprimez d’abord ses paiements, ou établissez un avoir.`,
+          'FACTURE_REGLEE'
+        );
+      }
+
+      const { rows: retourRows } = await client.query(
+        `SELECT r.numero_retour
+         FROM retours r
+         WHERE r.statut IN ('en_attente', 'traite')
+           AND EXISTS (SELECT 1 FROM retour_lignes rl WHERE rl.retour_id = r.id AND rl.facture_id = $1)
+         ORDER BY r.id
+         LIMIT 1`,
+        [id]
+      );
+      if (retourRows[0]) {
+        throw businessError(
+          409,
+          `Impossible d’annuler la facture ${numero} : le retour ${retourRows[0].numero_retour} la concerne. Annulez d’abord ce retour.`,
+          'FACTURE_RETOUR_ACTIF'
+        );
+      }
+
+      const { rows: avoirRows } = await client.query(
+        `SELECT numero_avoir
+         FROM factures_avoir
+         WHERE (facture_origine_id = $1 OR facture_appliquee_id = $1)
+           AND deleted_at IS NULL
+           AND statut IS DISTINCT FROM 'annule'
+         ORDER BY id
+         LIMIT 1`,
+        [id]
+      );
+      if (avoirRows[0]) {
+        throw businessError(
+          409,
+          `Impossible d’annuler la facture ${numero} : l’avoir ${avoirRows[0].numero_avoir} la concerne. Annulez d’abord cet avoir.`,
+          'FACTURE_AVOIR_ACTIF'
+        );
+      }
+
+      // The contra entries are dated today: a closed current period refuses
+      // them. Friendly check first; the 075 trigger stays the hard guarantee.
+      try {
+        await checkPeriodIsOpen(new Date(), client);
+      } catch (err: any) {
+        if (err?.code === 'PERIOD_CLOSED') throw this.periodClosedError(numero, err.message);
+        throw err;
+      }
+
+      // Read before anything changes (see ClientAllocationService).
+      const countedAcomptes = await ClientAllocationService.countedAcompteMoney(facture.tiers_id, client);
+
+      const ecrituresContrePassees = await this.contrePasserEcritures(client, id, numero, userId);
+
+      const restock = await this.remettreEnStock(client, facture);
+
+      await client.query(
+        `UPDATE factures
+         SET statut = 'annulee', montant_paye = 0, remaining_due = 0, modifie_par = $2
+         WHERE id = $1`,
+        [id, userId ?? null]
+      );
+
+      await client.query(
+        `INSERT INTO compte_client_lignes
+           (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
+         VALUES ($1, 'ajustement', $2, $3, 0, $4, $5, $6)`,
+        [facture.tiers_id, id, numero, facture.total, `Annulation facture ${numero}`, userId ?? null]
+      );
+
+      await ClientAllocationService.recomputeClientAllocations(facture.tiers_id, {
+        transaction: client,
+        userId: userId ?? null,
+        acomptePoolCap: countedAcomptes,
+      });
+
+      const message = this.annulationMessage(numero, ecrituresContrePassees, restock);
+
+      // Audit inside the transaction: atomic with the cancellation.
+      await client.query(
+        `INSERT INTO audit_log (user_id, action, table_name, record_id, ip_address, user_agent, old_values, new_values)
+         VALUES ($1, 'cancel', 'factures', $2, $3, $4, $5, $6)`,
+        [
+          userId ?? null,
+          id,
+          req?.ip ?? null,
+          req?.get?.('user-agent') ?? null,
+          JSON.stringify({ statut: facture.statut }),
+          JSON.stringify({
+            statut: 'annulee',
+            ecritures_contre_passees: ecrituresContrePassees,
+            articles_remis_en_stock: restock.articles.map((a) => ({
+              produit_id: a.produit_id,
+              quantite: a.quantite,
+              location_id: a.location_id,
+            })),
+            bons_livraison_annules: restock.bons_livraison.map((b) => b.numero_bl),
+          }),
+        ]
+      );
+
+      await client.query('COMMIT');
+
+      logger.info({ factureId: id, ecrituresContrePassees, articles: restock.articles.length }, 'Invoice cancelled');
+
+      return {
+        id,
+        numero_facture: numero,
+        statut: 'annulee',
+        ecritures_contre_passees: ecrituresContrePassees,
+        articles_remis_en_stock: restock.articles,
+        emplacements: restock.emplacements,
+        bons_livraison_annules: restock.bons_livraison,
+        message,
+      };
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      // The 075 trigger fired (period closed between the check and the insert).
+      if (err?.code === 'P0001' && /p[ée]riode comptable/i.test(String(err.message))) {
+        const { rows } = await pool.query('SELECT numero_facture FROM factures WHERE id = $1', [id]);
+        throw this.periodClosedError(rows[0]?.numero_facture ?? `n° ${id}`, err.message);
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  private periodClosedError(numero: string, sourceMessage: string) {
+    const periode = periodFromMessage(sourceMessage);
+    return businessError(
+      422,
+      `Impossible d’annuler la facture ${numero} : la période comptable ${periode ?? 'en cours'} est clôturée, ses écritures ne peuvent pas être contre-passées.`,
+      'PERIOD_CLOSED'
+    );
+  }
+
+  /**
+   * Mirror every GL line posted for the invoice: same journal, accounts and
+   * tiers, debit and credit swapped, dated now. Copies compte_id AND
+   * compte_numero as posted, so every report — whichever key it groups by —
+   * nets the invoice to zero. Returns the number of contra lines written.
+   */
+  private async contrePasserEcritures(
+    client: any,
+    factureId: number,
+    numero: string,
+    userId?: number
+  ): Promise<number> {
+    const { rows } = await client.query(
+      `INSERT INTO ecritures_comptables
+         (numero_piece, date_ecriture, journal, piece_id, piece_type, ligne_numero,
+          compte_id, compte_numero, debit, credit, libelle, tiers_id, reference_type, reference_id, cree_par)
+       SELECT COALESCE(ec.numero_piece, $2), CURRENT_TIMESTAMP, ec.journal, ec.piece_id, ec.piece_type,
+              m.max_ligne + ROW_NUMBER() OVER (ORDER BY ec.ligne_numero NULLS LAST, ec.id),
+              ec.compte_id, ec.compte_numero, ec.credit, ec.debit, $3, ec.tiers_id,
+              ec.reference_type, ec.reference_id, $4
+       FROM ecritures_comptables ec
+       CROSS JOIN (
+         SELECT COALESCE(MAX(ligne_numero), 0) AS max_ligne
+         FROM ecritures_comptables
+         WHERE piece_type = 'facture' AND piece_id = $1
+       ) m
+       WHERE ec.piece_type = 'facture' AND ec.piece_id = $1
+         AND (ec.debit <> 0 OR ec.credit <> 0)
+       RETURNING id`,
+      [factureId, numero, `Annulation facture ${numero}`, userId ?? null]
+    );
+    return rows.length;
+  }
+
+  /**
+   * Put back in stock what the sale took out (see `annuler`, step 3).
+   * Delivery-note sales: the BLs carried the stock-out, so their delivered
+   * quantities return at their location and the BLs are cancelled.
+   * Counter sales: the invoice lines return at the invoice's location.
+   */
+  private async remettreEnStock(
+    client: any,
+    facture: { id: number; numero_facture: string; location_id: number | null; bl_id: number | null; devis_id: number | null }
+  ): Promise<{
+    articles: FactureAnnulationResult['articles_remis_en_stock'];
+    emplacements: FactureAnnulationResult['emplacements'];
+    bons_livraison: FactureAnnulationResult['bons_livraison_annules'];
+  }> {
+    const numero = facture.numero_facture;
+    const { rows: principalRows } = await client.query(
+      'SELECT id FROM stock_locations WHERE est_principal = true AND actif = true ORDER BY id LIMIT 1'
+    );
+    const principalId: number | null = principalRows[0]?.id ?? null;
+
+    // BLs of this sale: linked either way (factures.bl_id / bons_livraison.facture_id).
+    let { rows: bls } = await client.query(
+      `SELECT id, numero_bl, statut, location_id
+       FROM bons_livraison
+       WHERE deleted_at IS NULL AND (id = $2 OR facture_id = $1)
+       ORDER BY id
+       FOR UPDATE`,
+      [facture.id, facture.bl_id]
+    );
+    // An invoice converted straight from its devis (devis.facture_id) bills the
+    // devis' delivered BLs, which stay 'livre' and unlinked.
+    if (bls.length === 0 && facture.devis_id) {
+      const { rows: devisRows } = await client.query(
+        'SELECT id FROM devis WHERE id = $1 AND facture_id = $2',
+        [facture.devis_id, facture.id]
+      );
+      if (devisRows[0]) {
+        ({ rows: bls } = await client.query(
+          `SELECT id, numero_bl, statut, location_id
+           FROM bons_livraison
+           WHERE deleted_at IS NULL AND devis_id = $1 AND statut = 'livre'
+           ORDER BY id
+           FOR UPDATE`,
+          [facture.devis_id]
+        ));
+      }
+    }
+    const delivered = bls.filter((b: any) => b.statut === 'livre' || b.statut === 'facture');
+
+    const items: RestockItem[] = [];
+    if (delivered.length > 0) {
+      for (const bl of delivered) {
+        const locationId = bl.location_id ?? facture.location_id ?? principalId;
+        const { rows: lignes } = await client.query(
+          `SELECT produit_id, COALESCE(NULLIF(quantite_livree, 0), quantite, 0) AS quantite
+           FROM document_lignes
+           WHERE document_type = 'bl' AND document_id = $1 AND produit_id IS NOT NULL`,
+          [bl.id]
+        );
+        for (const l of lignes) {
+          items.push({ produitId: Number(l.produit_id), locationId, quantite: Number(l.quantite) });
+        }
+      }
+    } else {
+      const locationId = facture.location_id ?? principalId;
+      const { rows: lignes } = await client.query(
+        `SELECT produit_id, quantite
+         FROM document_lignes
+         WHERE document_type = 'facture' AND document_id = $1 AND produit_id IS NOT NULL`,
+        [facture.id]
+      );
+      for (const l of lignes) {
+        items.push({ produitId: Number(l.produit_id), locationId: locationId as number, quantite: Number(l.quantite) });
+      }
+    }
+
+    // One movement per product and location, in a stable lock order.
+    const merged = new Map<string, RestockItem>();
+    for (const item of items) {
+      if (!(item.quantite > 0)) continue;
+      if (item.locationId === null || item.locationId === undefined) {
+        throw businessError(
+          422,
+          `Impossible d’annuler la facture ${numero} : aucun emplacement actif pour remettre ses articles en stock.`
+        );
+      }
+      const key = `${item.produitId}:${item.locationId}`;
+      const existing = merged.get(key);
+      if (existing) existing.quantite += item.quantite;
+      else merged.set(key, { ...item });
+    }
+    const toRestock = [...merged.values()].sort(
+      (a, b) => a.produitId - b.produitId || a.locationId - b.locationId
+    );
+
+    // Sale-time unit cost recorded on the invoice lines (061), like a client return.
+    const { rows: costRows } = await client.query(
+      `SELECT produit_id,
+              SUM(quantite * prix_achat_unitaire) / NULLIF(SUM(quantite), 0) AS cout
+       FROM document_lignes
+       WHERE document_type = 'facture' AND document_id = $1
+         AND produit_id IS NOT NULL AND prix_achat_unitaire > 0
+       GROUP BY produit_id`,
+      [facture.id]
+    );
+    const costByProduit = new Map<number, number>(
+      costRows.map((r: any) => [Number(r.produit_id), roundMoney(Number(r.cout))])
+    );
+
+    const blLabel = delivered.length > 0
+      ? ` (${delivered.map((b: any) => b.numero_bl).join(', ')})`
+      : '';
+    for (const item of toRestock) {
+      await applyStockMovement(client, {
+        produitId: item.produitId,
+        locationId: item.locationId,
+        delta: item.quantite,
+        unitCost: costByProduit.get(item.produitId) ?? null,
+        type: 'vente',
+        raison: `Annulation facture ${numero}${blLabel}`,
+        reference: numero,
+      });
+    }
+
+    if (delivered.length > 0) {
+      await client.query(
+        `UPDATE bons_livraison SET statut = 'annule', updated_at = CURRENT_TIMESTAMP
+         WHERE id = ANY($1::int[])`,
+        [delivered.map((b: any) => b.id)]
+      );
+    }
+
+    const produitIds = [...new Set(toRestock.map((i) => i.produitId))];
+    const locationIds = [...new Set(toRestock.map((i) => i.locationId))];
+    const [{ rows: produitRows }, { rows: locationRows }] = await Promise.all([
+      client.query('SELECT id, nom FROM produits WHERE id = ANY($1::int[])', [produitIds]),
+      client.query('SELECT id, nom FROM stock_locations WHERE id = ANY($1::int[]) ORDER BY id', [locationIds]),
+    ]);
+    const produitNom = new Map<number, string>(produitRows.map((r: any) => [Number(r.id), r.nom]));
+    const locationNom = new Map<number, string>(locationRows.map((r: any) => [Number(r.id), r.nom]));
+
+    return {
+      articles: toRestock.map((i) => ({
+        produit_id: i.produitId,
+        produit_nom: produitNom.get(i.produitId) ?? `n° ${i.produitId}`,
+        quantite: i.quantite,
+        location_id: i.locationId,
+        location_nom: locationNom.get(i.locationId) ?? `n° ${i.locationId}`,
+      })),
+      emplacements: locationIds.map((lid) => ({ id: lid, nom: locationNom.get(lid) ?? `n° ${lid}` })),
+      bons_livraison: delivered.map((b: any) => ({ id: Number(b.id), numero_bl: b.numero_bl })),
+    };
+  }
+
+  /**
+   * « Facture FAC-… annulée : écritures contre-passées, articles remis en stock
+   * à Hitek Plateau. » (+ « Bon de livraison BL-… annulé. » for a BL sale).
+   */
+  private annulationMessage(
+    numero: string,
+    ecritures: number,
+    restock: { emplacements: Array<{ nom: string }>; bons_livraison: Array<{ numero_bl: string }>; articles: unknown[] }
+  ): string {
+    const gl = ecritures > 0 ? 'écritures contre-passées' : 'aucune écriture à contre-passer';
+    const lieux = restock.emplacements.map((e) => e.nom);
+    const stock = restock.articles.length > 0
+      ? `articles remis en stock à ${lieux.length > 1 ? `${lieux.slice(0, -1).join(', ')} et ${lieux[lieux.length - 1]}` : lieux[0]}`
+      : 'aucun article à remettre en stock';
+    let message = `Facture ${numero} annulée : ${gl}, ${stock}.`;
+    const bls = restock.bons_livraison.map((b) => b.numero_bl);
+    if (bls.length === 1) message += ` Le bon de livraison ${bls[0]} est annulé.`;
+    else if (bls.length > 1) message += ` Les bons de livraison ${bls.join(', ')} sont annulés.`;
+    return message;
+  }
+
+  /**
+   * Soft delete invoice with optional stock restoration.
+   *
+   * The restock now writes its mouvements_stock rows (it used to change stock
+   * silently) and is skipped for an invoice whose cancellation already put its
+   * goods back — deleting a cancelled invoice with restaurer_stock=true no
+   * longer restocks twice.
    */
   async delete(id: number, restaurerStock: boolean = false, userId?: number, req?: any): Promise<boolean> {
     const client = await pool.connect();
@@ -620,41 +1143,56 @@ export class FactureService {
     try {
       await client.query('BEGIN');
 
-      const { rows: factureRows } = await client.query('SELECT statut, tiers_id FROM factures WHERE id = $1 AND deleted_at IS NULL', [id]);
+      const { rows: factureRows } = await client.query(
+        'SELECT numero_facture, statut, tiers_id, location_id FROM factures WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [id]
+      );
       if (factureRows.length === 0) {
         await client.query('ROLLBACK');
         return false;
       }
 
       const clientId = factureRows[0].tiers_id;
+      const numero: string = factureRows[0].numero_facture;
 
-      if (restaurerStock) {
+      let alreadyRestocked = false;
+      if (restaurerStock && factureRows[0].statut === 'annulee') {
+        const { rows } = await client.query(
+          `SELECT 1 FROM mouvements_stock
+           WHERE reference_liee = $1 AND quantite > 0 AND raison LIKE 'Annulation facture%'
+           LIMIT 1`,
+          [numero]
+        );
+        alreadyRestocked = rows.length > 0;
+      }
+
+      if (restaurerStock && !alreadyRestocked) {
         const { rows: locationRows } = await client.query(
-          'SELECT COALESCE(location_id, (SELECT id FROM stock_locations WHERE est_principal = true AND actif = true LIMIT 1)) as effective_location_id FROM factures WHERE id = $1',
-          [id]
+          'SELECT COALESCE($1::int, (SELECT id FROM stock_locations WHERE est_principal = true AND actif = true ORDER BY id LIMIT 1)) as effective_location_id',
+          [factureRows[0].location_id]
         );
         const effectiveLocationId = locationRows[0]?.effective_location_id;
 
         const { rows: lignesRows } = await client.query(
-          "SELECT produit_id, quantite FROM document_lignes WHERE document_type = 'facture' AND document_id = $1",
+          `SELECT produit_id, SUM(quantite)::int AS quantite
+           FROM document_lignes
+           WHERE document_type = 'facture' AND document_id = $1 AND produit_id IS NOT NULL
+           GROUP BY produit_id
+           ORDER BY produit_id`,
           [id]
         );
 
         for (const ligne of lignesRows) {
-          const { rowCount: splUpdated } = await client.query(
-            `UPDATE stock_par_location
-             SET quantite = quantite + $1
-             WHERE produit_id = $2 AND location_id = $3`,
-            [ligne.quantite, ligne.produit_id, effectiveLocationId]
-          );
-
-          // Fall back to legacy produits.stock only when no stock_par_location row exists
-          if (!splUpdated || splUpdated === 0) {
-            await client.query(
-              'UPDATE produits SET stock = stock + $1 WHERE id = $2',
-              [ligne.quantite, ligne.produit_id]
-            );
-          }
+          if (!(Number(ligne.quantite) > 0) || !effectiveLocationId) continue;
+          await applyStockMovement(client, {
+            produitId: Number(ligne.produit_id),
+            locationId: Number(effectiveLocationId),
+            delta: Number(ligne.quantite),
+            unitCost: null,
+            type: 'vente',
+            raison: `Suppression facture ${numero}`,
+            reference: numero,
+          });
         }
       }
 

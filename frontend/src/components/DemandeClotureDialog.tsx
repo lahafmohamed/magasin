@@ -1,13 +1,23 @@
+import { AlertTriangle, PackageCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Check, Loader2, Package, AlertCircle } from 'lucide-react';
+import { DocumentCode } from '@/components/ui/document-code';
+import { Spinner } from '@/components/ui/loading';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { formatNumber } from '@/utils/format';
 
 interface Ligne {
   id: number;
   produit_id: number;
   produit_nom: string;
-  reference: string;
+  reference: string | null;
   quantite_demandee: number;
   quantite_approuvee: number | null;
   quantite_livree: number | null;
@@ -17,6 +27,7 @@ interface DemandeClotureDialogProps {
   demande: {
     id: number;
     numero: string;
+    magasin_nom: string;
     numero_transfer: string | null;
     lignes: Ligne[];
   };
@@ -25,96 +36,89 @@ interface DemandeClotureDialogProps {
   loading: boolean;
 }
 
+/**
+ * Clôture d'une demande livrée : le magasin confirme la réception physique.
+ * La clôture ne déplace pas de stock (il a bougé à l'exécution) ; elle termine
+ * la demande. L'enregistrement d'un manquant à la réception reste à faire (U-42).
+ */
 export function DemandeClotureDialog({ demande, onClose, onSubmit, loading }: DemandeClotureDialogProps) {
-  const hasDiscrepancy = demande.lignes.some((l) => {
+  const lines = demande.lignes.map((l) => {
     const approved = l.quantite_approuvee ?? l.quantite_demandee;
-    return (l.quantite_livree ?? 0) < approved;
+    const delivered = l.quantite_livree ?? 0;
+    return { ...l, approved, delivered, complete: delivered >= approved };
   });
+  const hasDiscrepancy = lines.some((l) => !l.complete);
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !loading && onClose()}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Check className="h-5 w-5 text-success" />
-            Clôturer la demande
+          <DialogTitle>
+            Clôturer la demande <span className="whitespace-nowrap">{demande.numero}</span>
           </DialogTitle>
-          <DialogDescription>
-            Confirmez la réception des produits au magasin pour finaliser la demande {demande.numero}
-          </DialogDescription>
+          <DialogDescription>Confirmez que les produits livrés sont bien arrivés à {demande.magasin_nom}</DialogDescription>
         </DialogHeader>
 
-        {/* Transfer Info */}
         {demande.numero_transfer && (
-          <div className="bg-muted/50 p-3 rounded-lg flex items-center gap-2">
-            <Package className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm">
-              Transfert associé: <span className="font-medium">{demande.numero_transfer}</span>
-            </span>
-          </div>
-        )}
-
-        {/* Delivery Summary */}
-        <div className="space-y-3">
-          <h4 className="text-sm font-medium">Résumé de la livraison</h4>
-          <div className="border rounded-lg divide-y">
-            {demande.lignes.map((ligne) => {
-              const approved = ligne.quantite_approuvee ?? ligne.quantite_demandee;
-              const delivered = ligne.quantite_livree ?? 0;
-              const complete = delivered >= approved;
-
-              return (
-                <div key={ligne.id} className="p-3 flex items-center justify-between">
-                  <div>
-                    <div className="font-medium text-sm">{ligne.produit_nom}</div>
-                    <div className="text-xs text-muted-foreground">{ligne.reference}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm">
-                      <span className="font-medium">{delivered}</span>
-                      <span className="text-muted-foreground"> / {approved} livré</span>
-                    </div>
-                    <Badge variant={complete ? 'success' : 'warning'} className="text-xs mt-1">
-                      {complete ? 'Complet' : 'Partiel'}
-                    </Badge>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Warnings */}
-        {hasDiscrepancy && (
-          <div className="bg-warning/10 border border-warning/20 p-3 rounded-lg flex gap-2">
-            <AlertCircle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
-            <div className="text-sm">
-              <span className="font-medium text-warning">Attention: </span>
-              Certaines quantités livrées sont inférieures aux quantités approuvées. 
-              Vous pouvez quand même clôturer la demande.
-            </div>
-          </div>
-        )}
-
-        {/* Confirmation */}
-        <div className="bg-success/10 border border-success/20 p-3 rounded-lg">
-          <p className="text-sm text-success">
-            En clôturant cette demande, vous confirmez avoir reçu physiquement les produits 
-            listés ci-dessus. Cette action est définitive.
+          <p className="rounded-md border bg-muted/40 p-3 text-sm">
+            Transfert associé : <DocumentCode>{demande.numero_transfer}</DocumentCode>
           </p>
-        </div>
+        )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={loading}>
+        <section aria-labelledby="cloture-lines-title" className="space-y-2">
+          <h3 id="cloture-lines-title" className="text-sm font-medium">
+            Produits livrés
+          </h3>
+          <ul className="divide-y rounded-md border">
+            {lines.map((l) => (
+              <li key={l.id} className="flex items-center justify-between gap-3 p-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium" title={l.produit_nom}>
+                    {l.produit_nom}
+                  </p>
+                  {l.reference && (
+                    <DocumentCode className="block text-xs text-muted-foreground">{l.reference}</DocumentCode>
+                  )}
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="text-sm tabular-nums">
+                    Livré <span className="font-medium">{formatNumber(l.delivered)}</span> sur{' '}
+                    {formatNumber(l.approved)}
+                  </p>
+                  {/* Pastille pour l'écart seulement : une ligne complète est l'état normal. */}
+                  {!l.complete && (
+                    <Badge variant="warning" className="mt-1">
+                      Partiel
+                    </Badge>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        {hasDiscrepancy && (
+          <div className="flex gap-2 rounded-md border border-warning-200 bg-warning-50 p-3 text-sm text-warning-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <p>
+              Certaines quantités livrées sont inférieures aux quantités approuvées. Vous pouvez quand même clôturer la
+              demande.
+            </p>
+          </div>
+        )}
+
+        {/* Une note, pas une réussite : neutre, comme l'encadré du transfert. */}
+        <p className="rounded-md border bg-muted/40 p-3 text-sm">
+          En clôturant, vous confirmez avoir reçu physiquement ces produits. La clôture est définitive.
+        </p>
+
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" size="touch" onClick={onClose} disabled={loading}>
             Annuler
           </Button>
-          <Button onClick={onSubmit} disabled={loading} className="gap-2">
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Check className="h-4 w-4" />
-            )}
-            Confirmer la réception
+          <Button size="touch" onClick={onSubmit} disabled={loading} className="gap-2">
+            {loading ? <Spinner /> : <PackageCheck className="h-4 w-4" aria-hidden="true" />}
+            Clôturer la demande
           </Button>
         </DialogFooter>
       </DialogContent>

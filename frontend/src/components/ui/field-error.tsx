@@ -37,7 +37,8 @@ export function FieldError({
     <p
       id={`${id}-error`}
       role="alert"
-      className={cn('mt-1 text-xs font-medium text-danger', className)}
+      // Palier explicite : `text-danger` (aplat) tombait à 4,17:1 en thème sombre.
+      className={cn('mt-1 text-xs font-medium text-danger-600', className)}
     >
       {children}
     </p>

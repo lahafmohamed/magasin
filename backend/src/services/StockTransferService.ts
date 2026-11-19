@@ -2,6 +2,7 @@ import pool from '../db/connection';
 import { BaseService } from './BaseService';
 import { logAudit } from '../middleware/audit';
 import { logger } from '../utils/logger';
+import { businessError } from '../utils/errors';
 import { costedStockIn } from './StockCostingService';
 
 export interface TransferLigneInput {
@@ -37,41 +38,64 @@ export class StockTransferService extends BaseService<TransferRecord> {
   protected allowedSortColumns = ['created_at', 'date_transfer', 'statut'];
 
   /**
-   * Get all transfers with pagination
+   * FROM clause shared by the list, its count and the detail: source and
+   * destination names plus the demande the transfer executes (linked either
+   * way — stock_transfers.demande_id, or demandes.transfert_id set by the
+   * sync trigger).
+   */
+  private readonly fromClause = `
+      FROM stock_transfers st
+      LEFT JOIN stock_locations ls ON st.location_source_id = ls.id
+      LEFT JOIN stock_locations ld ON st.location_destination_id = ld.id
+      LEFT JOIN LATERAL (
+        SELECT d.id, d.numero
+        FROM demandes_reapprovisionnement d
+        WHERE d.id = st.demande_id OR d.transfert_id = st.id
+        ORDER BY (d.id = st.demande_id) DESC NULLS LAST, d.id DESC
+        LIMIT 1
+      ) dem ON true`;
+
+  private readonly demandeColumns = 'dem.id AS demande_id, dem.numero AS demande_numero';
+
+  /**
+   * Get all transfers with pagination. `search` matches, word by word, the
+   * transfer number, the source or destination (name or code) and the linked
+   * demande number.
    */
   async getAll(options?: { search?: string; statut?: string; page?: number; limit?: number }): Promise<{ data: any[]; total: number }> {
     const page = options?.page || 1;
     const limit = options?.limit || 20;
     const offset = (page - 1) * limit;
 
-    let query = `
-      SELECT ${this.selectColumns}
-      FROM stock_transfers st
-      LEFT JOIN stock_locations ls ON st.location_source_id = ls.id
-      LEFT JOIN stock_locations ld ON st.location_destination_id = ld.id
-      WHERE 1=1
-    `;
+    let where = ' WHERE 1=1';
     const params: any[] = [];
 
     if (options?.statut) {
-      query += ` AND st.statut = $${params.length + 1}`;
+      where += ` AND st.statut::text = $${params.length + 1}`;
       params.push(options.statut);
     }
 
-    query += ' ORDER BY st.created_at DESC';
-    query += ` LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
-
-    const { rows } = await pool.query(query, params);
-
-    // Get total count
-    let countQuery = `SELECT COUNT(*) as total FROM stock_transfers st WHERE 1=1`;
-    const countParams: any[] = [];
-    if (options?.statut) {
-      countQuery += ` AND st.statut = $${countParams.length + 1}`;
-      countParams.push(options.statut);
+    const words = (options?.search ?? '').trim().split(/\s+/).filter(Boolean);
+    for (const word of words) {
+      const p = `$${params.length + 1}`;
+      where += ` AND (st.numero_transfer ILIKE ${p}
+                  OR COALESCE(ls.nom, '') ILIKE ${p} OR COALESCE(ls.code, '') ILIKE ${p}
+                  OR COALESCE(ld.nom, '') ILIKE ${p} OR COALESCE(ld.code, '') ILIKE ${p}
+                  OR COALESCE(dem.numero, '') ILIKE ${p})`;
+      params.push(`%${word}%`);
     }
-    const { rows: countRows } = await pool.query(countQuery, countParams);
+
+    const query = `
+      SELECT ${this.selectColumns}, ${this.demandeColumns}
+      ${this.fromClause}
+      ${where}
+      ORDER BY st.created_at DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      pool.query(query, [...params, limit, offset]),
+      pool.query(`SELECT COUNT(*) AS total ${this.fromClause} ${where}`, params),
+    ]);
     const total = parseInt(countRows[0].total);
 
     return { data: rows, total };
@@ -82,10 +106,8 @@ export class StockTransferService extends BaseService<TransferRecord> {
    */
   async getById(id: number): Promise<any | null> {
     const { rows: transferRows } = await pool.query(
-      `SELECT ${this.selectColumns}
-       FROM stock_transfers st
-       LEFT JOIN stock_locations ls ON st.location_source_id = ls.id
-       LEFT JOIN stock_locations ld ON st.location_destination_id = ld.id
+      `SELECT ${this.selectColumns}, ${this.demandeColumns}
+       ${this.fromClause}
        WHERE st.id = $1`,
       [id]
     );
@@ -109,6 +131,27 @@ export class StockTransferService extends BaseService<TransferRecord> {
   /**
    * Create transfer
    */
+  /**
+   * « Stock insuffisant pour « Souris USB » à Dépôt central : 3 disponible(s),
+   * 5 demandé(s). » — the product and the location by name, never an id.
+   */
+  private async insufficientStockMessage(
+    client: any,
+    produitId: number,
+    locationId: number,
+    disponible: number,
+    demande: number
+  ): Promise<string> {
+    const { rows } = await client.query(
+      `SELECT (SELECT nom FROM produits WHERE id = $1) AS produit,
+              (SELECT nom FROM stock_locations WHERE id = $2) AS emplacement`,
+      [produitId, locationId]
+    );
+    const produit = rows[0]?.produit ?? `n° ${produitId}`;
+    const emplacement = rows[0]?.emplacement ? ` à ${rows[0].emplacement}` : '';
+    return `Stock insuffisant pour « ${produit} »${emplacement} : ${disponible} disponible(s), ${demande} demandé(s).`;
+  }
+
   async create(input: CreateTransferInput): Promise<{ id: number; numero_transfer: string }> {
     const client = await pool.connect();
 
@@ -118,11 +161,11 @@ export class StockTransferService extends BaseService<TransferRecord> {
       const { location_source_id, location_destination_id, lignes, notes, cree_par, req } = input;
 
       if (location_source_id === location_destination_id) {
-        throw new Error('Les locations source et destination doivent être différentes');
+        throw businessError(422, 'Choisissez deux emplacements différents.');
       }
 
       if (!lignes || lignes.length === 0) {
-        throw new Error('Le transfer doit contenir au moins un produit');
+        throw businessError(422, 'Ajoutez au moins un produit au transfert.');
       }
 
       // Generate transfer number
@@ -148,7 +191,7 @@ export class StockTransferService extends BaseService<TransferRecord> {
         const availableStock = stockRows.length > 0 ? parseInt(stockRows[0].quantite) : 0;
 
         if (ligne.quantite_demandee > availableStock) {
-          throw new Error(`Stock insuffisant pour le produit ${ligne.produit_id}: disponible ${availableStock}, demandé ${ligne.quantite_demandee}`);
+          throw businessError(409, await this.insufficientStockMessage(client, ligne.produit_id, location_source_id, availableStock, ligne.quantite_demandee));
         }
 
         await client.query(
@@ -196,7 +239,7 @@ export class StockTransferService extends BaseService<TransferRecord> {
       );
 
       if (transferRows.length === 0) {
-        throw new Error('Transfer not found or not in "en_preparation" status');
+        throw businessError(409, 'Ce transfert n’est plus en préparation : il a déjà été exécuté ou annulé.');
       }
 
       const transfer = transferRows[0];
@@ -220,7 +263,7 @@ export class StockTransferService extends BaseService<TransferRecord> {
 
         // Re-validate availability at completion time (stock may have changed since create)
         if (ligne.quantite_demandee > srcAvant) {
-          throw new Error(`Stock insuffisant pour le produit ${ligne.produit_id}: disponible ${srcAvant}, demandé ${ligne.quantite_demandee}`);
+          throw businessError(409, await this.insufficientStockMessage(client, ligne.produit_id, transfer.location_source_id, srcAvant, ligne.quantite_demandee));
         }
 
         // Decrease source (removal at cmp: cmp unchanged, 076 keeps valeur_stock in sync)

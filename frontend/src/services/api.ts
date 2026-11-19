@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Produit, FactureComplete, StatsDashboard } from '../types';
 import type { PaymentMethod } from '../utils/paymentMethod';
+import { isCredentialError } from '../utils/errors';
 
 export interface PaginationMeta {
   page: number;
@@ -14,13 +15,21 @@ export interface Page<T> {
   pagination: PaginationMeta;
 }
 
+/** Page de liste accompagnée d'agrégats calculés sur tout le jeu filtré (`summary`). */
+export interface PageWithSummary<T, S = Record<string, unknown>> extends Page<T> {
+  summary?: S;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
 
 /**
  * Normalize the API envelope without mutating arrays. Paginated endpoints keep
- * both their rows and metadata in a stable `{ data, pagination }` contract.
+ * their rows and metadata in a stable `{ data, pagination }` contract, plus the
+ * backend `summary` when there is one (totals over the whole filtered set, e.g.
+ * Relances « Total à recouvrer » — dropping it showed « 0 FCFA » while clients
+ * owed millions).
  */
 export function normalizeApiResponseBody(body: unknown): unknown {
   if (!isRecord(body) || !('success' in body)) {
@@ -35,6 +44,7 @@ export function normalizeApiResponseBody(body: unknown): unknown {
     return {
       data: body.data,
       pagination: body.pagination,
+      ...('summary' in body && body.summary !== undefined ? { summary: body.summary } : {}),
     };
   }
 
@@ -55,6 +65,17 @@ type UpdateProduitPayload = Partial<Omit<Produit, 'id'>> & {
   fournisseur_id?: number | null;
 };
 
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /**
+     * Garde l'enveloppe `{ success, data, message }` intacte : pour les appels
+     * dont la phrase de confirmation du serveur (`message`) doit atteindre le
+     * toast (encaissement).
+     */
+    keepEnvelope?: boolean;
+  }
+}
+
 export const api = axios.create({
   baseURL: '/api',
   // Auth is carried by the httpOnly `auth_token` cookie — send it on every request.
@@ -64,16 +85,20 @@ export const api = axios.create({
 // Response interceptor: unwrap non-paginated data and preserve paginated pages.
 api.interceptors.response.use(
   (response) => {
+    if (response.config?.keepEnvelope) return response;
     return { ...response, data: normalizeApiResponseBody(response.data) };
   },
   (error) => {
     // On token expiry / auth failure, clear the session and bounce to login —
     // mirrors authService so requests through this instance don't fail silently.
-    const status = error.response?.status;
-    const url: string = error.config?.url || '';
-    const isAuthCall = url.includes('/auth/login');
-    if (status === 401 && !isAuthCall) {
-      localStorage.removeItem('auth_user');
+    // A wrong password (`/auth/login`, `/auth/change-password`) is not an
+    // expired session: no reload, the page shows the reason.
+    if (error.response?.status === 401 && !isCredentialError(error)) {
+      try {
+        localStorage.removeItem('auth_user');
+      } catch {
+        /* stockage indisponible */
+      }
       if (!window.location.pathname.startsWith('/login')) {
         window.location.href = '/login';
       }
@@ -107,6 +132,17 @@ export const produitService = {
     return data;
   },
 
+  /**
+   * Lot 3 : un EAN-13 interne (plage 20…) pour chaque produit sans
+   * code-barres ; un produit qui en a déjà un le garde (gérant, admin).
+   */
+  genererCodesBarres: async (
+    produitIds: number[]
+  ): Promise<{ produits: { produit_id: number; nom: string; code_barre: string; cree: boolean }[]; message: string }> => {
+    const { data: body } = await api.post('/produits/codes-barres', { produit_ids: produitIds }, { keepEnvelope: true });
+    return { produits: Array.isArray(body?.data) ? body.data : [], message: body?.message ?? '' };
+  },
+
   getReorderSuggestions: async (): Promise<any[]> => {
     const { data } = await api.get('/produits/reorder-suggestions');
     return data?.data ?? data ?? [];
@@ -123,6 +159,30 @@ export const produitService = {
 
   delete: async (id: number): Promise<void> => {
     await api.delete(`/produits/${id}`);
+  },
+
+  /** Fiche produit complète — porte `fournisseur_id`, absent de la liste. */
+  getById: async (id: number): Promise<Produit & { fournisseur_id?: number | string | null; [key: string]: unknown }> => {
+    const { data } = await api.get(`/produits/${id}`);
+    return data;
+  },
+
+  /**
+   * Mouvement de stock motivé (`POST /produits/:id/mouvements`, admin, manager,
+   * depot_staff) : `quantite` signée (≠ 0), `raison` gardée dans l'historique.
+   * Sans `location_id`, le serveur prend l'emplacement principal.
+   */
+  addStockMovement: async (
+    id: number,
+    payload: {
+      type_mouvement: 'vente' | 'ajustement' | 'retour' | 'commande' | 'perte' | 'autre';
+      quantite: number;
+      location_id?: number;
+      raison?: string;
+    }
+  ): Promise<unknown> => {
+    const { data } = await api.post(`/produits/${id}/mouvements`, payload);
+    return data;
   },
 
   adjustStock: async (id: number, quantite: number, location_id?: number): Promise<{ stock: number }> => {
@@ -271,6 +331,40 @@ export const tiersService = {
     await api.delete(`/tiers/${id}`);
   },
 
+  /**
+   * Client de passage « Client comptoir » (code `PASS`), lisible par tous les
+   * rôles — présélectionné pour le caissier dans la nouvelle facture (D4).
+   * `null` quand l'instance n'en a pas (le serveur répond 404).
+   */
+  getComptoir: async (): Promise<ComptoirClient | null> => {
+    try {
+      const { data } = await api.get('/tiers/comptoir');
+      return data ?? null;
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 404) return null;
+      throw err;
+    }
+  },
+
+  /**
+   * Création d'un CLIENT depuis un formulaire de vente (D4) — ouverte au
+   * caissier et au personnel magasin, qui ne créent jamais de fournisseur ni de
+   * plafond de crédit (le serveur refuse en 403, message en français, et force
+   * `credit_max` à 0 pour ces rôles). Renvoie le contact créé (`id`,
+   * `raison_sociale`, …).
+   */
+  createClient: async (payload: {
+    raison_sociale: string;
+    prenom?: string;
+    telephone?: string;
+    email?: string;
+    adresse?: string;
+    notes?: string;
+  }): Promise<any> => {
+    const { data } = await api.post('/tiers', { ...payload, est_client: true, est_fournisseur: false });
+    return data;
+  },
+
   recordAcompteClient: async (id: number, payload: {
     montant: number;
     methode_paiement: string;
@@ -311,11 +405,30 @@ export const tiersService = {
     return Array.isArray(data) ? data : data?.data || [];
   },
 
-  recomputeAllocation: async (id: number): Promise<any> => {
-    const { data } = await api.post(`/tiers/${id}/recompute-allocation`);
-    return data;
+  /**
+   * Revérifie l'affectation des paiements d'un client (admin). E1 : chaque
+   * paiement reste sur sa facture ; seuls acomptes et avoirs sans facture
+   * désignée vont aux plus anciennes. `message` : phrase du serveur
+   * (« Paiements vérifiés : aucune facture ne change. »).
+   */
+  recomputeAllocation: async (id: number): Promise<{ message?: string; data?: unknown }> => {
+    const { data: body } = await api.post(`/tiers/${id}/recompute-allocation`, undefined, { keepEnvelope: true });
+    const message = isRecord(body) && typeof body.message === 'string' ? body.message : undefined;
+    return { message, data: isRecord(body) ? body.data : undefined };
   },
 };
+
+/** `GET /tiers/comptoir`. */
+export interface ComptoirClient {
+  id: number;
+  code: string;
+  raison_sociale: string;
+  prenom: string | null;
+  telephone: string | null;
+  email: string | null;
+  est_client: boolean;
+  est_fournisseur: boolean;
+}
 
 // ========== ACOMPTES ==========
 export const acompteService = {
@@ -395,10 +508,48 @@ export const factureService = {
     return data;
   },
 
+  /**
+   * Vente comptoir (lot 2) : facture + encaissement en une transaction. Rien
+   * n'est enregistré si l'encaissement échoue (caisse fermée → 409
+   * `CAISSE_FERMEE`). Sans `tiers_id`, le client comptoir.
+   */
+  createVenteComptoir: async (vente: {
+    tiers_id?: number;
+    location_id?: number;
+    lignes: { produit_id: number; quantite: number; prix_unitaire: number }[];
+    paiements: { methode_paiement: PaymentMethod; montant?: number; reference?: string }[];
+    especes_recues?: number;
+    idempotency_key?: string;
+  }): Promise<VenteComptoirResult> => {
+    const { data } = await api.post('/factures/comptoir', vente);
+    return data;
+  },
+
   getStats: async (): Promise<StatsDashboard> => {
     const { data } = await api.get('/factures/stats');
     // Unwrap nested data if needed
     return data.data || data;
+  },
+
+  /**
+   * Change le statut d'une facture (admin, manager). `annulee` n'est accepté
+   * que pour une facture sans paiement — U-24 « Annuler la facture ».
+   */
+  /**
+   * Change le statut manuel d'une facture. `annulee` contre-passe ses écritures
+   * et remet ses articles en stock côté serveur ; `message` résume l'effet.
+   */
+  updateStatut: async (
+    id: number,
+    statut: 'payee' | 'partielle' | 'en_attente' | 'annulee'
+  ): Promise<{ message?: string } | undefined> => {
+    const { data } = await api.put(`/factures/${id}/statut`, { statut });
+    return data;
+  },
+
+  /** Supprime une facture (admin, manager) ; `restaurerStock` remet les quantités en stock. */
+  delete: async (id: number, restaurerStock = false): Promise<void> => {
+    await api.delete(`/factures/${id}`, { data: { restaurer_stock: restaurerStock } });
   },
 
   exportAll: async (search?: string, statut?: string): Promise<any> => {
@@ -423,9 +574,65 @@ export const factureService = {
     const { data } = await api.get(`/factures/top-clients?limit=${limit}`);
     return data;
   },
+
+  /** PDF de la facture généré par le serveur (`GET /factures/:id/pdf`), téléchargé. */
+  downloadPdf: async (id: number, numero?: string): Promise<void> => {
+    await downloadPdfBlob(`/factures/${id}/pdf`, pdfFilename('facture', numero ?? id));
+  },
 };
 
 // ========== PAIEMENTS ==========
+/**
+ * Résultat d'un encaissement (contrat backend D3, `201`) : le montant saisi est
+ * enregistré tel quel ; les acomptes ne sont pris que sur demande explicite
+ * (`appliquer_acomptes: true`). `message` est la phrase française du serveur
+ * qui dit ce qui a été enregistré — à reprendre telle quelle dans le toast.
+ *
+ * Erreurs (à lire avec `getErrorCode(err)` / `getErrorMessage(err)`) :
+ *  - 409 `CAISSE_FERMEE` — espèces sans caisse ouverte (« La caisse de ce
+ *    magasin est fermée : ouvrez-la avant d’encaisser des espèces. ») ;
+ *  - 409 `STALE_CASH_SESSION` — session de caisse ouverte depuis trop longtemps ;
+ *  - 422 — montant supérieur au reste dû.
+ */
+/** Réponse de `POST /factures/comptoir`. */
+export interface VenteComptoirResult {
+  /** Vrai quand la clé d'idempotence désignait une vente déjà enregistrée. */
+  idempotent: boolean;
+  facture_id: number;
+  numero_facture: string;
+  total: number;
+  paiements: { paiement_id: number | null; methode_paiement: PaymentMethod; montant: number }[];
+  especes_recues: number | null;
+  monnaie_rendue: number;
+  message: string;
+}
+
+export interface PaiementResult {
+  /** Rejeu d'une même `idempotency_key` : rien n'a été encaissé deux fois. */
+  idempotent?: boolean;
+  facture_id: number;
+  numero_facture: string;
+  /** Montant saisi = `applique_depuis_acomptes` + `direct_montant`. */
+  montant_recu: number;
+  /** Pris sur les acomptes du client (0 sans `appliquer_acomptes`). */
+  applique_depuis_acomptes: number;
+  applications: { acompte_id: number; paiement_id: number; montant: number }[];
+  direct_paiement_id: number | null;
+  /** Encaissé dans `methode_paiement` (dans le tiroir quand c'est des espèces). */
+  direct_montant: number;
+  methode_paiement: PaymentMethod;
+  session_caisse_id: number | null;
+  mouvement_caisse_id: number | null;
+  encaisse_en_caisse: boolean;
+  /** État de la facture après le paiement. */
+  reste_du: number;
+  statut_facture: string;
+  /** Acomptes du client encore disponibles. */
+  acomptes_disponibles: number;
+  /** Phrase de confirmation du serveur (« Paiement de 70 000 FCFA enregistré en espèces… »). */
+  message: string;
+}
+
 export const paiementService = {
   create: async (factureId: number, paiement: {
     montant: number;
@@ -433,9 +640,20 @@ export const paiementService = {
     date_paiement?: string;
     reference?: string;
     notes?: string;
-  }): Promise<{ id: number; message: string }> => {
-    const { data } = await api.post(`/factures/${factureId}/paiements`, paiement);
-    return data;
+    /** Clé unique par ouverture du formulaire : un double envoi n'encaisse qu'une fois. */
+    idempotency_key?: string;
+    session_caisse_id?: number;
+    /** D3 : utiliser d'abord les acomptes du client — jamais implicite (défaut `false`). */
+    appliquer_acomptes?: boolean;
+    /** @deprecated Sans effet depuis D3 : les acomptes ne sont plus appliqués d'office. */
+    skip_acompte_application?: boolean;
+  }): Promise<PaiementResult> => {
+    // Enveloppe gardée : la phrase `message` du serveur est au niveau racine.
+    const { data: body } = await api.post(`/factures/${factureId}/paiements`, paiement, {
+      keepEnvelope: true,
+    });
+    const result = (body && typeof body === 'object' && 'data' in body ? body.data : body) ?? {};
+    return { ...result, message: body?.message ?? result.message ?? '' } as PaiementResult;
   },
 
   getStats: async (): Promise<any> => {
@@ -455,6 +673,11 @@ export const paiementService = {
 
 
 // ========== COMMANDES ==========
+/** « facture-FAC-2026-00110.pdf » : préfixe du document + numéro, sans espace. */
+function pdfFilename(prefix: string, numero: string | number): string {
+  return `${prefix}-${String(numero).trim().replace(/\s+/g, '_')}.pdf`;
+}
+
 /** Télécharge un blob PDF renvoyé par l'API sous le nom de fichier donné. */
 async function downloadPdfBlob(url: string, filename: string): Promise<void> {
   const response = await api.get(url, { responseType: 'blob' });
@@ -558,7 +781,8 @@ export const receptionService = {
   create: async (reception: {
     commande_id: number;
     location_id?: number;
-    lignes: { produit_id: number; quantite_commandee: number; quantite_recue: number; cout_unitaire: number; notes?: string }[];
+    /** `cout_unitaire` absent : le serveur reprend le prix de la ligne de commande (E2, dépôt). */
+    lignes: { produit_id: number; quantite_commandee: number; quantite_recue: number; cout_unitaire?: number; notes?: string }[];
     notes?: string;
   }): Promise<any> => {
     const { data } = await api.post('/receptions', reception);
@@ -570,7 +794,12 @@ export const receptionService = {
     return data;
   },
 
-  getOrderDetails: async (commandeId: number): Promise<any> => {
+  /**
+   * Commande à réceptionner, avec par ligne `quantite_deja_recue` et
+   * `quantite_restante` (U-20). Une quantité au-delà du reste est refusée en
+   * 422 `OVER_RECEIPT` avec un message qui nomme le produit.
+   */
+  getOrderDetails: async (commandeId: number): Promise<any & { lignes: ReceptionOrderLine[] }> => {
     const { data } = await api.get(`/receptions/order/${commandeId}`);
     return data;
   },
@@ -579,6 +808,23 @@ export const receptionService = {
     await api.delete(`/receptions/${id}`);
   },
 };
+
+/** Ligne de commande vue depuis la réception. */
+export interface ReceptionOrderLine {
+  id: number;
+  produit_id: number;
+  produit_nom: string;
+  produit_reference: string | null;
+  code_barre: string | null;
+  quantite: number | string;
+  /** Absent pour le personnel dépôt (E2 : quantités seulement). */
+  prix_unitaire?: number | string | null;
+  /** Déjà reçu sur les réceptions précédentes de cette commande. */
+  quantite_deja_recue: number;
+  /** Reste à recevoir (= plafond de la saisie). */
+  quantite_restante: number;
+  [key: string]: unknown;
+}
 
 // ========== STOCK LOCATIONS ==========
 export const stockLocationService = {
@@ -602,7 +848,37 @@ export const stockLocationService = {
     const { data } = await api.get(`/stock-locations/${locationId}/stock`);
     return data;
   },
+
+  /**
+   * Produits EN STOCK à un emplacement, filtrés par nom ou référence — pour un
+   * sélecteur à la frappe (transfert : « Disponible à <source> : N »). Seules
+   * les lignes de quantité > 0 sont renvoyées, triées par nom.
+   */
+  getProductsWithStock: async (
+    locationId: number,
+    search?: string,
+    limit = 20
+  ): Promise<ProductWithStock[]> => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    params.append('limit', String(limit));
+    const { data } = await api.get(`/stock-locations/${locationId}/products-with-stock?${params}`);
+    return Array.isArray(data) ? data : [];
+  },
 };
+
+/** Ligne de `GET /stock-locations/:id/products-with-stock`. */
+export interface ProductWithStock {
+  /** Identifiant de la ligne de stock (pas du produit). */
+  id: number;
+  produit_id: number;
+  produit_nom: string;
+  reference: string;
+  prix_vente: string | number;
+  quantite: number;
+  /** Quantité disponible à cet emplacement. */
+  quantite_disponible: number;
+}
 
 // ========== USER LOCATION ASSIGNMENTS ==========
 export const userLocationAssignmentService = {
@@ -683,6 +959,12 @@ export const factureFournisseurService = {
     return data;
   },
 
+  /** Totaux sur toutes les factures fournisseur (reste à payer, en retard…). */
+  getStats: async (): Promise<Record<string, unknown>> => {
+    const { data } = await api.get('/factures-fournisseur/stats');
+    return data ?? {};
+  },
+
   getMatchConfig: async (): Promise<any> => {
     const { data } = await api.get('/factures-fournisseur/match-config');
     return data?.data ?? data;
@@ -745,9 +1027,20 @@ export const generalLedgerService = {
     return data;
   },
 
-  exportAll: async (params: { journal?: string; date_debut?: string; date_fin?: string; compte_id?: number; numero_piece?: string; description?: string }): Promise<any> => {
-    const { data } = await api.get('/general-ledger/export', { params });
-    return data;
+  /**
+   * Toutes les écritures filtrées, plafonnées côté serveur : `truncated` dit
+   * que l'export a été coupé (l'intercepteur commun le perdait).
+   */
+  exportAll: async (params: {
+    journal?: string;
+    date_debut?: string;
+    date_fin?: string;
+    compte_id?: number;
+    numero_piece?: string;
+    description?: string;
+  }): Promise<{ data: unknown[]; truncated: boolean }> => {
+    const { data: body } = await api.get('/general-ledger/export', { params, keepEnvelope: true });
+    return { data: Array.isArray(body?.data) ? body.data : [], truncated: body?.truncated === true };
   },
 
   exportPdf: async (params: { journal?: string; date_debut?: string; date_fin?: string; compte_id?: number; numero_piece?: string; description?: string; type?: string }): Promise<Blob> => {
@@ -894,6 +1187,22 @@ export const payrollService = {
     const { data } = await api.put(`/payroll/config/cotisations/${id}`, payload);
     return data?.data ?? data;
   },
+  /**
+   * Ajoute une cotisation (CNPS…) — U-11, admin. Taux en FRACTION de 0 à 1
+   * (6,3 % → 0.063), code en majuscules (lettres, chiffres, « _ »). `201` avec
+   * la ligne créée ; `409` si le code existe déjà.
+   */
+  createCotisation: async (payload: {
+    code: string;
+    libelle: string;
+    taux_salarial: number;
+    taux_patronal: number;
+    plafond?: number | null;
+    actif?: boolean;
+  }): Promise<any> => {
+    const { data } = await api.post('/payroll/config/cotisations', payload);
+    return data?.data ?? data;
+  },
   replaceBaremes: async (baremes: { tranche_min: number; tranche_max: number | null; taux: number }[]): Promise<any> => {
     const { data } = await api.put('/payroll/config/baremes', { baremes });
     return data?.data ?? data;
@@ -926,7 +1235,8 @@ export const devisService = {
     location_id?: number;
     lignes: { produit_id: number; quantite: number; prix_unitaire: number }[];
     notes?: string;
-    valid_until?: string;
+    /** Fin de validité « AAAA-MM-JJ » ; sans elle, le serveur met J+30. */
+    date_validite?: string;
   }): Promise<any> => {
     const { data } = await api.post('/devis', devis);
     return data;
@@ -942,7 +1252,7 @@ export const devisService = {
     location_id?: number;
     lignes?: { produit_id: number; quantite: number; prix_unitaire: number }[];
     notes?: string;
-    valid_until?: string;
+    date_validite?: string;
   }): Promise<any> => {
     const { data } = await api.put(`/devis/${id}`, devis);
     return data;
@@ -965,6 +1275,11 @@ export const devisService = {
     params.append('limit', '10000');
     const { data } = await api.get(`/devis?${params}`);
     return data.data || data;
+  },
+
+  /** PDF du devis généré par le serveur (`GET /devis/:id/pdf`), téléchargé. */
+  downloadPdf: async (id: number, numero?: string): Promise<void> => {
+    await downloadPdfBlob(`/devis/${id}/pdf`, pdfFilename('devis', numero ?? id));
   },
 };
 
@@ -1021,9 +1336,26 @@ export const bonLivraisonService = {
     const { data } = await api.get(`/bons-livraison?${params}`);
     return data.data ?? data;
   },
+
+  /** PDF du bon de livraison généré par le serveur (`GET /bons-livraison/:id/pdf`), téléchargé. */
+  downloadPdf: async (id: number, numero?: string): Promise<void> => {
+    await downloadPdfBlob(`/bons-livraison/${id}/pdf`, pdfFilename('bon-livraison', numero ?? id));
+  },
 };
 
 // ========== AVOIRS (CREDIT NOTES) ==========
+/** `POST /avoirs/:id/rembourser` — 201 (E3). */
+export interface AvoirRefundResult {
+  avoir_id: number;
+  numero_avoir: string;
+  montant: number | string;
+  methode_paiement: PaymentMethod;
+  /** Sortie de caisse créée (espèces), sinon `null`. */
+  mouvement_caisse_id?: number | null;
+  /** Phrase de confirmation du serveur, reprise telle quelle dans le toast. */
+  message?: string;
+}
+
 export const creditNoteService = {
   getAll: async (
     search?: string,
@@ -1048,7 +1380,9 @@ export const creditNoteService = {
 
   getStats: async (): Promise<any> => {
     const { data } = await api.get('/avoirs/stats');
-    return data.data;
+    // L'intercepteur a déjà déplié l'enveloppe : `data.data` valait undefined et
+    // les tuiles affichaient « 0 avoir » au-dessus de trois avoirs validés (U-31).
+    return data;
   },
 
   getById: async (id: number): Promise<any> => {
@@ -1063,28 +1397,78 @@ export const creditNoteService = {
     lignes: { produit_id?: number; description?: string; quantite: number; prix_unitaire: number }[];
     avoir_type?: 'retour' | 'echange' | 'remise_commerciale' | 'erreur';
     notes?: string;
+    /** Retour d'origine : lie l'avoir au retour approuvé (U-08). */
+    retour_id?: number;
+    location_id?: number;
   }): Promise<any> => {
     const { data } = await api.post('/avoirs/manual', avoir);
     return data;
   },
+
   /**
-   * Impute un avoir « valide » sur une facture du même client. Le serveur
-   * refuse un avoir non validé, une facture annulée ou un client différent.
+   * Crée l'avoir d'un retour approuvé (`traite`) en une fois : client, facture
+   * d'origine et lignes repris du retour (U-08, admin/manager). `201` →
+   * `{ avoir_id, numero_avoir }` ; le retour porte ensuite `avoir_id` et
+   * `numero_avoir` (liste et détail).
    */
-  applyToFacture: async (id: number, factureId: number): Promise<void> => {
-    await api.post(`/avoirs/${id}/apply-to-facture`, { facture_id: factureId });
+  createFromRetour: async (retourId: number): Promise<{ avoir_id: number; numero_avoir: string }> => {
+    const { data } = await api.post('/avoirs/from-retour', { retour_id: retourId });
+    return data;
+  },
+  /**
+   * Impute un avoir « valide » sur une facture du même client (E1 : il réduit
+   * le reste dû de CETTE facture). Le serveur refuse un avoir non validé, une
+   * facture annulée ou un client différent. `message` : phrase du serveur.
+   */
+  applyToFacture: async (id: number, factureId: number): Promise<{ message?: string }> => {
+    const { data: body } = await api.post(
+      `/avoirs/${id}/apply-to-facture`,
+      { facture_id: factureId },
+      { keepEnvelope: true }
+    );
+    const message = isRecord(body) && typeof body.message === 'string' ? body.message : undefined;
+    return { message };
+  },
+
+  /**
+   * Rembourse un avoir « valide » au client (E3, gérant et administrateur).
+   * En espèces, l'argent sort de la caisse ouverte du magasin de l'avoir :
+   * `409 CAISSE_FERMEE` quand elle est fermée ; `409` aussi quand l'avoir n'est
+   * plus utilisable. L'avoir passe « utilisé ».
+   */
+  refund: async (
+    id: number,
+    body: { methode_paiement: PaymentMethod; notes?: string; reference?: string }
+  ): Promise<AvoirRefundResult> => {
+    const { data: raw } = await api.post(`/avoirs/${id}/rembourser`, body, { keepEnvelope: true });
+    const result = (isRecord(raw) && isRecord(raw.data) ? raw.data : raw) ?? {};
+    const message =
+      (isRecord(raw) && typeof raw.message === 'string' ? raw.message : undefined) ??
+      (isRecord(result) && typeof result.message === 'string' ? result.message : undefined);
+    return { ...(result as Partial<AvoirRefundResult>), message } as AvoirRefundResult;
+  },
+
+  /** PDF de l'avoir généré par le serveur (`GET /avoirs/:id/pdf`), téléchargé. */
+  downloadPdf: async (id: number, numero?: string): Promise<void> => {
+    await downloadPdfBlob(`/avoirs/${id}/pdf`, pdfFilename('avoir', numero ?? id));
   },
 };
 
 // ========== RETOURS CLIENTS ==========
 export const retourService = {
-  getAll: async (page = 1, limit = 20): Promise<Page<any>> => {
+  /** Retours paginés ; `statut` : `en_attente`, `traite` ou `annule`. */
+  getAll: async (page = 1, limit = 20, statut?: string): Promise<Page<any>> => {
     const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    if (statut) params.append('statut', statut);
     const { data } = await api.get(`/retours?${params}`);
     return data;
   },
 
-  getStats: async (): Promise<any> => {
+  /**
+   * Statistiques des retours : `montant_total_rembourse` ne compte que les
+   * retours approuvés (`traite`) ; `montant_en_attente` les retours à décider.
+   */
+  getStats: async (): Promise<any & { montant_total_rembourse?: number | string; montant_en_attente?: number | string }> => {
     const { data } = await api.get('/retours/stats');
     return data;
   },
@@ -1113,7 +1497,121 @@ export const retourService = {
 };
 
 // ========== CAISSE ==========
+/** Totaux par mode de paiement d'une session de caisse. */
+export interface CaisseParMethode {
+  methode_paiement: PaymentMethod | string;
+  total_encaissements: number | string;
+  total_decaissements: number | string;
+  nb: number | string;
+}
+
+/**
+ * Ventilation espèces / hors espèces d'une session (U-03), sur
+ * `GET /caisse/session-active` et `GET /caisse/cloture-preview/:id`.
+ * Les NUMERIC peuvent arriver en chaîne : passer par `toNumber`.
+ */
+/**
+ * Ligne de `GET /caisse/:sessionId/mouvements`. P-M4 : le serveur résout le
+ * document d'origine et le client, y compris pour les anciennes lignes dont le
+ * libellé porte un identifiant interne (« Paiement facture #113 »).
+ */
+export interface CaisseMouvement {
+  id: number;
+  date_mouvement: string;
+  type: 'encaissement' | 'decaissement';
+  categorie: string;
+  montant: number | string;
+  methode_paiement: string;
+  libelle: string | null;
+  /** Facture client réglée (paiement client), sinon `null`. */
+  facture_id?: number | null;
+  numero_facture?: string | null;
+  /** Avoir remboursé (E3), sinon `null`. */
+  avoir_id?: number | null;
+  numero_avoir?: string | null;
+  tiers_id?: number | null;
+  /** Client ou fournisseur concerné, quand le mouvement en a un. */
+  tiers_nom?: string | null;
+}
+
+export interface CaisseCashBreakdown {
+  /** Fonds de caisse + espèces encaissées − espèces décaissées : ce que le tiroir doit contenir. */
+  expected_cash?: number | string;
+  especes_encaissees?: number | string;
+  especes_decaissees?: number | string;
+  /** Carte, chèque, virement, mobile money : jamais dans le tiroir. */
+  hors_especes_encaissees?: number | string;
+  hors_especes_decaissees?: number | string;
+  par_methode?: CaisseParMethode[];
+  /** Total tous modes confondus (historique, ne pas présenter comme le contenu du tiroir). */
+  solde_theorique?: number | string;
+}
+
 export const caisseService = {
+  /** Magasins dont l'utilisateur peut tenir ou consulter la caisse. */
+  getMagasins: async (): Promise<any[]> => {
+    const { data } = await api.get('/caisse/magasins');
+    return Array.isArray(data) ? data : [];
+  },
+
+  /**
+   * Session ouverte d'un magasin, ou `null`. Porte (U-03) `expected_cash` —
+   * les espèces que le tiroir doit contenir — et le détail par mode de
+   * paiement ; `solde_theorique` reste le total tous modes confondus.
+   */
+  getSessionActive: async (magasinId: number): Promise<(CaisseCashBreakdown & Record<string, any>) | null> => {
+    const { data } = await api.get('/caisse/session-active', { params: { magasin_id: magasinId } });
+    return data ?? null;
+  },
+
+  getSessionDetail: async (sessionId: number): Promise<any> => {
+    const { data } = await api.get(`/caisse/session/${sessionId}`);
+    return data;
+  },
+
+  /** Mouvements d'une session, du plus ancien au plus récent. */
+  getMouvements: async (sessionId: number): Promise<CaisseMouvement[]> => {
+    const { data } = await api.get(`/caisse/${sessionId}/mouvements`);
+    return Array.isArray(data) ? data : [];
+  },
+
+  /** Aperçu de clôture : espèces attendues, totaux par mode, mouvements hors caisse. */
+  getCloturePreview: async (sessionId: number, fondFinalCompte?: number): Promise<CaisseCashBreakdown & Record<string, any>> => {
+    const { data } = await api.get(`/caisse/cloture-preview/${sessionId}`, {
+      params: fondFinalCompte !== undefined ? { fond_final_compte: fondFinalCompte } : undefined,
+    });
+    return data;
+  },
+
+  ouvrir: async (payload: { magasin_id: number; fond_initial: number; commentaire_ouverture?: string }): Promise<any> => {
+    const { data } = await api.post('/caisse/ouvrir', payload);
+    return data;
+  },
+
+  cloturer: async (
+    sessionId: number,
+    payload: { fond_final_compte: number; commentaire_cloture?: string }
+  ): Promise<any> => {
+    const { data } = await api.post(`/caisse/cloturer/${sessionId}`, payload);
+    return data;
+  },
+
+  /** Mouvement divers (apport, retrait banque, autre entrée/sortie) avec motif. */
+  mouvementDivers: async (
+    sessionId: number,
+    payload: {
+      type: 'encaissement' | 'decaissement';
+      categorie: 'apport' | 'retrait_banque' | 'autre_entree' | 'autre_sortie';
+      montant: number;
+      methode_paiement: PaymentMethod;
+      libelle: string;
+      idempotency_key?: string;
+    }
+  ): Promise<any> => {
+    const { data } = await api.post(`/caisse/${sessionId}/mouvement-divers`, payload);
+    return data;
+  },
+
   /** Sessions de caisse clôturées/ouvertes, paginées ({ data, pagination } après intercepteur). */
   getHistorique: async (params: {
     magasin_id?: number;
@@ -1147,9 +1645,9 @@ export const caisseService = {
     if (params.date_from) q.date_from = params.date_from;
     if (params.date_to) q.date_to = params.date_to;
     if (params.limit) q.limit = String(params.limit);
-    // Raw axios on purpose: the shared interceptor unwraps the envelope down to
-    // `data` and would drop `summary` / `orphans_total`.
-    const { data: body } = await axios.get('/api/caisse/audit', { params: q, withCredentials: true });
+    // Enveloppe gardée : `summary` et `orphans_total` sont à la racine. Passe
+    // par l'instance commune — une session expirée renvoie à la connexion.
+    const { data: body } = await api.get('/caisse/audit', { params: q, keepEnvelope: true });
     return {
       data: Array.isArray(body?.data) ? body.data : [],
       summary: Array.isArray(body?.summary) ? body.summary : [],
@@ -1275,6 +1773,22 @@ export const adminUserService = {
 
 // ========== REPORTS ==========
 export const reportService = {
+  /**
+   * Balance âgée des créances clients, paginée, avec `summary.montant_total`
+   * (total dû sur tout le jeu filtré — Relances « Total à recouvrer »).
+   */
+  getReceivables: async (params: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    bucket?: string;
+    min_amount?: number;
+    location_id?: number;
+  } = {}): Promise<PageWithSummary<any, { montant_total?: number }>> => {
+    const { data } = await api.get('/reports/receivables', { params });
+    return data;
+  },
+
   getAlerts: async (): Promise<any> => {
     const { data } = await api.get('/reports/alerts');
     return data;
@@ -1288,6 +1802,119 @@ export const reportService = {
   getRevenueForecast: async (): Promise<any> => {
     const { data } = await api.get('/reports/forecast');
     return data?.data || data;
+  },
+
+  /** Indicateurs du mois en cours (chiffre d'affaires, marge, créances, stock). */
+  getDashboard: async (): Promise<unknown> => {
+    const { data } = await api.get('/reports/dashboard');
+    return data ?? null;
+  },
+
+  /** Compte de résultat simplifié de la période. */
+  getPnl: async (params: ReportPeriod): Promise<unknown> => {
+    const { data } = await api.get('/reports/pnl', { params });
+    return data ?? null;
+  },
+
+  getSalesByCategory: async (params: ReportPeriod): Promise<unknown[]> => {
+    const { data } = await api.get('/reports/sales-by-category', { params });
+    return Array.isArray(data) ? data : [];
+  },
+
+  /** Produits de la période classés par chiffre d'affaires. */
+  getProductPerformance: async (params: ReportPeriod & { limit?: number }): Promise<unknown[]> => {
+    const { data } = await api.get('/reports/products', { params });
+    return Array.isArray(data) ? data : [];
+  },
+
+  getMargins: async (params: ReportPeriod): Promise<unknown> => {
+    const { data } = await api.get('/reports/margins', { params });
+    return data ?? null;
+  },
+
+  /**
+   * Toutes les créances filtrées, pour l'export CSV — plafonnées côté serveur :
+   * `truncated` dit que la liste a été coupée.
+   */
+  exportReceivables: async (params: {
+    search?: string;
+    bucket?: string;
+    min_amount?: number;
+    location_id?: number;
+  } = {}): Promise<{ data: unknown[]; truncated: boolean }> => {
+    const { data: body } = await api.get('/reports/receivables/export', { params, keepEnvelope: true });
+    return { data: Array.isArray(body?.data) ? body.data : [], truncated: body?.truncated === true };
+  },
+};
+
+/** Période d'un rapport : dates « AAAA-MM-JJ » incluses. */
+export interface ReportPeriod {
+  date_debut: string;
+  date_fin: string;
+}
+
+// ========== DÉPENSES ==========
+export const depenseService = {
+  /** Dépenses paginées ; un magasin non affecté à l'utilisateur répond 403. */
+  getAll: async (params: {
+    magasin_id?: number;
+    categorie_id?: number;
+    methode_paiement?: string;
+    date_debut?: string;
+    date_fin?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  } = {}): Promise<Page<any>> => {
+    const { data } = await api.get('/depenses', { params });
+    if (Array.isArray(data)) {
+      return { data, pagination: { page: 1, limit: data.length, total: data.length, totalPages: 1 } };
+    }
+    return data;
+  },
+
+  getById: async (id: number): Promise<any> => {
+    const { data } = await api.get(`/depenses/${id}`);
+    return data;
+  },
+
+  /** Catégories de dépense (liste vide sur une instance neuve non initialisée). */
+  getCategories: async (): Promise<any[]> => {
+    const { data } = await api.get('/depenses/categories/list');
+    return Array.isArray(data) ? data : [];
+  },
+
+  create: async (payload: {
+    magasin_id: number;
+    categorie_id: number;
+    montant: number;
+    methode_paiement: PaymentMethod;
+    description: string;
+    date_depense?: string;
+    beneficiaire_libre?: string;
+    fournisseur_id?: number | null;
+    justificatif_url?: string;
+  }): Promise<any> => {
+    const { data } = await api.post('/depenses', payload);
+    return data;
+  },
+
+  update: async (id: number, payload: Partial<{
+    categorie_id: number;
+    montant: number;
+    methode_paiement: PaymentMethod;
+    description: string;
+    date_depense: string;
+    beneficiaire_libre: string;
+    fournisseur_id: number | null;
+    justificatif_url: string;
+  }>): Promise<any> => {
+    const { data } = await api.put(`/depenses/${id}`, payload);
+    return data;
+  },
+
+  delete: async (id: number): Promise<void> => {
+    await api.delete(`/depenses/${id}`);
   },
 };
 
@@ -1308,10 +1935,17 @@ export interface CompanySettings {
   taux_conversion: number;
   /** Modules masqués dans l'interface — liste d'exclusion (migration 098). */
   modules_desactives: string[];
+  /** Métier du client (migration 109) : préréglage des modules, écran de vente. */
+  type_activite: TypeActivite;
+  /** Message imprimé en bas du ticket de caisse (migration 109), `null` = aucun. */
+  ticket_message: string | null;
 }
+
+export type TypeActivite = 'general' | 'informatique' | 'habillement' | 'libre_service';
 
 let cachedSettings: CompanySettings | null = null;
 let settingsCacheTimestamp = 0;
+let settingsInflight: Promise<CompanySettings> | null = null;
 const SETTINGS_CACHE_TTL = 60_000;
 
 export const companySettingsService = {
@@ -1320,10 +1954,20 @@ export const companySettingsService = {
     if (!force && cachedSettings && (now - settingsCacheTimestamp) < SETTINGS_CACHE_TTL) {
       return cachedSettings;
     }
-    const { data } = await api.get('/company-settings');
-    cachedSettings = data;
-    settingsCacheTimestamp = now;
-    return data;
+    // Plusieurs lecteurs au démarrage (cadre, page Paramètres) : une seule requête.
+    if (!force && settingsInflight) return settingsInflight;
+    const request = api
+      .get('/company-settings')
+      .then(({ data }) => {
+        cachedSettings = data;
+        settingsCacheTimestamp = Date.now();
+        return data as CompanySettings;
+      })
+      .finally(() => {
+        if (settingsInflight === request) settingsInflight = null;
+      });
+    settingsInflight = request;
+    return request;
   },
 
   update: async (settings: Partial<CompanySettings>): Promise<CompanySettings> => {
@@ -1409,7 +2053,7 @@ export const auditService = {
     user_id?: number;
     page?: number;
     limit?: number;
-  } = {}): Promise<any> => {
+  } = {}): Promise<{ data: unknown[]; total: number }> => {
     const params = new URLSearchParams();
     if (filters.table) params.append('table', filters.table);
     if (filters.record_id) params.append('record_id', filters.record_id.toString());
@@ -1419,8 +2063,12 @@ export const auditService = {
     if (filters.user_id) params.append('user_id', filters.user_id.toString());
     params.append('page', (filters.page || 1).toString());
     params.append('limit', (filters.limit || 50).toString());
-    const { data } = await api.get(`/admin/audit?${params}`);
-    return data;
+    // Enveloppe gardée : `total` est à la racine, hors de `pagination` — sans
+    // elle le journal s'affichait toujours vide.
+    const { data: body } = await api.get(`/admin/audit?${params}`, { keepEnvelope: true });
+    const data = Array.isArray(body?.data) ? body.data : [];
+    const total = Number(body?.total ?? body?.pagination?.total ?? data.length) || 0;
+    return { data, total };
   },
 };
 
@@ -1495,5 +2143,137 @@ export const attachmentService = {
 
   remove: async (id: number): Promise<void> => {
     await api.delete(`/attachments/${id}`);
+  },
+};
+
+// ── Inventaire physique (/api/inventaires, migration 111) ───────────────────
+
+export type InventaireStatut = 'en_cours' | 'valide' | 'annule';
+export type InventaireFiltreLignes = 'tous' | 'a_compter' | 'comptes' | 'ecarts';
+
+/**
+ * En-tête d'un inventaire. Les champs d'écart manquent pour un compteur
+ * pendant un comptage à l'aveugle ; `valeur_ecart` n'est servi qu'au gérant et
+ * à l'administrateur.
+ */
+export interface Inventaire {
+  id: number;
+  numero: string;
+  location_id: number;
+  location_nom: string;
+  location_type: 'magasin' | 'depot';
+  statut: InventaireStatut;
+  categorie: string | null;
+  comptage_aveugle: boolean;
+  notes: string | null;
+  created_at: string;
+  date_validation: string | null;
+  cree_par_nom: string | null;
+  valide_par_nom: string | null;
+  nb_lignes: number;
+  nb_comptees: number;
+  nb_ecarts?: number;
+  unites_en_plus?: number;
+  unites_en_moins?: number;
+  valeur_ecart?: number;
+  /** Détail seulement : ce que le rôle courant a le droit de voir. */
+  voit_ecarts?: boolean;
+  voit_valeurs?: boolean;
+}
+
+export interface InventaireLigne {
+  id: number;
+  produit_id: number;
+  produit_nom: string;
+  reference: string;
+  code_barre: string | null;
+  categorie?: string | null;
+  quantite_comptee: number | null;
+  quantite_theorique?: number;
+  ecart?: number | null;
+  cmp?: number;
+  valeur_ecart?: number | null;
+  ecart_applique?: number | null;
+  compte_le: string | null;
+  compte_par_nom?: string | null;
+  /** Réponse d'un comptage : le produit n'était pas sur la feuille. */
+  ajoutee_a_la_feuille?: boolean;
+}
+
+export interface InventaireValidation {
+  id: number;
+  numero: string;
+  lignes_ajustees: number;
+  unites_en_plus: number;
+  unites_en_moins: number;
+  valeur_ecart: number;
+}
+
+export const inventaireService = {
+  getAll: async (
+    search?: string,
+    statut?: string,
+    page = 1,
+    limit = 20,
+    locationId?: number
+  ): Promise<Page<Inventaire>> => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (statut) params.append('statut', statut);
+    if (locationId) params.append('location_id', String(locationId));
+    params.append('page', String(page));
+    params.append('limit', String(limit));
+    const { data } = await api.get(`/inventaires?${params}`);
+    return data;
+  },
+
+  getById: async (id: number): Promise<Inventaire> => {
+    const { data } = await api.get(`/inventaires/${id}`);
+    return data;
+  },
+
+  getLignes: async (
+    id: number,
+    options: { search?: string; filtre?: InventaireFiltreLignes; page?: number; limit?: number } = {}
+  ): Promise<Page<InventaireLigne>> => {
+    const params = new URLSearchParams();
+    if (options.search) params.append('search', options.search);
+    if (options.filtre && options.filtre !== 'tous') params.append('filtre', options.filtre);
+    params.append('page', String(options.page ?? 1));
+    params.append('limit', String(options.limit ?? 50));
+    const { data } = await api.get(`/inventaires/${id}/lignes?${params}`);
+    return data;
+  },
+
+  create: async (payload: {
+    location_id: number;
+    categorie?: string;
+    comptage_aveugle?: boolean;
+    notes?: string;
+  }): Promise<{ id: number; numero: string; nb_lignes: number }> => {
+    const { data } = await api.post('/inventaires', payload);
+    return data;
+  },
+
+  /** `fixer` remplace la quantité comptée ; `ajouter` l'incrémente (un passage du lecteur = +1). */
+  compter: async (
+    id: number,
+    payload: { produit_id?: number; code?: string; quantite: number; mode: 'fixer' | 'ajouter' }
+  ): Promise<InventaireLigne> => {
+    const { data } = await api.post(`/inventaires/${id}/comptages`, payload);
+    return data;
+  },
+
+  effacerComptage: async (id: number, ligneId: number): Promise<void> => {
+    await api.delete(`/inventaires/${id}/lignes/${ligneId}/comptage`);
+  },
+
+  valider: async (id: number, nonComptes: 'ignorer' | 'zero' = 'ignorer'): Promise<InventaireValidation> => {
+    const { data } = await api.post(`/inventaires/${id}/valider`, { non_comptes: nonComptes });
+    return data;
+  },
+
+  annuler: async (id: number): Promise<void> => {
+    await api.post(`/inventaires/${id}/annuler`);
   },
 };

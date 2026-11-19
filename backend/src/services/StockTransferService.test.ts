@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import pool from '../db/connection';
 import { stockTransferService } from './StockTransferService';
+import { stockLocationService } from './StockLocationService';
 import { costedStockIn } from './StockCostingService';
 import { TestDB } from '../test/helpers';
 
@@ -123,7 +124,10 @@ describe('StockTransferService (intégration)', () => {
         location_destination_id: destId,
         lignes: [{ produit_id: produitId, quantite_demandee: 4 }],
       })
-    ).rejects.toThrow(/Stock insuffisant/);
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringMatching(/^Stock insuffisant pour « .+ » à .+ : 3 disponible\(s\), 4 demandé\(s\)\.$/),
+    });
 
     // La transaction est annulée : aucun transfert ne subsiste.
     const { rows } = await pool.query(
@@ -142,7 +146,7 @@ describe('StockTransferService (intégration)', () => {
         location_destination_id: sourceId,
         lignes: [{ produit_id: produitId, quantite_demandee: 1 }],
       })
-    ).rejects.toThrow(/différentes/);
+    ).rejects.toMatchObject({ statusCode: 422, message: 'Choisissez deux emplacements différents.' });
   });
 
   it('refuse un transfert sans ligne', async () => {
@@ -217,5 +221,61 @@ describe('StockTransferService (intégration)', () => {
     expect(detail.lignes).toHaveLength(1);
 
     expect(await stockTransferService.getById(99999999)).toBeNull();
+  });
+
+  it('le sélecteur de produits d’un emplacement n’offre plus un produit supprimé', async () => {
+    const kept = await stockedProduct(5, 800);
+    const deleted = await stockedProduct(5, 800);
+    await pool.query('UPDATE produits SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1', [deleted]);
+
+    const offered = await stockLocationService.getProductsWithStock(sourceId, '', 100);
+    const ids = offered.map((p: any) => p.produit_id);
+    expect(ids).toContain(kept);
+    expect(ids).not.toContain(deleted);
+  });
+
+  it('recherche par numéro, emplacement ou demande, et renvoie la demande liée', async () => {
+    const produitId = await stockedProduct(10, 800);
+    const transfer = await stockTransferService.create({
+      location_source_id: sourceId,
+      location_destination_id: destId,
+      lignes: [{ produit_id: produitId, quantite_demandee: 2 }],
+    });
+    createdTransferIds.push(transfer.id);
+
+    const numeroDemande = `DEM-TRF-${Date.now() % 100000000}`;
+    const { rows: [demande] } = await pool.query(
+      `INSERT INTO demandes_reapprovisionnement (numero, magasin_id, depot_id, statut, transfert_id)
+       VALUES ($1, $2, $3, 'en_cours', $4) RETURNING id`,
+      [numeroDemande, destId, sourceId, transfer.id]
+    );
+    await pool.query('UPDATE stock_transfers SET demande_id = $1 WHERE id = $2', [demande.id, transfer.id]);
+
+    try {
+      const { rows: [src] } = await pool.query('SELECT nom FROM stock_locations WHERE id = $1', [sourceId]);
+
+      const bySource = await stockTransferService.getAll({ search: src.nom, limit: 100 });
+      const hit = bySource.data.find((t: any) => t.id === transfer.id);
+      expect(hit).toMatchObject({ demande_id: demande.id, demande_numero: numeroDemande });
+      expect(bySource.data.every((t: any) => t.source_nom === src.nom || t.destination_nom === src.nom)).toBe(true);
+      expect(bySource.total).toBe(bySource.data.length);
+
+      const byDemande = await stockTransferService.getAll({ search: numeroDemande });
+      expect(byDemande.data.map((t: any) => t.id)).toEqual([transfer.id]);
+      expect(byDemande.total).toBe(1);
+
+      const byNumero = await stockTransferService.getAll({ search: transfer.numero_transfer });
+      expect(byNumero.data.map((t: any) => t.id)).toContain(transfer.id);
+
+      const none = await stockTransferService.getAll({ search: 'aucun-transfert-zzz' });
+      expect(none).toEqual({ data: [], total: 0 });
+
+      const detail = await stockTransferService.getById(transfer.id);
+      expect(detail).toMatchObject({ demande_id: demande.id, demande_numero: numeroDemande });
+    } finally {
+      await pool.query('UPDATE stock_transfers SET demande_id = NULL WHERE id = $1', [transfer.id]);
+      await pool.query('DELETE FROM demandes_reapprovisionnement_history WHERE demande_id = $1', [demande.id]);
+      await pool.query('DELETE FROM demandes_reapprovisionnement WHERE id = $1', [demande.id]);
+    }
   });
 });

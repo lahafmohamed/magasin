@@ -1,7 +1,7 @@
 {
-  "name": "Hitek-CI - Gestion Magasin Informatique",
-  "short_name": "Hitek-CI",
-  "description": "ERP de gestion de magasin informatique — factures, stocks, caisse",
+  "name": "Hitek — Gestion commerciale",
+  "short_name": "Hitek",
+  "description": "Gestion commerciale : ventes, stock, caisse et comptabilité.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

@@ -26,7 +26,7 @@ export class AuthController {
       if (!username || !password) {
         res.status(400).json({
           success: false,
-          error: 'Username et mot de passe requis',
+          error: 'Saisissez votre identifiant et votre mot de passe.',
         });
         return;
       }
@@ -152,7 +152,7 @@ export class AuthController {
       const { userId } = req.params;
       
       if (!userId) {
-        res.status(400).json({ error: 'User ID requis' });
+        res.status(400).json({ success: false, error: 'Utilisateur non précisé.' });
         return;
       }
 
@@ -187,7 +187,7 @@ export class AuthController {
       if (!username || !password) {
         res.status(400).json({
           success: false,
-          error: 'Username et mot de passe requis',
+          error: 'Saisissez votre identifiant et votre mot de passe.',
         });
         return;
       }
@@ -205,7 +205,7 @@ export class AuthController {
       if (existingUser) {
         res.status(409).json({
           success: false,
-          error: 'Username déjà utilisé',
+          error: 'Cet identifiant est déjà utilisé.',
         });
         return;
       }

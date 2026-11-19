@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import pool from '../db/connection';
 import { businessError } from '../utils/errors';
 import { checkPeriodIsOpen } from './PeriodService';
@@ -5,8 +6,11 @@ import { caisseMagasinService } from './CaisseMagasinService';
 import { ClientAllocationService } from './ClientAllocationService';
 import { logger } from '../utils/logger';
 import { logAudit } from '../middleware/audit';
-import { PAYMENT_METHODS, PaymentMethod } from '../utils/paymentMethods';
+import { PAYMENT_METHODS, PaymentMethod, paymentMethodPhrase } from '../utils/paymentMethods';
 import { NotificationService } from './NotificationService';
+import { formatMontantFcfa } from '../utils/money';
+import { roundMoney } from './PricingService';
+import { mouvementLibelle, tiersNomSql } from '../utils/caisseLibelle';
 
 // Payment methods now live in utils/paymentMethods so non-service layers can
 // import them without a cycle. Re-exported here for existing importers.
@@ -22,6 +26,9 @@ export interface CreatePaiementInput {
   notes?: string;
   session_caisse_id?: number;
   idempotency_key?: string;
+  /** Explicit request to settle `montant` from the client's acomptes first (D3). */
+  appliquer_acomptes?: boolean;
+  /** @deprecated No-op since D3 — not applying acomptes is the default. Wins over `appliquer_acomptes`. */
   skip_acompte_application?: boolean;
   userId: number | null;
 }
@@ -30,14 +37,51 @@ export interface CreatePaiementResult {
   idempotent?: boolean;
   existing?: Record<string, unknown>;
   facture_id: number;
+  numero_facture: string;
+  /** The amount entered: always equals applique_depuis_acomptes + direct_montant. */
   montant_recu: number;
+  /** Taken from the client's acomptes — only on an explicit request (appliquer_acomptes). */
   applique_depuis_acomptes: number;
   applications: { acompte_id: number; paiement_id: number; montant: number }[];
   direct_paiement_id: number | null;
+  /** Recorded as a payment in `methode_paiement` (cash in the till when espece). */
   direct_montant: number;
   methode_paiement: PaymentMethod;
   session_caisse_id: number | null;
+  /** Till movement written for direct_montant, null when no open session was involved. */
+  mouvement_caisse_id: number | null;
+  encaisse_en_caisse: boolean;
+  /** Invoice state after the recompute (E1: the payment settles this invoice). */
+  reste_du: number;
+  statut_facture: string;
+  /** Client's acompte balance still available after this payment. */
+  acomptes_disponibles: number;
   message: string;
+}
+
+/**
+ * French sentence describing exactly what was recorded, e.g.
+ * « Paiement de 70 000 FCFA enregistré en espèces. Reste dû : 30 000 FCFA. »
+ */
+function describePayment(r: {
+  direct: number;
+  applied: number;
+  methode: PaymentMethod;
+  resteDu: number;
+}): string {
+  const phrase = paymentMethodPhrase(r.methode);
+  let first: string;
+  if (r.applied > 0 && r.direct > 0) {
+    first = `${formatMontantFcfa(r.applied)} pris sur l’acompte et ${formatMontantFcfa(r.direct)} payés ${phrase}.`;
+  } else if (r.applied > 0) {
+    first = `${formatMontantFcfa(r.applied)} pris sur l’acompte.`;
+  } else {
+    first = `Paiement de ${formatMontantFcfa(r.direct)} enregistré ${phrase}.`;
+  }
+  const second = r.resteDu > 0.005
+    ? `Reste dû : ${formatMontantFcfa(r.resteDu)}.`
+    : 'Facture soldée.';
+  return `${first} ${second}`;
 }
 
 export interface UpdatePaiementInput {
@@ -56,17 +100,56 @@ export class PaiementService {
   /**
    * Record a payment on a facture.
    *  1. Idempotency short-circuit (idempotency_key).
-   *  2. Auto-apply available acomptes FIFO up to the invoice balance — each
-   *     application creates a paiements row (source='acompte_application') and
-   *     an acompte_applications ledger row. No caisse movement (no cash today).
-   *  3. Remainder (montant - applied) recorded as a direct paiement plus one
-   *     mouvement_caisse line when a session is resolvable. Caisse error = rollback.
+   *  2. Only when explicitly requested (`appliquer_acomptes`): settle part of
+   *     `montant` from available acomptes FIFO, never more than `montant` —
+   *     each application creates a paiements row (source='acompte_application')
+   *     and an acompte_applications ledger row. No caisse movement.
+   *  3. The rest of `montant` (all of it by default) is recorded as a direct
+   *     paiement plus one mouvement_caisse line when a session is resolvable.
+   *     Caisse error = rollback.
+   *  4. Recompute (E1: each payment pinned to its own invoice) with the
+   *     acompte pool capped at what the invoices already counted: recording a
+   *     payment never spends a deposit as a side effect (decision D3).
    */
   async create(input: CreatePaiementInput): Promise<CreatePaiementResult> {
+    // Contrôles de forme avant de prendre une connexion (refaits par le cœur).
+    if (!input.montant || Number(input.montant) <= 0) {
+      throw businessError(400, 'Le montant doit être supérieur à 0');
+    }
+    if (!input.methode_paiement || !PAYMENT_METHODS.includes(input.methode_paiement)) {
+      throw businessError(400, 'Méthode de paiement invalide');
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+      const { result, afterCommit } = await this.createInTransaction(client, input);
+      await client.query('COMMIT');
+      await afterCommit();
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Corps de `create` dans une transaction ouverte par l'appelant (vente
+   * comptoir : facture et paiements validés ensemble). `afterCommit` écrit le
+   * journal d'audit et notifie : à n'appeler qu'après le COMMIT.
+   */
+  async createInTransaction(
+    client: PoolClient,
+    input: CreatePaiementInput
+  ): Promise<{ result: CreatePaiementResult; afterCommit: () => Promise<void> }> {
     const {
       factureId, montant, methode_paiement, date_paiement, reference, notes,
-      session_caisse_id, idempotency_key, skip_acompte_application, userId,
+      session_caisse_id, idempotency_key, appliquer_acomptes, skip_acompte_application, userId,
     } = input;
+    const applyAcomptes = appliquer_acomptes === true && skip_acompte_application !== true;
 
     if (!montant || Number(montant) <= 0) {
       throw businessError(400, 'Le montant doit être supérieur à 0');
@@ -75,11 +158,16 @@ export class PaiementService {
       throw businessError(400, 'Méthode de paiement invalide');
     }
 
-    const datePaiement = date_paiement || new Date().toISOString();
-    const client = await pool.connect();
-
-    try {
-      await client.query('BEGIN');
+    {
+      // Without a date from the caller, the payment is stamped by the database
+      // clock — the one that stamped the invoice (date_facture = CURRENT_TIMESTAMP)
+      // and the acomptes. The Node clock (used before) can lag it by tens of ms on
+      // Windows: a payment recorded right after its invoice then looked older than
+      // the invoice, and the FIFO rule « a direct payment cannot settle an invoice
+      // issued after it » left that invoice unpaid (flaky PaiementController tests).
+      const datePaiement: string = date_paiement || (
+        await client.query(`SELECT to_char(LOCALTIMESTAMP, 'YYYY-MM-DD"T"HH24:MI:SS.MS') AS maintenant`)
+      ).rows[0].maintenant;
 
       // Reject postings into a closed accounting period
       await checkPeriodIsOpen(new Date(datePaiement), client);
@@ -91,16 +179,19 @@ export class PaiementService {
           [idempotency_key]
         );
         if (dup.length > 0) {
-          await client.query('COMMIT');
-          return { idempotent: true, existing: dup[0] } as unknown as CreatePaiementResult;
+          return {
+            result: { idempotent: true, existing: dup[0] } as unknown as CreatePaiementResult,
+            afterCommit: async () => {},
+          };
         }
       }
 
       // Lock facture row to serialize concurrent payments
       const { rows: factureRows } = await client.query(
-        `SELECT id, numero_facture, tiers_id, statut, location_id, total, montant_paye,
-                GREATEST(total - montant_paye, 0) AS remaining
-         FROM factures WHERE id = $1 FOR UPDATE`,
+        `SELECT f.id, f.numero_facture, f.tiers_id, f.statut, f.location_id, f.total, f.montant_paye,
+                GREATEST(f.total - f.montant_paye, 0) AS remaining,
+                (SELECT ${tiersNomSql('t')} FROM tiers t WHERE t.id = f.tiers_id) AS client_nom
+         FROM factures f WHERE f.id = $1 FOR UPDATE OF f`,
         [factureId]
       );
 
@@ -142,14 +233,18 @@ export class PaiementService {
       }
 
       if (methode_paiement === 'espece' && !effectiveSessionCaisseId) {
-        throw businessError(409, 'Aucune session caisse ouverte — impossible de recevoir des espèces');
+        throw businessError(409, 'La caisse de ce magasin est fermée : ouvrez-la avant d’encaisser des espèces.', 'CAISSE_FERMEE');
       }
 
-      // ── Step 1: auto-apply available acomptes FIFO ──
+      // Read before any payment row moves: acompte money the invoices already
+      // count (legacy state) must survive the recompute below.
+      const countedAcomptes = await ClientAllocationService.countedAcompteMoney(clientId, client);
+
+      // ── Step 1: explicit acompte application (opt-in only) ──
       let appliedFromAcomptes = 0;
       const applications: { acompte_id: number; paiement_id: number; montant: number }[] = [];
 
-      if (!skip_acompte_application) {
+      if (applyAcomptes) {
         const { rows: acomptes } = await client.query(
           `SELECT id, montant_restant
            FROM acomptes_clients
@@ -162,7 +257,8 @@ export class PaiementService {
           [clientId]
         );
 
-        let remainingNeeded = remainingDue; // apply up to invoice balance, not just payload montant
+        // Never more than the amount entered: `montant` is the total settled.
+        let remainingNeeded = Math.min(remainingDue, montantNum);
         for (const ac of acomptes) {
           if (remainingNeeded <= 0) break;
           const acRestant = parseFloat(ac.montant_restant);
@@ -177,7 +273,7 @@ export class PaiementService {
             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'acompte_application',$9)
             RETURNING id`,
             [factureId, toApply, methode_paiement, datePaiement,
-              `ACO-APP-${ac.id}`, `Application acompte #${ac.id}`,
+              `Acompte n° ${ac.id}`, `Acompte n° ${ac.id} appliqué`,
               null, effectiveMagasinId, userId]
           );
 
@@ -193,18 +289,19 @@ export class PaiementService {
                (tiers_id, type_operation, document_id, document_numero, montant_debit, montant_credit, notes, cree_par)
              VALUES ($1, 'paiement', $2, $3, 0, $4, $5, $6)`,
             [clientId, payRows[0].id, `PAI-${payRows[0].id}`, toApply,
-              `Application acompte #${ac.id} sur facture #${factureId}`, userId]
+              `Acompte n° ${ac.id} appliqué à ${facture.numero_facture}`, userId]
           );
 
           applications.push({ acompte_id: ac.id, paiement_id: payRows[0].id, montant: toApply });
-          appliedFromAcomptes += toApply;
-          remainingNeeded -= toApply;
+          appliedFromAcomptes = roundMoney(appliedFromAcomptes + toApply);
+          remainingNeeded = roundMoney(remainingNeeded - toApply);
         }
       }
 
-      // ── Step 2: direct payment for remainder ──
-      const directMontant = Math.max(0, montantNum - appliedFromAcomptes);
+      // ── Step 2: direct payment for the rest (all of `montant` by default) ──
+      const directMontant = roundMoney(Math.max(0, montantNum - appliedFromAcomptes));
       let directPaiementId: number | null = null;
+      let mouvementCaisseId: number | null = null;
 
       if (directMontant > 0) {
         const { rows: payRows } = await client.query(
@@ -231,7 +328,7 @@ export class PaiementService {
             methode_paiement,
             reference_type: 'paiement',
             reference_id: directPaiementId!,
-            libelle: `Paiement facture #${factureId}`,
+            libelle: mouvementLibelle(`Paiement ${facture.numero_facture}`, facture.client_nom),
             user_id: userId || undefined,
             idempotency_key: idempotency_key ? `${idempotency_key}:mvt` : undefined,
           });
@@ -240,6 +337,7 @@ export class PaiementService {
             'UPDATE paiements SET mouvement_caisse_id = $1 WHERE id = $2',
             [mouvement.id, directPaiementId]
           );
+          mouvementCaisseId = mouvement.id;
         }
 
         // Ledger
@@ -251,16 +349,38 @@ export class PaiementService {
         );
       }
 
-      await ClientAllocationService.recomputeClientAllocations(clientId, { transaction: client });
+      await ClientAllocationService.recomputeClientAllocations(clientId, {
+        transaction: client,
+        acomptePoolCap: countedAcomptes,
+      });
 
-      await client.query('COMMIT');
+      // What the user should be told: the invoice and deposit state after the
+      // recompute. Since E1 (2026-10-24) the payment stays on this invoice; only
+      // a legacy overpayment of it can still flow to the client's oldest one.
+      const { rows: afterRows } = await client.query(
+        `SELECT f.statut, GREATEST(f.total - f.montant_paye, 0) AS reste_du,
+                (SELECT COALESCE(SUM(a.montant_restant), 0) FROM acomptes_clients a
+                 WHERE a.tiers_id = f.tiers_id AND a.deleted_at IS NULL
+                   AND a.statut <> 'rembourse' AND a.montant_restant > 0) AS acomptes_disponibles
+         FROM factures f WHERE f.id = $1`,
+        [factureId]
+      );
+      const resteDu = roundMoney(parseFloat(afterRows[0].reste_du));
+      const acomptesDisponibles = roundMoney(parseFloat(afterRows[0].acomptes_disponibles));
 
+      const afterCommit = async () => {
       await logAudit({
         utilisateur_id: userId,
         action: 'create',
         table_name: 'paiements',
         record_id: directPaiementId ?? applications[0]?.paiement_id ?? factureId,
-        new_values: { facture_id: factureId, montant: montantNum, methode_paiement, applique_depuis_acomptes: appliedFromAcomptes },
+        new_values: {
+          facture_id: factureId,
+          montant: montantNum,
+          methode_paiement,
+          applique_depuis_acomptes: appliedFromAcomptes,
+          direct_montant: directMontant,
+        },
       });
 
       // Notification après COMMIT, non bloquante (cf. FactureService.create).
@@ -271,25 +391,31 @@ export class PaiementService {
           methode: methode_paiement,
         })
       );
+      };
 
-      return {
+      const result: CreatePaiementResult = {
         facture_id: factureId,
+        numero_facture: facture.numero_facture,
         montant_recu: montantNum,
         applique_depuis_acomptes: appliedFromAcomptes,
         applications,
         direct_paiement_id: directPaiementId,
         direct_montant: directMontant,
         methode_paiement,
-        session_caisse_id: effectiveSessionCaisseId,
-        message: appliedFromAcomptes > 0
-          ? `Acomptes appliqués (${appliedFromAcomptes}), reste encaissé: ${directMontant}`
-          : 'Paiement enregistré',
+        session_caisse_id: directPaiementId ? effectiveSessionCaisseId : null,
+        mouvement_caisse_id: mouvementCaisseId,
+        encaisse_en_caisse: mouvementCaisseId !== null,
+        reste_du: resteDu,
+        statut_facture: afterRows[0].statut,
+        acomptes_disponibles: acomptesDisponibles,
+        message: describePayment({
+          direct: directMontant,
+          applied: appliedFromAcomptes,
+          methode: methode_paiement,
+          resteDu,
+        }),
       };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+      return { result, afterCommit };
     }
   }
 
@@ -359,6 +485,9 @@ export class PaiementService {
         }
       }
 
+      // Before the row moves (D3: editing a payment never spends a deposit).
+      const countedAcomptes = await ClientAllocationService.countedAcompteMoney(payment.tiers_id, client);
+
       await client.query(
         `UPDATE paiements SET
           montant = COALESCE($1, montant),
@@ -370,7 +499,10 @@ export class PaiementService {
         [montant, methode_paiement, reference, notes, date_paiement, id]
       );
 
-      await ClientAllocationService.recomputeClientAllocations(payment.tiers_id, { transaction: client });
+      await ClientAllocationService.recomputeClientAllocations(payment.tiers_id, {
+        transaction: client,
+        acomptePoolCap: countedAcomptes,
+      });
 
       await client.query('COMMIT');
 
@@ -400,7 +532,8 @@ export class PaiementService {
       await client.query('BEGIN');
 
       const { rows: existingPayment } = await client.query(
-        `SELECT p.*, f.tiers_id
+        `SELECT p.*, f.tiers_id, f.numero_facture,
+                (SELECT ${tiersNomSql('t')} FROM tiers t WHERE t.id = f.tiers_id) AS client_nom
          FROM paiements p
          JOIN factures f ON f.id = p.facture_id
          WHERE p.id = $1
@@ -422,6 +555,10 @@ export class PaiementService {
 
       // Closed accounting periods are immutable
       await checkPeriodIsOpen(new Date(payment.date_paiement), client);
+
+      // Before the row goes (D3): deleting a payment reopens the invoice, and an
+      // available deposit must not silently fill the gap.
+      const countedAcomptes = await ClientAllocationService.countedAcompteMoney(payment.tiers_id, client);
 
       // Reverse the till movement so the caisse balance stays true. Only an
       // open session can absorb the reversal — a closed one has been counted.
@@ -445,7 +582,7 @@ export class PaiementService {
             methode_paiement: payment.methode_paiement,
             reference_type: 'paiement',
             reference_id: payment.id,
-            libelle: `Annulation paiement PAI-${payment.id} (facture #${payment.facture_id})`,
+            libelle: mouvementLibelle(`Annulation paiement ${payment.numero_facture}`, payment.client_nom),
             user_id: userId || undefined,
           });
         }
@@ -468,7 +605,10 @@ export class PaiementService {
 
       await client.query('DELETE FROM paiements WHERE id = $1', [id]);
 
-      await ClientAllocationService.recomputeClientAllocations(payment.tiers_id, { transaction: client });
+      await ClientAllocationService.recomputeClientAllocations(payment.tiers_id, {
+        transaction: client,
+        acomptePoolCap: countedAcomptes,
+      });
 
       await client.query('COMMIT');
 

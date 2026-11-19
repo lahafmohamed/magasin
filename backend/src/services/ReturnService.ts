@@ -22,6 +22,19 @@ export interface CreateReturnInput {
   req?: any;
 }
 
+/** The return's active credit note (not cancelled, not deleted), if any. */
+const ACTIVE_AVOIR_JOIN = `LEFT JOIN LATERAL (
+         SELECT fa.id, fa.numero_avoir FROM factures_avoir fa
+         WHERE fa.retour_id = r.id AND fa.deleted_at IS NULL AND fa.statut IS DISTINCT FROM 'annule'
+         ORDER BY fa.id DESC LIMIT 1
+       ) av ON true`;
+
+const STATUT_RETOUR_LABELS: Record<string, string> = {
+  en_attente: 'en attente',
+  traite: 'approuvé',
+  annule: 'annulé',
+};
+
 export class ReturnService {
   /**
    * Create customer return with stock restocking (transactional)
@@ -76,8 +89,11 @@ export class ReturnService {
         const totalReturned = parseFloat(returnedRows[0].total_retour);
         const maxReturnable = totalInvoiced - totalReturned;
         if (ligne.quantite > maxReturnable) {
+          const { rows: nomRows } = await client.query('SELECT nom FROM produits WHERE id = $1', [ligne.produit_id]);
+          const nom = nomRows[0]?.nom ?? `n° ${ligne.produit_id}`;
           throw businessError(400,
-            `Quantité excessive pour le produit ${ligne.produit_id} (facturé: ${totalInvoiced}, déjà retourné: ${totalReturned}, disponible: ${maxReturnable})`
+            `Quantité retournée trop élevée pour « ${nom} » : ${Math.max(0, maxReturnable)} retournable(s) ` +
+            `(facturé ${totalInvoiced}, déjà retourné ${totalReturned}).`
           );
         }
       }
@@ -153,21 +169,32 @@ export class ReturnService {
   /**
    * Get all returns
    */
-  async getAll(page: number = 1, limit: number = 20): Promise<any> {
+  async getAll(page: number = 1, limit: number = 20, statut?: string): Promise<any> {
     const offset = (page - 1) * limit;
+
+    // One WHERE for the page and its count: the statut chip used to be
+    // ignored, so « En attente » listed every return and paginated the total.
+    const where = statut ? 'WHERE r.statut = $1' : '';
+    const filterParams = statut ? [statut] : [];
 
     const { rows } = await pool.query(
       `SELECT r.*, t.raison_sociale as client_nom,
-        u.username as cree_par_username
+        u.username as cree_par_username,
+        av.id as avoir_id, av.numero_avoir
        FROM retours r
        LEFT JOIN tiers t ON r.tiers_id = t.id
        LEFT JOIN utilisateurs u ON r.cree_par = u.id
+       ${ACTIVE_AVOIR_JOIN}
+       ${where}
        ORDER BY r.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
+       LIMIT $${filterParams.length + 1} OFFSET $${filterParams.length + 2}`,
+      [...filterParams, limit, offset]
     );
 
-    const { rows: countRows } = await pool.query('SELECT COUNT(*) as total FROM retours');
+    const { rows: countRows } = await pool.query(
+      `SELECT COUNT(*) as total FROM retours r ${where}`,
+      filterParams
+    );
     const total = parseInt(countRows[0].total);
 
     return {
@@ -186,9 +213,11 @@ export class ReturnService {
    */
   async getById(id: number): Promise<any | null> {
     const { rows: returnRows } = await pool.query(
-      `SELECT r.*, t.raison_sociale as client_nom
+      `SELECT r.*, t.raison_sociale as client_nom,
+        av.id as avoir_id, av.numero_avoir
        FROM retours r
        LEFT JOIN tiers t ON r.tiers_id = t.id
+       ${ACTIVE_AVOIR_JOIN}
        WHERE r.id = $1`,
       [id]
     );
@@ -315,7 +344,7 @@ export class ReturnService {
   async updateStatut(id: number, statut: string, userId?: number, req?: any): Promise<boolean> {
     const ALLOWED = ['en_attente', 'traite', 'annule'];
     if (!ALLOWED.includes(statut)) {
-      throw businessError(400, `Statut de retour invalide: '${statut}'`);
+      throw businessError(400, 'Statut de retour inconnu.');
     }
 
     const client = await pool.connect();
@@ -345,7 +374,27 @@ export class ReturnService {
         annule: [],
       };
       if (!legal[previousStatut]?.includes(statut)) {
-        throw businessError(409, `Transition de retour interdite: '${previousStatut}' -> '${statut}'`);
+        const from = STATUT_RETOUR_LABELS[previousStatut] ?? previousStatut;
+        const to = STATUT_RETOUR_LABELS[statut] ?? statut;
+        throw businessError(409, `Un retour ${from} ne peut pas passer à « ${to} ».`);
+      }
+
+      // An approved return whose credit note was issued cannot be cancelled
+      // behind the avoir's back: the client would keep the credit while the
+      // goods leave the stock again.
+      if (statut === 'annule' && previousStatut === 'traite') {
+        const { rows: avoirRows } = await client.query(
+          `SELECT numero_avoir FROM factures_avoir
+           WHERE retour_id = $1 AND deleted_at IS NULL AND statut IS DISTINCT FROM 'annule'
+           LIMIT 1`,
+          [id]
+        );
+        if (avoirRows[0]) {
+          throw businessError(
+            409,
+            `L’avoir ${avoirRows[0].numero_avoir} a été émis pour ce retour : annulez d’abord l’avoir.`
+          );
+        }
       }
 
       // Approval restocks; the return becomes an accounting/inventory event.
@@ -390,13 +439,17 @@ export class ReturnService {
    * Get return statistics
    */
   async getStats(): Promise<any> {
+    // montant_total_rembourse counts approved returns only: it used to add up
+    // pending and cancelled ones too, so « Total remboursé » announced money
+    // nobody had been promised (U-08).
     const { rows } = await pool.query(
-      `SELECT 
+      `SELECT
         COUNT(*) as total_retours,
         COUNT(*) FILTER (WHERE statut = 'en_attente') as en_attente,
         COUNT(*) FILTER (WHERE statut = 'traite') as traites,
         COUNT(*) FILTER (WHERE statut = 'annule') as annules,
-        COALESCE(SUM(total_remboursement), 0) as montant_total_rembourse
+        COALESCE(SUM(total_remboursement) FILTER (WHERE statut = 'traite'), 0) as montant_total_rembourse,
+        COALESCE(SUM(total_remboursement) FILTER (WHERE statut = 'en_attente'), 0) as montant_en_attente
        FROM retours`
     );
     return rows[0];

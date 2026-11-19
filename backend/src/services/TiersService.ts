@@ -1,5 +1,9 @@
 import pool from '../db/connection';
 import { BaseService, PaginatedResult } from './BaseService';
+import { businessError } from '../utils/errors';
+
+/** Stable code of the walk-in client (migration 104, ci-ref-data.sql). */
+export const WALK_IN_CLIENT_CODE = 'PASS';
 
 export interface TiersRecord {
   id: number;
@@ -128,7 +132,7 @@ export class TiersService extends BaseService<TiersRecord> {
 
   async create(input: CreateTiersInput): Promise<TiersRecord> {
     if (!input.est_client && !input.est_fournisseur) {
-      throw new Error('Un tiers doit avoir au moins un rôle (client ou fournisseur)');
+      throw businessError(422, 'Cochez au moins un rôle : client ou fournisseur.');
     }
     const { rows } = await pool.query(
       `INSERT INTO tiers (raison_sociale, prenom, telephone, email, adresse, nif, rccm,
@@ -175,7 +179,7 @@ export class TiersService extends BaseService<TiersRecord> {
     if (input.delai_livraison !== undefined) set('delai_livraison', input.delai_livraison);
     if (input.notes !== undefined)          set('notes', input.notes || null);
 
-    if (fields.length === 0) throw new Error('Aucun champ à mettre à jour');
+    if (fields.length === 0) throw businessError(400, 'Aucun champ à mettre à jour.');
     fields.push('updated_at = CURRENT_TIMESTAMP');
     params.push(id);
 
@@ -588,6 +592,22 @@ export class TiersService extends BaseService<TiersRecord> {
       `UPDATE tiers SET est_fournisseur = true, updated_at = CURRENT_TIMESTAMP
        WHERE id = $1 AND deleted_at IS NULL RETURNING *`,
       [id]
+    );
+    return rows[0] || null;
+  }
+
+  /**
+   * Walk-in client (« Client comptoir », decision D4) — the tiers coded PASS
+   * (migration 104 / ci-ref-data). Same columns as `search`, so the
+   * frontend TiersPicker can preselect it as is. Null when none is configured.
+   */
+  async getComptoir(): Promise<Pick<TiersRecord, 'id' | 'code' | 'raison_sociale' | 'prenom' | 'telephone' | 'email' | 'est_client' | 'est_fournisseur'> | null> {
+    const { rows } = await pool.query(
+      `SELECT id, code, raison_sociale, prenom, telephone, email, est_client, est_fournisseur
+       FROM tiers
+       WHERE code = $1 AND deleted_at IS NULL AND est_client = true
+       LIMIT 1`,
+      [WALK_IN_CLIENT_CODE]
     );
     return rows[0] || null;
   }
