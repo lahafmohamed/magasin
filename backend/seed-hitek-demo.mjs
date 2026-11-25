@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 /**
- * seed-hitek-demo.mjs - Unified schema seed
+ * seed-demo.mjs — seed de démonstration nolyxERP (schéma unifié).
+ * WIPE tolérant (to_regclass) + données réalistes d'une boutique d'Abidjan.
+ * Les statuts de paiement et la valeur du stock viennent des triggers,
+ * jamais d'UPDATE manuels.
  */
 import pg from 'pg';
 import 'dotenv/config';
@@ -81,11 +84,12 @@ const TIERS = [
 ];
 
 const d = (off=0)=>{const x=new Date();x.setDate(x.getDate()+off);return x.toISOString().slice(0,10);};
-const nFac=n=>'FAC-2026-'+String(n).padStart(5,'0');
-const nDev=n=>'DEV-2026-'+String(n).padStart(5,'0');
-const nCF=n=>'CF-2026-'+String(n).padStart(5,'0');
-const nRec=n=>'REC-2026-'+String(n).padStart(5,'0');
-const nFF=n=>'FF-2026-'+String(n).padStart(5,'0');
+const Y=new Date().getFullYear();
+const nFac=n=>`FAC-${Y}-`+String(n).padStart(5,'0');
+const nDev=n=>`DEV-${Y}-`+String(n).padStart(5,'0');
+const nCF=n=>`CF-${Y}-`+String(n).padStart(5,'0');
+const nRec=n=>`REC-${Y}-`+String(n).padStart(5,'0');
+const nFF=n=>`FF-${Y}-`+String(n).padStart(5,'0');
 
 async function main(){
   const db=await pool.connect();
@@ -100,7 +104,8 @@ async function main(){
     console.log('    '+ex.length+' tables videes');
     
     const {rows:[{id:locId}]}=await db.query('SELECT id FROM stock_locations WHERE est_principal=TRUE AND actif=TRUE LIMIT 1');
-    const {rows:[{id:magId}]}=await db.query('SELECT id FROM magasins ORDER BY id LIMIT 1');
+    const {rows:magRows}=await db.query('SELECT id FROM magasins ORDER BY id LIMIT 1');
+    const magId=magRows[0]?.id??null; // table legacy vide sur instance neuve — colonne nullable
     console.log('    location_id='+locId+' magasin_id='+magId);
     
     console.log('\n[2] Categories...');
@@ -113,7 +118,7 @@ async function main(){
     for(const[ref,nom,desc,cat,pa,pv,stk,smin]of PRODUITS){
       const{rows}=await db.query('INSERT INTO produits(reference,nom,description,categorie_id,prix_achat,prix_vente,stock,stock_minimum)VALUES($1,$2,$3,$4,$5,$6,$7,$8)RETURNING id',[ref,nom,desc,catId[cat],pa,pv,stk,smin]);
       p[ref]=rows[0].id;
-      await db.query('INSERT INTO stock_par_location(produit_id,location_id,quantite)VALUES($1,$2,$3)',[p[ref],locId,stk]);
+      await db.query('INSERT INTO stock_par_location(produit_id,location_id,quantite,cmp)VALUES($1,$2,$3,$4)',[p[ref],locId,stk,pa]);
     }
     console.log('    '+PRODUITS.length+' produits');
     
@@ -160,8 +165,9 @@ async function main(){
       await db.query('INSERT INTO document_lignes(document_type,document_id,produit_id,description,quantite,prix_unitaire,total_ligne)VALUES($1,$2,$3,$4,$5,$6,$7)',['facture',fid,pid,desc,qte,pu,qte*pu]);
     };
     const mkPay=async(fid,montant,mode,dateP)=>{
+      // statut + montant_paye maintenus par trg_after_payment_insert — ne pas
+      // les écraser à la main (l'ancienne comparaison === number/string mentait).
       await db.query('INSERT INTO paiements(facture_id,montant,methode_paiement,date_paiement,source)VALUES($1,$2,$3,$4,$5)',[fid,montant,mode,dateP,'direct']);
-      await db.query('UPDATE factures SET statut=$1,montant_paye=$2 WHERE id=$3',[montant===await db.query('SELECT total FROM factures WHERE id=$1',[fid]).then(r=>r.rows[0].total)?'payee':'partielle',montant,fid]);
     };
     const f1=await mkFac(nFac(1),t['CLI-001'],null,d(-40),d(-10),650000,'Vente comptoir');
     await mkFacL(f1,p['INF-LAP-001'],'HP ProBook',1,595000);
@@ -244,8 +250,8 @@ async function main(){
       await db.query('INSERT INTO facture_fournisseur_lignes(facture_id,produit_id,description,quantite,prix_unitaire,total_ligne)VALUES($1,$2,$3,$4,$5,$6)',[fid,pid,desc,qte,pu,qte*pu]);
     };
     const mkPayF=async(fid,tid,montant,mode,dateP)=>{
+      // statut + montant_paye maintenus par trg_paiement_ff_iud.
       await db.query('INSERT INTO paiements_fournisseur(facture_id,montant,methode_paiement,date_paiement,source)VALUES($1,$2,$3,$4,$5)',[fid,montant,mode,dateP,'direct']);
-      await db.query('UPDATE factures_fournisseur SET statut=$1,montant_paye=$2 WHERE id=$3',[montant>=await db.query('SELECT total FROM factures_fournisseur WHERE id=$1',[fid]).then(r=>r.rows[0].total)?'payee':'partiellement_payee',montant,fid]);
     };
     const ff1=await mkFF('HP-INV-2026-0441',t['FRN-001'],r1,d(-44),d(-14),'payee',5450000,'Laptops + ecrans HP');
     await mkFFL(ff1,p['INF-LAP-001'],'HP ProBook',10,450000);await mkFFL(ff1,p['INF-MON-001'],'Dell P2422H',10,95000);
@@ -255,7 +261,7 @@ async function main(){
     await mkPayF(ff2,t['FRN-002'],1500000,'cheque',d(-20));
     const ff4=await mkFF('COMPU-2026-0017',t['MIX-001'],r3,d(-14),d(16),'payee',1575000,'Desktops + ecrans');
     await mkFFL(ff4,p['INF-DSK-002'],'OptiPlex 3000',3,390000);await mkFFL(ff4,p['INF-MON-001'],'Dell P2422H',3,135000);
-    await mkPayF(ff4,t['MIX-001'],1575000,'espece',d(-14));
+    await mkPayF(ff4,t['MIX-001'],1575000,'virement',d(-14)); // pas d'espèces : exige session caisse + mouvement
     console.log('    3 factures fournisseur OK');
     
     await db.query('COMMIT');
@@ -268,7 +274,7 @@ async function main(){
     ]);
     const[cntCat,cntPr,cntTi,cntD,cntF,cntP,cntCf,cntR,cntFf,cntL]=cnt.map(x=>x.rows[0].n);
     console.log('\n==========================================');
-    console.log('  HITEK DEMO - RESUME SEED');
+    console.log('  NOLYXERP - DEMO SEED');
     console.log('==========================================');
     console.log('  Categories:'+cntCat+'  Produits:'+cntPr+'  Tiers:'+cntTi);
     console.log('  Devis:'+cntD+'  Factures:'+cntF+'  Paiements:'+cntP);
