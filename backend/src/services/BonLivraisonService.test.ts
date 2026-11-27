@@ -1,8 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import pool from '../db/connection';
 import bonLivraisonService from './BonLivraisonService';
+import devisService from './DevisService';
 import { costedStockIn } from './StockCostingService';
 import { TestDB } from '../test/helpers';
+import { calculateDueDate, formatDateForPg } from '../utils/dueDate';
 
 /**
  * Le bon de livraison est le point où la marchandise sort réellement et où le
@@ -325,6 +327,136 @@ describe('BonLivraisonService (intégration)', () => {
       [tiersId]
     );
     expect(rows[0].n).toBe(1);
+  });
+
+  // ---- Défauts #3 et #4 du plan v1 (SIGNOFF 2026-10-23) ----
+  // Les conversions passaient par des fonctions SQL d'avant le schéma unifié :
+  // devis → facture insérait `factures.client_id` (colonne disparue, 500), et
+  // BL → facture laissait l'échéance et l'auteur vides et le coût d'achat à 0
+  // (marges surestimées). Il n'y a plus qu'un chemin, `convertBlToFactureInTx`.
+
+  it('la facture issue d’un bon porte l’échéance du client, son auteur et le coût d’achat', async () => {
+    await pool.query(`UPDATE tiers SET delai_paiement = 'net_30' WHERE id = $1`, [tiersId]);
+    try {
+      const produitId = await stockedProduct(10);
+      const blId = await makeBl(produitId, 4);
+      await bonLivraisonService.updateStatut(blId, 'livre');
+
+      const { rows: [auteur] } = await pool.query('SELECT id FROM utilisateurs ORDER BY id LIMIT 1');
+      const { facture_id } = await bonLivraisonService.convertToFacture(blId, auteur.id);
+      createdFactureIds.push(facture_id);
+
+      const { rows: [fac] } = await pool.query(
+        `SELECT to_char(date_echeance, 'YYYY-MM-DD') AS echeance, delai_paiement, cree_par,
+                bl_id, total, remaining_due, statut
+         FROM factures WHERE id = $1`,
+        [facture_id]
+      );
+      expect(fac.echeance).toBe(formatDateForPg(calculateDueDate('net_30')));
+      expect(fac.delai_paiement).toBe('net_30');
+      expect(fac.cree_par).toBe(auteur.id);
+      expect(fac.bl_id).toBe(blId);
+      expect(Number(fac.total)).toBe(4000);
+      expect(Number(fac.remaining_due)).toBe(4000);
+      expect(fac.statut).toBe('en_attente');
+
+      const { rows: lignes } = await pool.query(
+        `SELECT fl.quantite, fl.prix_unitaire, fl.total_ligne, fl.prix_achat_unitaire, fl.parent_ligne_id,
+                p.prix_achat
+         FROM document_lignes fl JOIN produits p ON p.id = fl.produit_id
+         WHERE fl.document_type = 'facture' AND fl.document_id = $1`,
+        [facture_id]
+      );
+      expect(lignes).toHaveLength(1);
+      expect(Number(lignes[0].quantite)).toBe(4);
+      expect(Number(lignes[0].total_ligne)).toBe(4000);
+      // Coût reporté sur la ligne : jamais 0 pour un produit qui a un coût.
+      expect(Number(lignes[0].prix_achat_unitaire)).toBeGreaterThan(0);
+      expect(Number(lignes[0].prix_achat_unitaire)).toBe(Number(lignes[0].prix_achat));
+      // Lien vers la ligne du bon : c'est lui qui trace devis ↔ BL ↔ facture.
+      expect(lignes[0].parent_ligne_id).not.toBeNull();
+    } finally {
+      await pool.query(`UPDATE tiers SET delai_paiement = 'immediat' WHERE id = $1`, [tiersId]);
+    }
+  });
+
+  it('un client sans délai est facturé à échéance immédiate', async () => {
+    const produitId = await stockedProduct(10);
+    const blId = await makeBl(produitId, 2);
+    await bonLivraisonService.updateStatut(blId, 'livre');
+
+    const { facture_id } = await bonLivraisonService.convertToFacture(blId, 1);
+    createdFactureIds.push(facture_id);
+
+    const { rows: [fac] } = await pool.query(
+      `SELECT to_char(date_echeance, 'YYYY-MM-DD') AS echeance FROM factures WHERE id = $1`,
+      [facture_id]
+    );
+    expect(fac.echeance).toBe(formatDateForPg(calculateDueDate('immediat')));
+  });
+
+  it('convertir le devis facture son bon livré par le même chemin, et marque devis et bon', async () => {
+    const produitId = await stockedProduct(10);
+    const blId = await makeBl(produitId, 3);
+    await bonLivraisonService.updateStatut(blId, 'livre');
+    const { rows: [bl] } = await pool.query('SELECT devis_id FROM bons_livraison WHERE id = $1', [blId]);
+
+    const { rows: [auteur] } = await pool.query('SELECT id FROM utilisateurs ORDER BY id LIMIT 1');
+    const { facture_id, numero_facture } = await devisService.convertToFacture(bl.devis_id, auteur.id);
+    createdFactureIds.push(facture_id);
+
+    expect(numero_facture).toMatch(/^FAC-\d{4}-\d{5}$/);
+
+    const { rows: [fac] } = await pool.query(
+      `SELECT tiers_id, devis_id, bl_id, total, cree_par, date_echeance FROM factures WHERE id = $1`,
+      [facture_id]
+    );
+    expect(fac.tiers_id).toBe(tiersId);
+    expect(fac.devis_id).toBe(bl.devis_id);
+    expect(fac.bl_id).toBe(blId);
+    expect(Number(fac.total)).toBe(3000);
+    expect(fac.cree_par).toBe(auteur.id);
+    expect(fac.date_echeance).not.toBeNull();
+
+    const { rows: [devis] } = await pool.query('SELECT statut, facture_id FROM devis WHERE id = $1', [bl.devis_id]);
+    expect(devis.statut).toBe('converti');
+    expect(devis.facture_id).toBe(facture_id);
+
+    const { rows: [blApres] } = await pool.query('SELECT statut, facture_id FROM bons_livraison WHERE id = $1', [blId]);
+    expect(blApres.statut).toBe('facture');
+    expect(blApres.facture_id).toBe(facture_id);
+
+    // Le relevé du client porte la facture, une seule fois.
+    const { rows: releve } = await pool.query(
+      `SELECT montant_debit FROM compte_client_lignes
+       WHERE tiers_id = $1 AND type_operation = 'facture' AND document_id = $2`,
+      [tiersId, facture_id]
+    );
+    expect(releve).toHaveLength(1);
+    expect(Number(releve[0].montant_debit)).toBe(3000);
+
+    // Reconvertir est refusé avec une phrase, pas une erreur SQL.
+    await expect(devisService.convertToFacture(bl.devis_id, auteur.id)).rejects.toThrow(/déjà converti/);
+  });
+
+  it('un devis sans bon livré ne se facture pas', async () => {
+    const produitId = await stockedProduct(10);
+    const blId = await makeBl(produitId, 2); // bon créé, pas encore livré
+    const { rows: [bl] } = await pool.query('SELECT devis_id FROM bons_livraison WHERE id = $1', [blId]);
+
+    await expect(devisService.convertToFacture(bl.devis_id, 1)).rejects.toThrow(/bon de livraison marqué comme livré/);
+
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM factures WHERE devis_id = $1', [bl.devis_id]);
+    expect(rows[0].n).toBe(0);
+  });
+
+  it('les fonctions SQL de conversion d’avant le schéma unifié n’existent plus (migration 113)', async () => {
+    // Un baseline régénéré depuis une base non migrée les ramènerait en silence.
+    const { rows } = await pool.query(
+      `SELECT proname FROM pg_proc
+       WHERE proname IN ('convert_devis_to_facture', 'convert_bl_to_facture', 'convert_devis_to_bl')`
+    );
+    expect(rows).toEqual([]);
   });
 
   // ---- Read paths, now served by the shared SalesDocumentQuery engine ----
