@@ -17,9 +17,8 @@ interface ModulesContextValue {
   rafraichir: () => Promise<void>;
   /**
    * Vrai tant que les paramètres de la session courante ne sont pas arrivés.
-   * Le garde de route attend ce signal avant de monter une page couverte par
-   * un module : sinon la page s'ouvrait, lançait ses requêtes, puis était
-   * remplacée par « Module désactivé ».
+   * Le garde de route s'en sert pour les seuls modules hors périmètre v1 :
+   * masqués par défaut, ils attendent de savoir s'ils sont activés.
    */
   chargement: boolean;
 }

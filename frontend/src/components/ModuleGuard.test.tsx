@@ -75,29 +75,25 @@ describe('garde des modules masqués', () => {
     }
   });
 
-  it('pendant le chargement des paramètres, une page couverte par un module attend', () => {
-    modules.chargement = true;
-    modules.masques = []; // on ne sait pas encore
-    ouvrir('/devis');
-    expect(screen.queryByText('Contenu de la page')).not.toBeInTheDocument();
-    expect(screen.queryByText(/Module désactivé/)).not.toBeInTheDocument();
-    // Le cadre porte déjà le nom de la page ; l'attente est annoncée.
-    expect(screen.getByRole('heading', { level: 1, name: 'Devis' })).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('Chargement…');
-  });
-
-  it('pendant le chargement, un module hors périmètre v1 n’est même pas nommé', () => {
+  it('pendant le chargement des paramètres, un module hors périmètre v1 attend, sans être nommé', () => {
     modules.chargement = true;
     ouvrir('/paie');
     expect(screen.queryByText('Contenu de la page')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Module non disponible/)).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: 'Chargement' })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Chargement…');
     expect(screen.queryByText('Paie')).not.toBeInTheDocument();
   });
 
-  it('pendant le chargement, les pages hors catalogue s’ouvrent sans attendre', () => {
+  it('pendant le chargement, factures, caisse et vente comptoir s’ouvrent sans attendre', () => {
+    // Une requête de paramètres lente ne doit jamais laisser la caisse sur un
+    // écran d'attente : seuls les modules hors périmètre v1 attendent.
     modules.chargement = true;
-    ouvrir('/profil');
-    expect(screen.getByText('Contenu de la page')).toBeInTheDocument();
+    for (const path of ['/factures', '/factures/nouvelle', '/caisse', '/vente-comptoir', '/inventaire', '/devis', '/profil']) {
+      const { unmount } = ouvrir(path);
+      expect(screen.getByText('Contenu de la page'), path).toBeInTheDocument();
+      unmount();
+    }
   });
 
   it('un module masqué par le client propose les paramètres à qui peut le réactiver, pas aux autres', () => {
