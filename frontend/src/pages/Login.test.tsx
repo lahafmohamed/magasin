@@ -15,12 +15,14 @@ vi.mock('../lib/AuthContext', async (importOriginal) => {
 
 // Mock react-router-dom
 const navigate = vi.hoisted(() => vi.fn());
+const routerState = vi.hoisted(() => ({ current: {} as { from?: { pathname: string } } }));
+
 vi.mock('react-router-dom', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-router-dom')>();
   return {
     ...actual,
     useNavigate: () => navigate,
-    useLocation: () => ({ state: {} }),
+    useLocation: () => ({ state: routerState.current }),
   };
 });
 
@@ -44,6 +46,7 @@ describe('Login', () => {
     mockLogin.mockReset();
     navigate.mockReset();
     sessionStorage.clear();
+    routerState.current = {};
   });
 
   it('renders the login form under the product name, in a main landmark', async () => {
@@ -105,12 +108,56 @@ describe('Login', () => {
     expect(screen.getByLabelText('Identifiant')).toHaveValue('admin');
   });
 
-  it('shows once the notice left by a password change', () => {
+  it('shows the notice left by a password change, and keeps it across the logout reload', () => {
     sessionStorage.setItem('login-notice', 'mot-de-passe-modifie');
+    const premier = renderLogin();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Mot de passe modifié. Reconnectez-vous avec le nouveau mot de passe.'
+    );
+    // La déconnexion affiche cette page par redirection, PUIS recharge l'onglet :
+    // le message doit encore être là au second affichage. Retiré dès le premier,
+    // il disparaissait deux fois sur trois au rendu réel (2026-11-27).
+    premier.unmount();
     renderLogin();
     expect(screen.getByRole('status')).toHaveTextContent(
       'Mot de passe modifié. Reconnectez-vous avec le nouveau mot de passe.'
     );
+  });
+
+  async function signIn() {
+    mockLogin.mockResolvedValue(undefined);
+    renderLogin();
+    fireEvent.change(screen.getByLabelText('Identifiant'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('Mot de passe'), { target: { value: 'Secret1234' } });
+    fireEvent.click(screen.getByRole('button', { name: /se connecter/i }));
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+  }
+
+  it('returns to the page the user came from', async () => {
+    routerState.current = { from: { pathname: '/factures/12' } };
+    await signIn();
+    expect(navigate).toHaveBeenCalledWith('/factures/12', { replace: true });
+  });
+
+  it('never returns to the forced password change screen after signing back in', async () => {
+    // Après le changement forcé, la déconnexion laisse /change-password comme
+    // page d'origine : y revenir affichait « Changement de mot de passe requis »
+    // à quelqu'un qui venait de le faire (vu au rendu réel, 2026-11-27).
+    routerState.current = { from: { pathname: '/change-password' } };
+    await signIn();
+    expect(navigate).toHaveBeenCalledWith('/', { replace: true });
+  });
+
+  it('drops the notice once the user signs in', async () => {
+    sessionStorage.setItem('login-notice', 'mot-de-passe-modifie');
+    mockLogin.mockResolvedValue(undefined);
+    renderLogin();
+
+    fireEvent.change(screen.getByLabelText('Identifiant'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('Mot de passe'), { target: { value: 'Secret1234' } });
+    fireEvent.click(screen.getByRole('button', { name: /se connecter/i }));
+
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith('admin', 'Secret1234'));
     expect(sessionStorage.getItem('login-notice')).toBeNull();
   });
 });

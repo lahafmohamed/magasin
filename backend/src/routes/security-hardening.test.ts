@@ -178,5 +178,52 @@ describe('Security hardening regressions', () => {
       // Passes the gate (not 403) and succeeds.
       expect(res.status).toBe(200);
     });
+
+    it('après le changement, la déconnexion ferme vraiment la session du jeton « à changer »', async () => {
+      // Le jeton porte toujours la mention must_change_password : c'est celui de
+      // la première connexion. L'écran de changement forcé déconnecte avec lui.
+      const encore = await request(app)
+        .get('/api/auth/users')
+        .set('Authorization', `Bearer ${token}`);
+      expect(encore.status).toBe(403); // toujours limité au changement de mot de passe
+
+      const logout = await request(app)
+        .post('/api/auth/logout')
+        .set('Authorization', `Bearer ${token}`);
+      expect(logout.status).toBe(200);
+
+      const { rows } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM user_sessions
+         WHERE utilisateur_id = $1 AND is_active = true AND revoked_at IS NULL`,
+        [userId]
+      );
+      expect(rows[0].n).toBe(0);
+
+      // Le jeton ne sert plus à rien, même pour changer le mot de passe.
+      const rejoue = await request(app)
+        .put('/api/auth/change-password')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ currentPassword: 'NewPass1234', newPassword: 'Another1234' });
+      expect(rejoue.status).toBe(401);
+    });
+
+    it('la porte ne s’ouvre que pour la déconnexion, pas pour le reste de /api/auth', async () => {
+      const login = await request(app).post('/api/auth/login').send({ username, password: 'NewPass1234' });
+      expect(login.status).toBe(200);
+      // Mot de passe changé : ce nouveau jeton n'est plus limité.
+      expect(login.body.data.user.must_change_password).toBe(false);
+
+      await pool.query('UPDATE utilisateurs SET must_change_password = true WHERE id = $1', [userId]);
+      const relogin = await request(app).post('/api/auth/login').send({ username, password: 'NewPass1234' });
+      const limite = relogin.body.data.token as string;
+      // Tout le reste de /api/auth reste fermé au jeton limité.
+      const me = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${limite}`);
+      expect(me.status).toBe(403);
+      const revoke = await request(app)
+        .post(`/api/auth/revoke-all-sessions/${userId}`)
+        .set('Authorization', `Bearer ${limite}`);
+      expect(revoke.status).toBe(403);
+      expect(revoke.body.must_change_password).toBe(true);
+    });
   });
 });

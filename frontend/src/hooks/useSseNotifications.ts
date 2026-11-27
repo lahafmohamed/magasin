@@ -38,7 +38,13 @@ export function useSseNotifications() {
   const navigate = useNavigate();
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
-  const userId = useOptionalAuth()?.user?.id ?? null;
+  const auth = useOptionalAuth();
+  const userId = auth?.user?.id ?? null;
+  // Tant que le changement de mot de passe est dû, le jeton n'ouvre que ce
+  // changement : le flux répondrait 403 toutes les 5 s, puis afficherait
+  // « Alertes temps réel interrompues » au nouvel employé qui choisit son mot
+  // de passe sur son tout premier écran.
+  const changementDu = !!auth?.user?.must_change_password;
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const failureCountRef = useRef(0);
@@ -48,6 +54,7 @@ export function useSseNotifications() {
     // Only stream when logged in; auth is the httpOnly cookie (sent automatically
     // by EventSource for same-origin requests).
     if (!hasCachedSession()) return;
+    if (changementDu) return;
     if (eventSourceRef.current && eventSourceRef.current.readyState !== EventSource.CLOSED) return;
 
     const es = new EventSource('/api/notifications/stream', { withCredentials: true });
@@ -134,7 +141,7 @@ export function useSseNotifications() {
       }
       reconnectTimeoutRef.current = setTimeout(connect, 5000);
     };
-  }, []);
+  }, [changementDu]);
 
   // (Re)connexion à chaque changement d'utilisateur : ouvert une seule fois au
   // démarrage, le flux ne s'ouvrait jamais après une connexion faite sans

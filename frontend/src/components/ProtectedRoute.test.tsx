@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import { RouteAccessGate, NotFoundPage } from './ProtectedRoute';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { ForcedPasswordChangeOnly, RouteAccessGate, NotFoundPage } from './ProtectedRoute';
 
-const auth = vi.hoisted(() => ({ role: 'caissier' }));
+const auth = vi.hoisted(() => ({ role: 'caissier', mustChange: false }));
 vi.mock('../lib/AuthContext', () => ({
   useAuth: () => ({
-    user: { role: auth.role },
+    user: { role: auth.role, must_change_password: auth.mustChange },
     hasRole: (...roles: string[]) => roles.includes(auth.role),
   }),
   useOptionalAuth: () => ({
@@ -62,5 +62,38 @@ describe('garde d’accès par rôle', () => {
     );
     expect(screen.getByRole('heading', { level: 1, name: /Page introuvable/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Retour au tableau de bord' })).toBeInTheDocument();
+  });
+});
+
+describe('écran de changement de mot de passe forcé', () => {
+  function ouvrir() {
+    return render(
+      <MemoryRouter initialEntries={['/change-password']}>
+        <Routes>
+          <Route
+            path="/change-password"
+            element={
+              <ForcedPasswordChangeOnly>
+                <p>Changement de mot de passe requis</p>
+              </ForcedPasswordChangeOnly>
+            }
+          />
+          <Route path="/" element={<p>Tableau de bord</p>} />
+        </Routes>
+      </MemoryRouter>
+    );
+  }
+
+  it('s’affiche tant que le changement est dû', () => {
+    auth.mustChange = true;
+    ouvrir();
+    expect(screen.getByText('Changement de mot de passe requis')).toBeInTheDocument();
+  });
+
+  it('renvoie au tableau de bord quand plus rien n’est dû', () => {
+    auth.mustChange = false;
+    ouvrir();
+    expect(screen.queryByText('Changement de mot de passe requis')).not.toBeInTheDocument();
+    expect(screen.getByText('Tableau de bord')).toBeInTheDocument();
   });
 });

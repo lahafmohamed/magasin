@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
@@ -33,12 +33,11 @@ export default function Login() {
   const location = useLocation();
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // Le message reste déposé jusqu'à la prochaine tentative de connexion. Le
+  // retirer dès l'affichage le faisait disparaître presque à chaque fois : à la
+  // déconnexion, cette page s'affiche une première fois par redirection, puis
+  // la déconnexion recharge l'onglet — le second affichage ne trouvait plus rien.
   const [notice] = useState(readLoginNotice);
-
-  // Lu une fois : le message ne revient pas au prochain affichage de la page.
-  useEffect(() => {
-    clearLoginNotice();
-  }, []);
 
   const {
     register,
@@ -50,9 +49,15 @@ export default function Login() {
     defaultValues: { username: '', password: '' },
   });
 
-  const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || '/';
+  // Retour à la page d'où l'on vient — sauf l'écran de changement de mot de
+  // passe forcé : après ce changement, la déconnexion laisse cette adresse
+  // comme « page d'origine », et la reconnexion y ramenait l'utilisateur, face
+  // à un « Changement de mot de passe requis » qu'il venait de faire.
+  const origine = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
+  const from = origine && !['/change-password', '/login'].includes(origine) ? origine : '/';
 
   const onSubmit = async (data: LoginFormData) => {
+    clearLoginNotice();
     setIsLoading(true);
     setError('');
 

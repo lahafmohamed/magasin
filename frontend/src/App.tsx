@@ -10,7 +10,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ConfirmProvider } from './components/ui/confirm-dialog';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './components/ui/dialog';
 import { Checkbox } from './components/ui/checkbox';
-import ProtectedRoute, { NotFoundPage, RouteAccessGate } from './components/ProtectedRoute';
+import ProtectedRoute, { ForcedPasswordChangeOnly, NotFoundPage, RouteAccessGate } from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import { SEARCH_SHORTCUT_LABEL } from './lib/platform';
 import { shortcutKeysLabel, useERPShortcuts } from './hooks/useKeyboardShortcuts';
@@ -239,7 +239,9 @@ function AppWithShortcuts() {
           path="/change-password"
           element={
             <ProtectedRoute>
-              <ChangePassword />
+              <ForcedPasswordChangeOnly>
+                <ChangePassword />
+              </ForcedPasswordChangeOnly>
             </ProtectedRoute>
           }
         />

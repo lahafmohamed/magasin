@@ -53,6 +53,19 @@ export default function ProtectedRoute({ children, requiredRoles }: ProtectedRou
 }
 
 /**
+ * L'écran « Changement de mot de passe requis » n'existe que tant que le
+ * changement est dû. Sans cette garde, quiconque y arrivait sans y être obligé
+ * (adresse tapée à la main, ou retour automatique après reconnexion) lisait
+ * qu'on lui réclamait encore un nouveau mot de passe. Le changement volontaire
+ * se fait depuis « Mon profil ».
+ */
+export function ForcedPasswordChangeOnly({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  if (user && !user.must_change_password) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+/**
  * Garde de rôle rendue **dans** le `Layout` : la page refusée garde le menu,
  * la barre du haut et un bouton de retour (avant : écran nu, seul le bouton
  * Précédent du navigateur permettait de repartir).

@@ -82,7 +82,13 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     // in `/change-password` can silently become an unintended bypass.
     const isChangePasswordRequest =
       req.method === 'PUT' && `${req.baseUrl}${req.path}` === '/api/auth/change-password';
-    if (decoded.must_change_password && !isChangePasswordRequest) {
+    // Se déconnecter reste permis : l'écran de changement forcé déconnecte
+    // l'utilisateur une fois le mot de passe changé (et propose « Se
+    // déconnecter »). Bloquée, la déconnexion laissait la session ouverte en
+    // base et le cookie en place jusqu'à leur expiration, 7 jours plus tard.
+    const isLogoutRequest =
+      req.method === 'POST' && `${req.baseUrl}${req.path}` === '/api/auth/logout';
+    if (decoded.must_change_password && !isChangePasswordRequest && !isLogoutRequest) {
       res.status(403).json({
         success: false,
         error: 'Vous devez changer votre mot de passe avant de continuer.',
