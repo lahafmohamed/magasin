@@ -7,6 +7,7 @@ import {
   type AppRole,
   type AppRoutePath,
 } from '../config/routeAccess';
+import { libelleParametresFinance } from '../config/modules';
 
 export interface NavItem {
   path: string;
@@ -35,6 +36,11 @@ interface NavEntry {
   path: AppRoutePath;
   /** Libellé de menu quand il diffère du nom de la page (« Demandes »). */
   label?: string;
+  /**
+   * Libellé qui dépend des modules actifs — « Paramètres paie et achats »
+   * devient « Paramètres achats » quand la paie est masquée. Prime sur `label`.
+   */
+  labelSelonModules?: (estModuleActif: (key: string) => boolean) => string;
   /**
    * Rôles qui peuvent ouvrir la page mais pour qui l'entrée de menu serait
    * hors sujet (le caissier crée une demande sans pouvoir l'envoyer). La
@@ -126,7 +132,10 @@ const NAV_GROUPS: Record<NavGroupId, { label: string; entries: readonly NavEntry
       { path: '/admin/users' },
       { path: '/affectations-locations' },
       { path: '/settings' },
-      { path: '/admin/parametres-finance' },
+      {
+        path: '/admin/parametres-finance',
+        labelSelonModules: (estModuleActif) => libelleParametresFinance(estModuleActif('paie')),
+      },
       { path: '/admin/audit' },
     ],
   },
@@ -169,7 +178,8 @@ function groupIcon(entries: readonly NavEntry[]): LucideIcon {
  */
 export function buildNavCategories(
   role: AppRole | null | undefined,
-  isPathActive: (path: string) => boolean = () => true
+  isPathActive: (path: string) => boolean = () => true,
+  isModuleActive: (key: string) => boolean = () => true
 ): NavCategory[] {
   if (!role) return [];
   const order = GROUP_ORDER[role] ?? [];
@@ -185,7 +195,8 @@ export function buildNavCategories(
         )
         .map((entry) => {
           const route = routeOf(entry.path);
-          return { path: entry.path, label: entry.label ?? route.label, icon: route.icon };
+          const label = entry.labelSelonModules?.(isModuleActive) ?? entry.label ?? route.label;
+          return { path: entry.path, label, icon: route.icon };
         });
       return { id, label: group.label, icon: groupIcon(group.entries), items };
     })
@@ -198,6 +209,6 @@ export function buildNavCategories(
  */
 export function useNavCategories(): NavCategory[] {
   const { user } = useAuth();
-  const { estCheminActif } = useModules();
-  return buildNavCategories(user?.role as AppRole | undefined, estCheminActif);
+  const { estCheminActif, estModuleActif } = useModules();
+  return buildNavCategories(user?.role as AppRole | undefined, estCheminActif, estModuleActif);
 }

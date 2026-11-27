@@ -30,6 +30,19 @@ export interface CompanySettings {
 export const TYPES_ACTIVITE = ['general', 'informatique', 'habillement', 'libre_service'] as const;
 export type TypeActivite = (typeof TYPES_ACTIVITE)[number];
 
+/**
+ * Modules hors périmètre v1 (docs/PLAN-V1-2026-11-19.md, décision 2) : paie,
+ * employés, comptabilité et trésorerie sont masqués sur toute instance neuve.
+ * Rien n'est supprimé — le code reste, les écritures et les commissions
+ * continuent d'être enregistrées — seul l'accès par l'interface est retiré,
+ * par la liste d'exclusion existante (`modules_desactives`, migration 098).
+ *
+ * Trois endroits portent cette liste et un test les compare
+ * (`CompanySettingsService.test.ts`) : ici, `src/db/ci-ref-data.sql` (ligne
+ * semée sur une base neuve) et `frontend/src/config/modules.ts`.
+ */
+export const MODULES_HORS_V1 = ['paie', 'employes', 'comptabilite', 'tresorerie'] as const;
+
 export class CompanySettingsService {
   private cachedSettings: CompanySettings | null = null;
   private cacheTimestamp: number = 0;
@@ -72,11 +85,14 @@ export class CompanySettingsService {
           ADD COLUMN IF NOT EXISTS ticket_message TEXT;
       `);
 
-      await pool.query(`
-        INSERT INTO company_settings (id, nom, adresse, telephone, email, devise)
-        VALUES (1, 'Mon entreprise', '', '', '', 'FCFA')
-        ON CONFLICT (id) DO NOTHING;
-      `);
+      // Ligne absente = instance neuve : elle démarre dans le périmètre v1.
+      // Une ligne existante n'est jamais retouchée (ON CONFLICT DO NOTHING).
+      await pool.query(
+        `INSERT INTO company_settings (id, nom, adresse, telephone, email, devise, modules_desactives)
+         VALUES (1, 'Mon entreprise', '', '', '', 'FCFA', $1::jsonb)
+         ON CONFLICT (id) DO NOTHING`,
+        [JSON.stringify(MODULES_HORS_V1)]
+      );
     } catch (error) {
       logger.error({ error }, 'Failed to initialize company_settings table');
     }

@@ -1,5 +1,5 @@
 import type { TypeActivite } from '@/services/api';
-import { MODULES_VERROUILLES } from './modules';
+import { MODULES_HORS_V1, MODULES_VERROUILLES, estHorsV1 } from './modules';
 
 /**
  * Profils métier (lot 1, migration 109 — `company_settings.type_activite`).
@@ -57,15 +57,35 @@ export function profilActivite(value: string | null | undefined): ProfilActivite
   return PROFILS_ACTIVITE.find((p) => p.value === value) ?? PROFILS_ACTIVITE[0];
 }
 
-/** Modules masqués par le préréglage — jamais un module verrouillé. */
-export function modulesDuProfil(value: TypeActivite): string[] {
-  return profilActivite(value).masques.filter((k) => !MODULES_VERROUILLES.includes(k));
+/**
+ * Liste d'exclusion après application du préréglage.
+ *
+ * Le préréglage ne décide que des modules « au choix du client ». Les modules
+ * hors périmètre v1 gardent l'état qu'ils ont dans `actuels` : masqués sur une
+ * instance neuve, affichés si l'éditeur les a activés pour ce client. Sans ce
+ * report, appliquer « Commerce général » (aucun module masqué) aurait réaffiché
+ * la paie et la comptabilité.
+ *
+ * Jamais un module verrouillé.
+ */
+export function modulesDuProfil(
+  value: TypeActivite,
+  actuels: readonly string[] = MODULES_HORS_V1
+): string[] {
+  const duProfil = profilActivite(value).masques.filter(
+    (k) => !MODULES_VERROUILLES.includes(k) && !estHorsV1(k)
+  );
+  return [...actuels.filter(estHorsV1), ...duProfil];
 }
 
-/** Le menu actuel diffère-t-il du préréglage du profil ? */
+/**
+ * Le menu actuel diffère-t-il du préréglage du profil ? Les modules hors
+ * périmètre v1 ne comptent pas : une instance neuve, où ils sont masqués, suit
+ * bien son profil.
+ */
 export function differeDuProfil(value: TypeActivite, modulesDesactives: readonly string[]): boolean {
-  const attendu = new Set(modulesDuProfil(value));
-  const actuel = new Set(modulesDesactives);
+  const attendu = new Set(profilActivite(value).masques.filter((k) => !estHorsV1(k)));
+  const actuel = new Set(modulesDesactives.filter((k) => !estHorsV1(k)));
   if (attendu.size !== actuel.size) return true;
   for (const k of attendu) if (!actuel.has(k)) return true;
   return false;

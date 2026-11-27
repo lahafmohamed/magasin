@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { companySettingsService, type TypeActivite } from '@/services/api';
-import { moduleForPath, MODULES_VERROUILLES } from '@/config/modules';
+import { moduleForPath, estHorsV1, MODULES_HORS_V1, MODULES_VERROUILLES } from '@/config/modules';
 import { useOptionalAuth } from './AuthContext';
 import { BrandContext, DEFAULT_BRAND, buildBrand, type CompanyBrand } from './brand';
 
@@ -15,8 +15,21 @@ interface ModulesContextValue {
   typeActivite: TypeActivite;
   /** Recharge depuis le serveur (après enregistrement des paramètres). */
   rafraichir: () => Promise<void>;
+  /**
+   * Vrai tant que les paramètres de la session courante ne sont pas arrivés.
+   * Le garde de route attend ce signal avant de monter une page couverte par
+   * un module : sinon la page s'ouvrait, lançait ses requêtes, puis était
+   * remplacée par « Module désactivé ».
+   */
   chargement: boolean;
 }
+
+/**
+ * État tant que le serveur n'a pas répondu : le périmètre v1. Les modules hors
+ * v1 n'apparaissent qu'une fois les paramètres chargés et seulement si
+ * l'éditeur les a activés — jamais par défaut, jamais sur une erreur.
+ */
+const MASQUES_PAR_DEFAUT: readonly string[] = MODULES_HORS_V1;
 
 const ModulesContext = createContext<ModulesContextValue | null>(null);
 
@@ -40,7 +53,11 @@ function hasCachedSession(): boolean {
 export function ModulesProvider({ children }: { children: React.ReactNode }) {
   const auth = useOptionalAuth();
   const userId = auth ? auth.user?.id ?? null : undefined;
-  const [modulesDesactives, setModulesDesactives] = useState<string[]>([]);
+  // Changement de mot de passe dû : le jeton n'ouvre que ce changement, les
+  // paramètres répondraient 403. On reste sur l'identité du produit, comme à
+  // l'écran de connexion, sans requête vouée à l'échec.
+  const changementDu = !!auth?.user?.must_change_password;
+  const [modulesDesactives, setModulesDesactives] = useState<string[]>([...MASQUES_PAR_DEFAUT]);
   const [brand, setBrand] = useState<CompanyBrand>(DEFAULT_BRAND);
   const [typeActivite, setTypeActivite] = useState<TypeActivite>('general');
   const [chargement, setChargement] = useState(true);
@@ -50,12 +67,17 @@ export function ModulesProvider({ children }: { children: React.ReactNode }) {
     const id = ++requete.current;
     // Pas de session : rien à charger, et l'appel renverrait 401.
     const sessionOuverte = userId === undefined ? hasCachedSession() : userId !== null;
-    if (!sessionOuverte) {
-      setModulesDesactives([]);
+    if (!sessionOuverte || changementDu) {
+      setModulesDesactives([...MASQUES_PAR_DEFAUT]);
       setBrand(DEFAULT_BRAND);
       setChargement(false);
       return;
     }
+    // Nouvelle session (connexion sans rechargement de page) : on repasse en
+    // chargement, sinon le garde lirait la liste de l'écran de connexion. Pas
+    // lors d'un rafraîchissement forcé — la page des paramètres resterait
+    // montée derrière un écran d'attente pour rien.
+    if (!force) setChargement(true);
     try {
       const settings = await companySettingsService.get(force);
       if (id !== requete.current) return;
@@ -67,14 +89,16 @@ export function ModulesProvider({ children }: { children: React.ReactNode }) {
       setTypeActivite(settings?.type_activite ?? 'general');
     } catch {
       if (id !== requete.current) return;
-      // En cas d'échec on ne masque rien : mieux vaut un menu complet qu'un
-      // programme amputé parce qu'une requête de paramètres a échoué. Le nom
-      // déjà connu est conservé.
-      setModulesDesactives([]);
+      // En cas d'échec on ne masque aucun module « au choix du client » : mieux
+      // vaut un menu complet qu'un programme amputé parce qu'une requête de
+      // paramètres a échoué. Les modules hors périmètre v1 gardent leur dernier
+      // état connu — masqués si rien n'a jamais été chargé : une panne ne doit
+      // pas ouvrir la paie ou la comptabilité. Le nom déjà connu est conservé.
+      setModulesDesactives((prev) => prev.filter(estHorsV1));
     } finally {
       if (id === requete.current) setChargement(false);
     }
-  }, [userId]);
+  }, [userId, changementDu]);
 
   useEffect(() => { void charger(); }, [charger]);
 

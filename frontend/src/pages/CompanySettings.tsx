@@ -16,7 +16,12 @@ import { Spinner } from '@/components/ui/loading';
 import { FieldError, fieldErrorProps } from '@/components/ui/field-error';
 import { RequiredMark } from '@/components/ui/required-mark';
 import { useConfirm } from '@/components/ui/confirm-dialog';
-import { MODULES, CATEGORIES_MODULES } from '@/config/modules';
+import {
+  MODULES_AU_CHOIX,
+  CATEGORIES_MODULES,
+  descriptionParametresFinance,
+  libelleParametresFinance,
+} from '@/config/modules';
 import { useModules } from '@/lib/ModulesContext';
 import { PROFILS_ACTIVITE, differeDuProfil, modulesDuProfil, profilActivite } from '@/config/profilsActivite';
 
@@ -155,9 +160,15 @@ export default function CompanySettingsPage() {
     }
   };
 
-  /** Préréglage du profil : remplace les modules masqués (enregistré avec le reste). */
+  /**
+   * Préréglage du profil : remplace les modules masqués (enregistré avec le
+   * reste). Les modules hors périmètre v1 gardent leur état — le préréglage ne
+   * les réaffiche pas.
+   */
   const appliquerProfil = () => {
-    updateSettings({ modules_desactives: modulesDuProfil(settings.type_activite) });
+    updateSettings({
+      modules_desactives: modulesDuProfil(settings.type_activite, settings.modules_desactives || []),
+    });
     toast.info(`Modules du profil « ${profilActivite(settings.type_activite).label} » cochés. Enregistrez pour les appliquer.`);
   };
 
@@ -208,6 +219,7 @@ export default function CompanySettingsPage() {
   };
 
   const hasLogo = !!settings.logo_url;
+  const paieActive = !(settings.modules_desactives || []).includes('paie');
 
   return (
     <PageShell
@@ -435,7 +447,9 @@ export default function CompanySettingsPage() {
             </CardHeader>
             <CardContent className="space-y-5">
               {CATEGORIES_MODULES.map((categorie) => {
-                const modules = MODULES.filter((m) => m.categorie === categorie);
+                // Les modules hors périmètre v1 (paie, employés, comptabilité,
+                // trésorerie) ne sont pas « au choix du client » : pas de case.
+                const modules = MODULES_AU_CHOIX.filter((m) => m.categorie === categorie);
                 if (modules.length === 0) return null;
                 return (
                   <fieldset key={categorie}>
@@ -462,13 +476,13 @@ export default function CompanySettingsPage() {
                             />
                             <span className="min-w-0">
                               <span className="block text-sm font-medium">
-                                {m.label}
+                                {m.key === 'parametres-finance' ? libelleParametresFinance(paieActive) : m.label}
                                 {m.verrouille && (
                                   <span className="font-normal text-muted-foreground"> · toujours actif</span>
                                 )}
                               </span>
                               <span id={`module-${m.key}-desc`} className="block text-xs text-muted-foreground">
-                                {m.description}
+                                {m.key === 'parametres-finance' ? descriptionParametresFinance(paieActive) : m.description}
                               </span>
                             </span>
                           </label>

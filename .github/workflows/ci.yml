@@ -79,6 +79,12 @@ jobs:
              WHERE u.username = 'gerant' AND u.must_change_password AND r.nom = 'admin'" | grep -q 1
           psql -h localhost -U postgres -d magasin_provision -v ON_ERROR_STOP=1 -tAc \
             "SELECT 1 FROM stock_locations WHERE code = 'MAG-01' AND est_principal" | grep -q 1
+          # Périmètre v1 : une instance neuve démarre avec la paie, les employés,
+          # la comptabilité et la trésorerie masqués (ci-ref-data.sql).
+          psql -h localhost -U postgres -d magasin_provision -v ON_ERROR_STOP=1 -tAc \
+            "SELECT modules_desactives @> '[\"paie\",\"employes\",\"comptabilite\",\"tresorerie\"]'::jsonb
+               AND jsonb_array_length(modules_desactives) = 4
+             FROM company_settings WHERE id = 1" | grep -q t
       # La démo est l'outil de vente, et son seed a déjà cassé deux fois sans que
       # personne le voie (table `categories` disparue, colonnes renommées) : on le
       # rejoue sur la base neuve provisionnée ci-dessus. Deux passes, comme le

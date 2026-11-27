@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildNavCategories, GROUP_ORDER } from './navConfig';
 import { canAccessPath, type AppRole } from '../config/routeAccess';
+import { MODULES_HORS_V1, moduleForPath } from '../config/modules';
+import { PROFILS_ACTIVITE, modulesDuProfil } from '../config/profilsActivite';
 
 const ROLES: AppRole[] = ['admin', 'manager', 'caissier', 'magasin_staff', 'depot_staff', 'viewer'];
 
@@ -100,5 +102,86 @@ describe('menu par rôle', () => {
 
   it('ne construit aucun menu sans rôle', () => {
     expect(buildNavCategories(undefined)).toEqual([]);
+  });
+});
+
+/**
+ * Phase 1 du plan v1 : sur une instance neuve, quel que soit le profil métier
+ * choisi puis appliqué, le menu ne propose ni la paie, ni les employés, ni la
+ * comptabilité, ni la trésorerie — à aucun rôle.
+ */
+describe('périmètre v1 — menu d’une instance neuve, par profil métier', () => {
+  const HORS_V1_PATHS = ['/paie', '/employes', '/general-ledger', '/tresorerie'];
+
+  /** Menu d'un rôle une fois le préréglage du profil appliqué sur une instance neuve. */
+  function menu(profil: (typeof PROFILS_ACTIVITE)[number]['value'], role: AppRole) {
+    const masques = new Set(modulesDuProfil(profil, MODULES_HORS_V1));
+    return buildNavCategories(
+      role,
+      (path) => {
+        const key = moduleForPath(path);
+        return !key || !masques.has(key);
+      },
+      (key) => !masques.has(key)
+    );
+  }
+  const chemins = (profil: (typeof PROFILS_ACTIVITE)[number]['value'], role: AppRole) =>
+    menu(profil, role).flatMap((c) => c.items.map((i) => i.path));
+
+  it.each(PROFILS_ACTIVITE.map((p) => [p.label, p.value] as const))(
+    '%s : ni paie, ni employés, ni comptabilité, ni trésorerie, pour aucun rôle',
+    (_label, value) => {
+      for (const role of ROLES) {
+        for (const path of HORS_V1_PATHS) {
+          expect(chemins(value, role), `${role} → ${path}`).not.toContain(path);
+        }
+      }
+    }
+  );
+
+  it.each(PROFILS_ACTIVITE.map((p) => [p.label, p.value] as const))(
+    '%s : la rubrique « Équipe » disparaît et « Gestion » garde les rapports',
+    (_label, value) => {
+      const cats = menu(value, 'admin');
+      expect(cats.map((c) => c.id)).not.toContain('equipe');
+      expect(cats.find((c) => c.id === 'gestion')?.items.map((i) => i.path)).toEqual(
+        expect.arrayContaining(['/reporting', '/stock-valuation'])
+      );
+    }
+  );
+
+  it.each(PROFILS_ACTIVITE.map((p) => [p.label, p.value] as const))(
+    '%s : la page des paramètres de gestion ne parle plus de paie',
+    (_label, value) => {
+      const libelles = menu(value, 'admin').flatMap((c) => c.items.map((i) => i.label));
+      expect(libelles).toContain('Paramètres achats');
+      expect(libelles).not.toContain('Paramètres paie et achats');
+      for (const l of libelles) expect(l).not.toMatch(/paie|comptabilité|trésorerie|employés/i);
+    }
+  );
+
+  it.each(PROFILS_ACTIVITE.map((p) => [p.label, p.value, p.venteParDefaut, p.masques] as const))(
+    '%s : le cœur de vente reste au menu, les modules du préréglage en sortent',
+    (_label, value, venteParDefaut, masques) => {
+      for (const role of ['admin', 'manager', 'magasin_staff', 'caissier'] as const) {
+        const liste = chemins(value, role);
+        // Cœur garanti, jamais masqué par un profil.
+        expect(liste, `${role} → /factures`).toContain('/factures');
+        expect(liste, `${role} → /caisse`).toContain('/caisse');
+        expect(liste, `${role} → /inventaire`).toContain('/inventaire');
+        if (venteParDefaut === '/vente-comptoir') expect(liste, role).toContain('/vente-comptoir');
+        if (masques.includes('devis')) expect(liste, `${role} → /devis`).not.toContain('/devis');
+      }
+      // Sans préréglage restrictif, le vendeur garde devis et bons de livraison.
+      if (masques.length === 0) {
+        expect(chemins(value, 'magasin_staff')).toEqual(expect.arrayContaining(['/devis', '/bons-livraison']));
+      }
+    }
+  );
+
+  it('quand l’éditeur active la paie, le libellé complet revient', () => {
+    const libelles = buildNavCategories('admin').flatMap((c) => c.items.map((i) => i.label));
+    expect(libelles).toContain('Paramètres paie et achats');
+    expect(libelles).toContain('Paie');
   });
 });

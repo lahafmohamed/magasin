@@ -108,6 +108,80 @@ describe('CompanySettings', () => {
     });
   });
 
+  // ---- Périmètre v1 (phase 1 du plan du 2026-11-19) ----
+
+  const V1 = ['paie', 'employes', 'comptabilite', 'tresorerie'];
+
+  it('instance neuve : aucune case pour la paie, les employés, la comptabilité ni la trésorerie', async () => {
+    vi.mocked(companySettingsService.get).mockResolvedValue({ ...SETTINGS, modules_desactives: [...V1] });
+    renderPage();
+    await screen.findByDisplayValue('Hitek-CI');
+
+    for (const nom of [/^Paie/, /^Employés/, /^Comptabilité/, /^Trésorerie/]) {
+      expect(screen.queryByRole('checkbox', { name: nom })).not.toBeInTheDocument();
+    }
+    // La rubrique « Équipe » n'a plus de module à proposer : elle disparaît.
+    expect(screen.queryByRole('group', { name: 'Équipe' })).not.toBeInTheDocument();
+    // Les modules au choix du client restent là, cochés.
+    expect(screen.getByRole('checkbox', { name: /^Devis/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /^Rapports/ })).toBeChecked();
+    // La page des paramètres de gestion ne se présente plus par la paie.
+    expect(screen.getByRole('checkbox', { name: /^Paramètres achats/ })).toBeChecked();
+    expect(screen.queryByText(/CNPS/)).not.toBeInTheDocument();
+    // Une instance neuve suit son profil : pas de bandeau « ne suit pas le préréglage ».
+    expect(screen.queryByRole('button', { name: 'Appliquer les modules du profil' })).not.toBeInTheDocument();
+  });
+
+  it('enregistrer ne réaffiche pas les modules hors périmètre v1', async () => {
+    const user = userEvent.setup();
+    vi.mocked(companySettingsService.get).mockResolvedValue({ ...SETTINGS, modules_desactives: [...V1] });
+    renderPage();
+    await screen.findByDisplayValue('Hitek-CI');
+
+    await user.click(screen.getByRole('checkbox', { name: /^Devis/ }));
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les paramètres' }));
+
+    await waitFor(() => expect(companySettingsService.update).toHaveBeenCalled());
+    const envoye = vi.mocked(companySettingsService.update).mock.calls[0][0].modules_desactives ?? [];
+    expect([...envoye].sort()).toEqual([...V1, 'devis'].sort());
+  });
+
+  it('appliquer un profil garde les quatre modules masqués', async () => {
+    const user = userEvent.setup();
+    vi.mocked(companySettingsService.get).mockResolvedValue({ ...SETTINGS, modules_desactives: [...V1] });
+    renderPage();
+    await screen.findByDisplayValue('Hitek-CI');
+
+    await user.click(screen.getByRole('radio', { name: /Habillement et mode/ }));
+    await user.click(screen.getByRole('button', { name: 'Appliquer les modules du profil' }));
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les paramètres' }));
+
+    await waitFor(() => expect(companySettingsService.update).toHaveBeenCalled());
+    const envoye = vi.mocked(companySettingsService.update).mock.calls[0][0].modules_desactives ?? [];
+    expect([...envoye].sort()).toEqual([...V1, 'devis', 'bons-livraison', 'relances'].sort());
+
+    // Revenir à « Commerce général » réaffiche les devis, pas la paie.
+    vi.mocked(companySettingsService.update).mockClear();
+    await user.click(screen.getByRole('radio', { name: /Commerce général/ }));
+    await user.click(screen.getByRole('button', { name: 'Appliquer les modules du profil' }));
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les paramètres' }));
+    await waitFor(() => expect(companySettingsService.update).toHaveBeenCalled());
+    const ensuite = vi.mocked(companySettingsService.update).mock.calls[0][0].modules_desactives ?? [];
+    expect([...ensuite].sort()).toEqual([...V1].sort());
+  }, 20_000);
+
+  it('quand l’éditeur a activé la paie, la page de ses paramètres reprend son nom complet', async () => {
+    vi.mocked(companySettingsService.get).mockResolvedValue({
+      ...SETTINGS,
+      modules_desactives: ['employes', 'comptabilite', 'tresorerie'],
+    });
+    renderPage();
+    await screen.findByDisplayValue('Hitek-CI');
+    expect(screen.getByRole('checkbox', { name: /^Paramètres paie et achats/ })).toBeChecked();
+    // Toujours pas de case pour la paie elle-même : ce n'est pas un choix du client.
+    expect(screen.queryByRole('checkbox', { name: /^Paie/ })).not.toBeInTheDocument();
+  });
+
   it('refuses an empty company name without calling the server', async () => {
     const user = userEvent.setup();
     renderPage();

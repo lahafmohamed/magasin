@@ -318,3 +318,50 @@ export function moduleForPath(path: string): string | null {
 }
 
 export const MODULES_VERROUILLES = MODULES.filter((m) => m.verrouille).map((m) => m.key);
+
+/**
+ * Modules hors périmètre v1 (docs/PLAN-V1-2026-11-19.md, décision 2).
+ *
+ * Paie, employés, comptabilité et trésorerie ne font pas partie de la v1 : ils
+ * sont masqués sur toute instance neuve, par la même liste d'exclusion que les
+ * autres modules. Rien n'est supprimé — le code et les données restent — mais
+ * ce ne sont pas des modules « au choix du client » :
+ *
+ *   - ils ne sont pas proposés dans les paramètres de l'entreprise ;
+ *   - un préréglage de profil ne les réaffiche ni ne les masque jamais ;
+ *   - tant que les paramètres ne sont pas chargés, ou si leur chargement
+ *     échoue, ils restent masqués (les autres modules restent affichés).
+ *
+ * Les activer pour un client est une décision de l'éditeur, prise hors de
+ * l'interface (retirer la clé de `company_settings.modules_desactives`).
+ *
+ * Même liste que `MODULES_HORS_V1` dans le backend
+ * (`CompanySettingsService.ts`) et que la ligne semée par `ci-ref-data.sql` ;
+ * un test backend compare les trois.
+ */
+export const MODULES_HORS_V1 = ['paie', 'employes', 'comptabilite', 'tresorerie'] as const;
+
+const HORS_V1 = new Set<string>(MODULES_HORS_V1);
+
+export function estHorsV1(key: string): boolean {
+  return HORS_V1.has(key);
+}
+
+/** Modules que l'administrateur du client peut cocher ou décocher. */
+export const MODULES_AU_CHOIX: readonly ModuleDefinition[] = MODULES.filter((m) => !estHorsV1(m.key));
+
+/**
+ * La page « Paramètres paie et achats » réunit la configuration de la paie
+ * (CNPS, ITS) et les tolérances du rapprochement fournisseur. Sans la paie il
+ * ne reste que les achats : le menu, le titre de la page et le catalogue des
+ * modules disent alors « Paramètres achats ».
+ */
+export function libelleParametresFinance(paieActive: boolean): string {
+  return paieActive ? 'Paramètres paie et achats' : 'Paramètres achats';
+}
+
+export function descriptionParametresFinance(paieActive: boolean): string {
+  return paieActive
+    ? 'Taux CNPS/ITS et tolérances de rapprochement fournisseur.'
+    : 'Tolérances du rapprochement entre commande, réception et facture fournisseur.';
+}

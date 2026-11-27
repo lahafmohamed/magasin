@@ -103,6 +103,19 @@ ON CONFLICT (code) DO NOTHING;
 
 
 --
+-- Data for Name: company_settings — périmètre v1 (docs/PLAN-V1-2026-11-19.md).
+-- Une instance neuve démarre avec la paie, les employés, la comptabilité et la
+-- trésorerie masqués (liste d'exclusion de la migration 098). Même liste que
+-- MODULES_HORS_V1 dans CompanySettingsService.ts et frontend/src/config/modules.ts ;
+-- un test compare les trois. Les autres colonnes prennent leurs valeurs par défaut.
+--
+
+INSERT INTO public.company_settings (id, modules_desactives) VALUES
+  (1, '["paie", "employes", "comptabilite", "tresorerie"]'::jsonb)
+ON CONFLICT (id) DO NOTHING;
+
+
+--
 -- Data for Name: payroll_cotisations / payroll_bareme_its (same defaults as
 -- migrations 081 and 105; without them a freshly provisioned database
 -- computes every payslip with no CNPS and no ITS). Rates must be checked

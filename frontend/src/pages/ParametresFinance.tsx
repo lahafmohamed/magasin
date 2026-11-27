@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Percent, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { payrollService, factureFournisseurService } from '@/services/api';
+import { useModules } from '@/lib/ModulesContext';
+import { libelleParametresFinance } from '@/config/modules';
 import { getErrorMessage } from '@/utils/errors';
 import { PageShell } from '@/components/ui/page-shell';
 import { Button } from '@/components/ui/button';
@@ -134,6 +136,10 @@ const emptyCotisation = (): NewCotisationForm => ({
 type NewCotisationErrors = Partial<Record<'code' | 'libelle' | 'tauxSalarial' | 'tauxPatronal', string>>;
 
 export default function ParametresFinance() {
+  // Sans le module Paie (hors périmètre v1), la page ne porte que les achats :
+  // ni cartes CNPS/ITS, ni appel à la configuration de la paie.
+  const { estModuleActif } = useModules();
+  const paieActive = estModuleActif('paie');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [cotisations, setCotisations] = useState<CotisationRow[]>([]);
@@ -153,7 +159,10 @@ export default function ParametresFinance() {
     setLoading(true);
     setError(null);
     try {
-      const [cfg, mc] = (await Promise.all([payrollService.getConfig(), factureFournisseurService.getMatchConfig()])) as [
+      const [cfg, mc] = (await Promise.all([
+        paieActive ? payrollService.getConfig() : Promise.resolve(null),
+        factureFournisseurService.getMatchConfig(),
+      ])) as [
         { cotisations?: ApiCotisation[]; baremes?: ApiBareme[] } | null,
         MatchConfig | null,
       ];
@@ -169,7 +178,7 @@ export default function ParametresFinance() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [paieActive]);
 
   useEffect(() => {
     void load();
@@ -365,9 +374,13 @@ export default function ParametresFinance() {
 
   return (
     <PageShell
-      title="Paramètres paie et achats"
+      title={libelleParametresFinance(paieActive)}
       width="wide"
-      description="Taux légaux de la paie (CNPS, ITS) et tolérances du contrôle commande, réception, facture"
+      description={
+        paieActive
+          ? 'Taux légaux de la paie (CNPS, ITS) et tolérances du contrôle commande, réception, facture'
+          : 'Tolérances du contrôle commande, réception, facture'
+      }
     >
       <QueryState
         loading={loading}
@@ -376,6 +389,8 @@ export default function ParametresFinance() {
         onRetry={() => void load()}
         skeleton={<TableSkeleton rows={5} columns={6} />}
       >
+        {paieActive && (
+          <>
         {/* Cotisations sociales */}
         <Card>
           <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between sm:space-y-0">
@@ -556,6 +571,9 @@ export default function ParametresFinance() {
             </div>
           </CardContent>
         </Card>
+
+          </>
+        )}
 
         {/* Contrôle commande, réception, facture */}
         {match && (
