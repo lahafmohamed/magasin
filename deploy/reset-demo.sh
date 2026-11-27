@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Réinitialise l'instance de démonstration (données réalistes Hitek).
+# Réinitialise l'instance de démonstration (boutique fictive d'Abidjan).
 # À lancer chaque nuit pour que la démo reste propre malgré les visiteurs.
 #
 # Prérequis : instance provisionnée avec

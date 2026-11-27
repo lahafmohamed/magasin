@@ -79,6 +79,22 @@ jobs:
              WHERE u.username = 'gerant' AND u.must_change_password AND r.nom = 'admin'" | grep -q 1
           psql -h localhost -U postgres -d magasin_provision -v ON_ERROR_STOP=1 -tAc \
             "SELECT 1 FROM stock_locations WHERE code = 'MAG-01' AND est_principal" | grep -q 1
+      # La démo est l'outil de vente, et son seed a déjà cassé deux fois sans que
+      # personne le voie (table `categories` disparue, colonnes renommées) : on le
+      # rejoue sur la base neuve provisionnée ci-dessus. Deux passes, comme le
+      # reset nocturne (deploy/reset-demo.sh) ; le script refuse lui-même de
+      # valider si un en-tête ne vaut pas la somme de ses lignes.
+      - name: Demo seed on the fresh DB (deploy/reset-demo.sh path)
+        env:
+          DB_NAME: magasin_provision
+          PGPASSWORD: postgres
+        run: |
+          node seed-hitek-demo.mjs
+          node seed-hitek-demo.mjs
+          psql -h localhost -U postgres -d magasin_provision -v ON_ERROR_STOP=1 -tAc \
+            "SELECT 1 FROM tiers WHERE code = 'PASS'" | grep -q 1
+          psql -h localhost -U postgres -d magasin_provision -v ON_ERROR_STOP=1 -tAc \
+            "SELECT nextval('facture_numero_seq') > (SELECT COUNT(*) FROM factures)" | grep -q t
       - name: Test (integration, against service postgres)
         run: npm test
       - name: Build

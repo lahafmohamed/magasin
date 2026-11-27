@@ -27,16 +27,31 @@ const WIPE = [
   'commandes_fournisseur','mouvements_caisse','mouvements_stock',
   'internal_stock_request_lignes','internal_stock_requests',
   'stock_transfer_lignes','stock_transfers','stock_par_location','produits','tiers',
+  // Hors d'atteinte du CASCADE ci-dessus (pas de clé vers tiers/produits) : sans
+  // elles, écritures, sessions de caisse et comptages du jour survivraient au reset.
+  'ecritures_comptables','sessions_caisse','retour_lignes','retours',
+  'inventaire_lignes','inventaires','crm_interactions','crm_taches',
+  'commissions_ventes','acompte_applications_fournisseur','acomptes_fournisseur',
+  'demandes_reapprovisionnement_history','attachments','periodes_comptables',
 ];
 
-const CATS = ['Laptops','Desktops','Ecrans','Composants','Stockage','Imprimantes','Reseau','Peripheriques','Accessoires'];
+// Séquences de numérotation (NumberingService) recalées sur les pièces semées :
+// sinon la première facture créée par un visiteur reprendrait FAC-…-00001.
+const SEQUENCES = {
+  facture_numero_seq: 8, devis_seq: 5, commande_numero_seq: 5,
+  reception_numero_seq: 3, facture_fournisseur_numero_seq: 3,
+};
+const SEQUENCES_A_ZERO = [
+  'bl_seq','avoir_seq','retour_numero_seq','transfer_numero_seq','inventaire_numero_seq',
+  'demande_reappro_numero_seq','depense_seq','piece_comptable_seq','code_barre_interne_seq',
+];
 
 const PRODUITS = [
   ['INF-LAP-001','HP ProBook 450 G10','i5-1335U 16Go 512Go SSD','Laptops',450000,595000,8,3],
   ['INF-LAP-002','Dell Latitude 5440','i7-1365U 16Go 512Go SSD','Laptops',620000,795000,5,2],
   ['INF-LAP-003','Lenovo ThinkPad E14','Ryzen5 16Go 512Go SSD','Laptops',520000,669000,6,2],
   ['INF-LAP-004','ASUS VivoBook 15','i3-1215U 8Go 256Go SSD','Laptops',280000,365000,12,4],
-  ['INF-LAP-005','MacBook Air M3','M3 8Go 256Go SSD','Laptops',720000,945000,3,1],
+  ['INF-LAP-005','MacBook Air M3','M3 8Go 256Go SSD','Laptops',720000,945000,1,2],
   ['INF-LAP-006','Acer Aspire 5','i5-1235U 8Go 512Go SSD','Laptops',330000,429000,10,3],
   ['INF-DSK-001','HP EliteDesk 800 G9','i7-12700T 32Go DDR5 1To','Desktops',580000,740000,4,2],
   ['INF-DSK-002','Dell OptiPlex 3000','i5-12500T 16Go 512Go','Desktops',390000,499000,6,2],
@@ -55,10 +70,10 @@ const PRODUITS = [
   ['INF-STO-005','SanDisk 64Go USB','Cle USB 3.0','Stockage',4500,7500,80,20],
   ['INF-PRT-001','HP LaserJet M404dn','Laser mono 38ppm','Imprimantes',165000,215000,6,2],
   ['INF-PRT-002','Epson EcoTank L3250','Jet encre WiFi','Imprimantes',130000,175000,8,3],
-  ['INF-PRT-003','Brother HL-L2350DW','Laser WiFi 32ppm','Imprimantes',110000,145000,5,2],
+  ['INF-PRT-003','Brother HL-L2350DW','Laser WiFi 32ppm','Imprimantes',110000,145000,0,2],
   ['INF-NET-001','TP-Link Archer AX55','WiFi6 AX3000','Reseau',55000,79000,12,4],
   ['INF-NET-002','TP-Link Switch 8P','Gigabit metal','Reseau',18000,28000,18,5],
-  ['INF-NET-003','Ubiquiti UniFi AP','WiFi AC1750','Reseau',95000,129000,6,2],
+  ['INF-NET-003','Ubiquiti UniFi AP','WiFi AC1750','Reseau',95000,129000,2,3],
   ['INF-KBD-001','Logitech MX Keys','Clavier sans fil AZERTY','Peripheriques',55000,79000,20,5],
   ['INF-KBD-002','Logitech K120','Clavier filaire USB','Peripheriques',6000,9500,50,15],
   ['INF-MSE-001','Logitech MX Master 3S','Souris sans fil','Peripheriques',48000,69000,25,8],
@@ -87,7 +102,7 @@ const d = (off=0)=>{const x=new Date();x.setDate(x.getDate()+off);return x.toISO
 const Y=new Date().getFullYear();
 const nFac=n=>`FAC-${Y}-`+String(n).padStart(5,'0');
 const nDev=n=>`DEV-${Y}-`+String(n).padStart(5,'0');
-const nCF=n=>`CF-${Y}-`+String(n).padStart(5,'0');
+const nCF=n=>`CMD-${Y}-`+String(n).padStart(5,'0');
 const nRec=n=>`REC-${Y}-`+String(n).padStart(5,'0');
 const nFF=n=>`FF-${Y}-`+String(n).padStart(5,'0');
 
@@ -106,18 +121,22 @@ async function main(){
     const {rows:[{id:locId}]}=await db.query('SELECT id FROM stock_locations WHERE est_principal=TRUE AND actif=TRUE LIMIT 1');
     const {rows:magRows}=await db.query('SELECT id FROM magasins ORDER BY id LIMIT 1');
     const magId=magRows[0]?.id??null; // table legacy vide sur instance neuve — colonne nullable
-    console.log('    location_id='+locId+' magasin_id='+magId);
+    // Auteur des pièces semées : le premier administrateur (le compte de démo).
+    const {rows:userRows}=await db.query("SELECT u.id FROM utilisateurs u JOIN roles r ON r.id=u.role_id WHERE r.nom='admin' AND u.actif ORDER BY u.id LIMIT 1");
+    const userId=userRows[0]?.id??null;
+    console.log('    location_id='+locId+' magasin_id='+magId+' auteur='+userId);
     
-    console.log('\n[2] Categories...');
-    const catId={};
-    for(const nom of CATS){const{rows}=await db.query('INSERT INTO categories(nom)VALUES($1)RETURNING id',[nom]);catId[nom]=rows[0].id;}
-    console.log('    '+CATS.length+' categories');
+    console.log('\n[2] Client comptoir...');
+    // Donnée de référence (migration 104) emportée par le TRUNCATE de tiers :
+    // la vente comptoir et la facture du caissier la présélectionnent.
+    await db.query("INSERT INTO tiers(code,raison_sociale,est_client,est_fournisseur,credit_max,delai_paiement,notes)VALUES('PASS','Client comptoir',true,false,0,'immediat','Client de passage pour les ventes au comptoir.')ON CONFLICT(code)DO NOTHING");
+    console.log('    client PASS OK');
     
     console.log('\n[3] Produits...');
-    const p={};
+    const p={},cout={};
     for(const[ref,nom,desc,cat,pa,pv,stk,smin]of PRODUITS){
-      const{rows}=await db.query('INSERT INTO produits(reference,nom,description,categorie_id,prix_achat,prix_vente,stock,stock_minimum)VALUES($1,$2,$3,$4,$5,$6,$7,$8)RETURNING id',[ref,nom,desc,catId[cat],pa,pv,stk,smin]);
-      p[ref]=rows[0].id;
+      const{rows}=await db.query('INSERT INTO produits(reference,nom,description,categorie,prix_achat,prix_vente,stock,stock_min)VALUES($1,$2,$3,$4,$5,$6,$7,$8)RETURNING id',[ref,nom,desc,cat,pa,pv,stk,smin]);
+      p[ref]=rows[0].id;cout[rows[0].id]=pa;
       await db.query('INSERT INTO stock_par_location(produit_id,location_id,quantite,cmp)VALUES($1,$2,$3,$4)',[p[ref],locId,stk,pa]);
     }
     console.log('    '+PRODUITS.length+' produits');
@@ -144,7 +163,7 @@ async function main(){
     const d2=await mkDev(nDev(2),t['CLI-004'],d(-15),d(15),'envoye',3650000,'5 postes travail');
     await mkDevL(d2,p['INF-LAP-001'],'HP ProBook x5',5,595000);
     await mkDevL(d2,p['INF-MON-001'],'Dell P2422H x5',5,135000);
-    const d3=await mkDev(nDev(3),t['CLI-005'],d(-30),d(-15),'accepte',2454000,'Infra reseau + laptops');
+    const d3=await mkDev(nDev(3),t['CLI-005'],d(-30),d(-15),'accepte',2492000,'Infra reseau + laptops');
     await mkDevL(d3,p['INF-LAP-002'],'Dell Latitude x3',3,795000);
     await mkDevL(d3,p['INF-NET-002'],'Switch 8P',1,28000);
     await mkDevL(d3,p['INF-NET-001'],'Routeur AX55',1,79000);
@@ -158,11 +177,13 @@ async function main(){
     
     console.log('\n[6] Factures + paiements...');
     const mkFac=async(num,tid,did,dateF,dateE,sous,notes)=>{
-      const{rows}=await db.query('INSERT INTO factures(numero_facture,tiers_id,devis_id,date_facture,date_echeance,sous_total,total,statut,notes,location_id,magasin_id)VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10)RETURNING id',[num,tid,did,dateF,dateE,sous,'en_attente',notes,locId,magId]);
+      const{rows}=await db.query('INSERT INTO factures(numero_facture,tiers_id,devis_id,date_facture,date_echeance,sous_total,total,remaining_due,statut,notes,location_id,magasin_id,cree_par)VALUES($1,$2,$3,$4,$5,$6,$6,$6,$7,$8,$9,$10,$11)RETURNING id',[num,tid,did,dateF,dateE,sous,'en_attente',notes,locId,magId,userId]);
       return rows[0].id;
     };
+    // remaining_due = total dès l'insertion : sans paiement aucun trigger ne le
+    // calcule, et une facture impayée à 0 disparaît des créances et des relances.
     const mkFacL=async(fid,pid,desc,qte,pu)=>{
-      await db.query('INSERT INTO document_lignes(document_type,document_id,produit_id,description,quantite,prix_unitaire,total_ligne)VALUES($1,$2,$3,$4,$5,$6,$7)',['facture',fid,pid,desc,qte,pu,qte*pu]);
+      await db.query('INSERT INTO document_lignes(document_type,document_id,produit_id,description,quantite,prix_unitaire,total_ligne,prix_achat_unitaire)VALUES($1,$2,$3,$4,$5,$6,$7,$8)',['facture',fid,pid,desc,qte,pu,qte*pu,cout[pid]??0]);
     };
     const mkPay=async(fid,montant,mode,dateP)=>{
       // statut + montant_paye maintenus par trg_after_payment_insert — ne pas
@@ -173,17 +194,17 @@ async function main(){
     await mkFacL(f1,p['INF-LAP-001'],'HP ProBook',1,595000);
     await mkFacL(f1,p['INF-WEB-001'],'Webcam',1,55000);
     await mkPay(f1,650000,'cheque',d(-40));
-    const f2=await mkFac(nFac(2),t['CLI-004'],d2,d(-10),d(20),3650000,'Suite DEV-2026-00002');
+    const f2=await mkFac(nFac(2),t['CLI-004'],d2,d(-10),d(20),3650000,'Suite '+nDev(2));
     await mkFacL(f2,p['INF-LAP-001'],'HP ProBook x5',5,595000);
     await mkFacL(f2,p['INF-MON-001'],'Dell P2422H x5',5,135000);
     await mkPay(f2,2000000,'virement',d(-5));
-    const f3=await mkFac(nFac(3),t['CLI-005'],d3,d(-28),d(-14),2454000,'Infra direction');
+    const f3=await mkFac(nFac(3),t['CLI-005'],d3,d(-28),d(-14),2492000,'Infra direction');
     await mkFacL(f3,p['INF-LAP-002'],'Dell Latitude x3',3,795000);
     await mkFacL(f3,p['INF-NET-002'],'Switch 8P',1,28000);
     await mkFacL(f3,p['INF-NET-001'],'Routeur AX55',1,79000);
-    await mkPay(f3,2454000,'cheque',d(-20));
+    await mkPay(f3,2492000,'cheque',d(-20));
     await db.query('UPDATE devis SET facture_id=$1,statut=$2 WHERE id=$3',[f3,'converti',d3]);
-    const f4=await mkFac(nFac(4),t['CLI-002'],null,d(-3),d(27),237000,'Periph bureau');
+    const f4=await mkFac(nFac(4),t['CLI-002'],null,d(-75),d(-45),237000,'Periph bureau');
     await mkFacL(f4,p['INF-MON-004'],'Acer V227Q',1,89000);
     await mkFacL(f4,p['INF-KBD-001'],'MX Keys',1,79000);
     await mkFacL(f4,p['INF-MSE-001'],'MX Master 3S',1,69000);
@@ -196,7 +217,7 @@ async function main(){
     await mkFacL(f6,p['INF-CBL-001'],'HDMI',1,6500);
     await mkPay(f6,959000,'wave',d(-60));
     await db.query('UPDATE devis SET facture_id=$1,statut=$2 WHERE id=$3',[f6,'converti',d5]);
-    const f7=await mkFac(nFac(7),t['MIX-001'],null,d(-5),d(25),714000,'Desktop + imprimante');
+    const f7=await mkFac(nFac(7),t['MIX-001'],null,d(-35),d(-5),714000,'Desktop + imprimante');
     await mkFacL(f7,p['INF-DSK-002'],'OptiPlex 3000',1,499000);
     await mkFacL(f7,p['INF-PRT-001'],'HP LaserJet',1,215000);
     const f8=await mkFac(nFac(8),t['CLI-001'],null,d(-15),d(15),131000,'Upgrade');
@@ -215,9 +236,9 @@ async function main(){
     };
     const cf1=await mkCF(nCF(1),t['FRN-001'],d(-60),d(-45),'livree',5450000,'Reappro HP');
     await mkCFL(cf1,p['INF-LAP-001'],10,450000);await mkCFL(cf1,p['INF-MON-001'],10,95000);
-    const cf2=await mkCF(nCF(2),t['FRN-002'],d(-45),d(-30),'livree',3460000,'Dell + RAM');
+    const cf2=await mkCF(nCF(2),t['FRN-002'],d(-45),d(-30),'livree',3740000,'Dell + RAM');
     await mkCFL(cf2,p['INF-LAP-002'],5,620000);await mkCFL(cf2,p['INF-RAM-001'],10,28000);await mkCFL(cf2,p['INF-RAM-002'],5,72000);
-    const cf3=await mkCF(nCF(3),t['FRN-003'],d(-10),d(5),'en_attente',665000,'Accessoires');
+    const cf3=await mkCF(nCF(3),t['FRN-003'],d(-10),d(-3),'en_attente',665000,'Accessoires');
     await mkCFL(cf3,p['INF-CBL-001'],50,3500);await mkCFL(cf3,p['INF-CBL-002'],40,4000);await mkCFL(cf3,p['INF-KBD-002'],30,6000);await mkCFL(cf3,p['INF-MSE-002'],50,3000);
     const cf4=await mkCF(nCF(4),t['FRN-001'],d(-2),d(10),'validee',1100000,'Imprimantes + APC');
     await mkCFL(cf4,p['INF-PRT-001'],5,165000);await mkCFL(cf4,p['INF-UPS-001'],5,55000);
@@ -242,8 +263,9 @@ async function main(){
     console.log('    3 receptions OK');
     
     console.log('\n[9] Factures fournisseur...');
+    let nbFF=0;
     const mkFF=async(num,tid,rid,dateF,dateE,st,total,notes)=>{
-      const{rows}=await db.query('INSERT INTO factures_fournisseur(tiers_id,reception_id,numero_facture_fournisseur,numero_facture_interne,date_facture,date_echeance,sous_total,total,statut,condition_paiement,notes)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)RETURNING id',[tid,rid,num,num,dateF,dateE,total,total,st,'comptant',notes]);
+      const{rows}=await db.query('INSERT INTO factures_fournisseur(tiers_id,reception_id,numero_facture_fournisseur,numero_facture_interne,date_facture,date_echeance,sous_total,total,statut,condition_paiement,notes)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)RETURNING id',[tid,rid,num,nFF(++nbFF),dateF,dateE,total,total,st,'comptant',notes]);
       return rows[0].id;
     };
     const mkFFL=async(fid,pid,desc,qte,pu)=>{
@@ -253,25 +275,58 @@ async function main(){
       // statut + montant_paye maintenus par trg_paiement_ff_iud.
       await db.query('INSERT INTO paiements_fournisseur(facture_id,montant,methode_paiement,date_paiement,source)VALUES($1,$2,$3,$4,$5)',[fid,montant,mode,dateP,'direct']);
     };
-    const ff1=await mkFF('HP-INV-2026-0441',t['FRN-001'],r1,d(-44),d(-14),'payee',5450000,'Laptops + ecrans HP');
+    const ff1=await mkFF('HP-INV-'+Y+'-0441',t['FRN-001'],r1,d(-44),d(-14),'payee',5450000,'Laptops + ecrans HP');
     await mkFFL(ff1,p['INF-LAP-001'],'HP ProBook',10,450000);await mkFFL(ff1,p['INF-MON-001'],'Dell P2422H',10,95000);
     await mkPayF(ff1,t['FRN-001'],5450000,'virement',d(-14));
-    const ff2=await mkFF('DELL-WAFR-2026-0088',t['FRN-002'],r2,d(-29),d(31),'partiellement_payee',3120000,'Dell + RAM');
+    const ff2=await mkFF('DELL-WAFR-'+Y+'-0088',t['FRN-002'],r2,d(-29),d(31),'partiellement_payee',3120000,'Dell + RAM');
     await mkFFL(ff2,p['INF-LAP-002'],'Dell Latitude',4,620000);await mkFFL(ff2,p['INF-RAM-001'],'Corsair',10,28000);await mkFFL(ff2,p['INF-RAM-002'],'Kingston',5,72000);
     await mkPayF(ff2,t['FRN-002'],1500000,'cheque',d(-20));
-    const ff4=await mkFF('COMPU-2026-0017',t['MIX-001'],r3,d(-14),d(16),'payee',1575000,'Desktops + ecrans');
+    const ff4=await mkFF('COMPU-'+Y+'-0017',t['MIX-001'],r3,d(-14),d(16),'payee',1575000,'Desktops + ecrans');
     await mkFFL(ff4,p['INF-DSK-002'],'OptiPlex 3000',3,390000);await mkFFL(ff4,p['INF-MON-001'],'Dell P2422H',3,135000);
     await mkPayF(ff4,t['MIX-001'],1575000,'virement',d(-14)); // pas d'espèces : exige session caisse + mouvement
     console.log('    3 factures fournisseur OK');
     
+    console.log('\n[10] Controles...');
+    // Un en-tête qui ne vaut pas la somme de ses lignes s'affiche faux dans la
+    // démo (liste ≠ fiche ≠ PDF) : on refuse de valider le seed plutôt que de le montrer.
+    const {rows:ecarts}=await db.query(`
+      SELECT 'facture '||f.numero_facture AS piece FROM factures f
+        JOIN (SELECT document_id,SUM(total_ligne) s FROM document_lignes WHERE document_type='facture' GROUP BY 1) l ON l.document_id=f.id
+       WHERE l.s<>f.total
+      UNION ALL
+      SELECT 'devis '||v.numero_devis FROM devis v
+        JOIN (SELECT document_id,SUM(total_ligne) s FROM document_lignes WHERE document_type='devis' GROUP BY 1) l ON l.document_id=v.id
+       WHERE l.s<>v.total
+      UNION ALL
+      SELECT 'commande '||c.numero_commande FROM commandes_fournisseur c
+        JOIN (SELECT commande_id,SUM(total_ligne) s FROM commande_lignes GROUP BY 1) l ON l.commande_id=c.id
+       WHERE l.s<>c.sous_total
+      UNION ALL
+      SELECT 'facture fournisseur '||ff.numero_facture_interne FROM factures_fournisseur ff
+        JOIN (SELECT facture_id,SUM(total_ligne) s FROM facture_fournisseur_lignes GROUP BY 1) l ON l.facture_id=ff.id
+       WHERE l.s<>ff.total
+      UNION ALL
+      SELECT 'stock '||pr.reference FROM produits pr
+        JOIN (SELECT produit_id,SUM(quantite) q FROM stock_par_location GROUP BY 1) sp ON sp.produit_id=pr.id
+       WHERE sp.q<>pr.stock`);
+    if(ecarts.length)throw new Error('Totaux incoherents dans le seed : '+ecarts.map(e=>e.piece).join(', '));
+    console.log('    en-tetes = somme des lignes, stock = somme des emplacements');
+    
+    console.log('\n[11] Numerotation...');
+    for(const[seq,n]of Object.entries(SEQUENCES))await db.query('SELECT setval($1::regclass,$2,true)',[seq,n]);
+    for(const seq of SEQUENCES_A_ZERO){const{rows}=await db.query('SELECT to_regclass($1) AS r',['public.'+seq]);if(rows[0].r)await db.query('SELECT setval($1::regclass,1,false)',[seq]);}
+    console.log('    sequences recalees');
+    
     await db.query('COMMIT');
-    const cnt=await Promise.all([
-      db.query('SELECT COUNT(*)::int n FROM categories'),db.query('SELECT COUNT(*)::int n FROM produits'),
-      db.query('SELECT COUNT(*)::int n FROM tiers'),db.query('SELECT COUNT(*)::int n FROM devis'),
-      db.query('SELECT COUNT(*)::int n FROM factures'),db.query('SELECT COUNT(*)::int n FROM paiements'),
-      db.query('SELECT COUNT(*)::int n FROM commandes_fournisseur'),db.query('SELECT COUNT(*)::int n FROM receptions'),
-      db.query('SELECT COUNT(*)::int n FROM factures_fournisseur'),db.query('SELECT COUNT(*)::int n FROM document_lignes'),
-    ]);
+    // L'une après l'autre : un même client pg n'exécute pas deux requêtes à la fois.
+    const cnt=[];
+    for(const sql of [
+      'SELECT COUNT(DISTINCT categorie)::int n FROM produits','SELECT COUNT(*)::int n FROM produits',
+      'SELECT COUNT(*)::int n FROM tiers','SELECT COUNT(*)::int n FROM devis',
+      'SELECT COUNT(*)::int n FROM factures','SELECT COUNT(*)::int n FROM paiements',
+      'SELECT COUNT(*)::int n FROM commandes_fournisseur','SELECT COUNT(*)::int n FROM receptions',
+      'SELECT COUNT(*)::int n FROM factures_fournisseur','SELECT COUNT(*)::int n FROM document_lignes',
+    ])cnt.push(await db.query(sql));
     const[cntCat,cntPr,cntTi,cntD,cntF,cntP,cntCf,cntR,cntFf,cntL]=cnt.map(x=>x.rows[0].n);
     console.log('\n==========================================');
     console.log('  NOLYXERP - DEMO SEED');
