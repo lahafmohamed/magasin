@@ -491,7 +491,7 @@ export class FactureService {
       );
 
       // Products with no stock_par_location row fall back to produits.stock
-      // (legacy store — authoritative for those products, see PLAN.md)
+      // (legacy store — authoritative for those products, see docs/archive/PLAN.md)
       const legacyIds = ligneProduitIds.filter((id) => !splStock.has(id));
       const legacyStock = new Map<number, number>();
       if (legacyIds.length > 0) {
