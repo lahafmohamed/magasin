@@ -250,6 +250,13 @@ export default function VenteComptoir() {
         especes_recues: methode === 'espece' ? especesRecues ?? undefined : undefined,
         idempotency_key: idempotencyKey.current,
       });
+      // Lot 29-A : pas de « Vente enregistrée » sans le numéro de la facture
+      // écrite. La clé d'idempotence est gardée : un nouvel « Encaisser »
+      // retrouve la vente si le serveur l'avait enregistrée entre-temps.
+      if (typeof result?.facture_id !== 'number') {
+        toast.error('Le serveur n’a pas confirmé la vente. Vérifiez la connexion puis réessayez.');
+        return;
+      }
       const terminee: VenteTerminee = { result, especesRecues: methode === 'espece' ? especesRecues : null };
       setVente(terminee);
       setAnnounce(result.message);

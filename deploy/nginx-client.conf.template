@@ -52,7 +52,8 @@ server {
         add_header Strict-Transport-Security "max-age=31536000" always;
     }
 
-    # PWA : le service worker ne doit jamais être mis en cache
+    # sw.js arrête l'ancien service worker (lot 29-A) : jamais en cache, et à
+    # garder servi tel quel (un 404 ou index.html laisserait l'ancien en place)
     location = /sw.js {
         add_header Cache-Control "no-cache";
         add_header X-Content-Type-Options "nosniff" always;

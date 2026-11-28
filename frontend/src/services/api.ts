@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosError, type AxiosResponse } from 'axios';
 import { Produit, FactureComplete, StatsDashboard } from '../types';
 import type { PaymentMethod } from '../utils/paymentMethod';
 import { isCredentialError } from '../utils/errors';
@@ -82,9 +82,41 @@ export const api = axios.create({
   withCredentials: true,
 });
 
-// Response interceptor: unwrap non-paginated data and preserve paginated pages.
+/** Corps renvoyé par l'ancien service worker quand le réseau coupait. */
+const OLD_SERVICE_WORKER_OFFLINE = 'Hors ligne';
+
+/**
+ * Lot 29-A : une réponse 2xx dont l'enveloppe dit `success: false` n'est pas
+ * un succès. Le serveur n'en envoie jamais (ses refus ont un statut 4xx/5xx).
+ * C'est ce que répondait l'ancien service worker à une coupure réseau
+ * (`{ success: false, error: 'Hors ligne' }`, statut 200), et il reste actif
+ * sur une page ouverte avant la mise à jour : sans ce rejet, chaque écran
+ * affichait son message de succès (« Vente enregistrée ») sans rien écrire.
+ *
+ * Le corps de l'ancien service worker devient une erreur réseau (« Serveur
+ * injoignable »). Tout autre refus garde sa réponse, donc son message.
+ */
+export function failedEnvelopeError(response: AxiosResponse): AxiosError | null {
+  const body: unknown = response.data;
+  if (!isRecord(body) || body.success !== false) return null;
+  if (body.error === OLD_SERVICE_WORKER_OFFLINE) {
+    return new AxiosError('Network Error', AxiosError.ERR_NETWORK, response.config, response.request);
+  }
+  return new AxiosError(
+    'Request failed',
+    AxiosError.ERR_BAD_RESPONSE,
+    response.config,
+    response.request,
+    response
+  );
+}
+
+// Response interceptor: refuse a failed envelope, then unwrap non-paginated
+// data and preserve paginated pages.
 api.interceptors.response.use(
   (response) => {
+    const failed = failedEnvelopeError(response);
+    if (failed) return Promise.reject(failed);
     if (response.config?.keepEnvelope) return response;
     return { ...response, data: normalizeApiResponseBody(response.data) };
   },

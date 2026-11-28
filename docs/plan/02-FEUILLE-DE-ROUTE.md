@@ -729,6 +729,7 @@ Ces lots des fiches ne sont plus à faire seuls : leur travail est dans le lot i
 Cocher ici chaque étape finie (date et commit) :
 
 - [ ] Étape 0 · Ne plus rien perdre
+  - [x] 29-A, le 2026-11-28 (branche `lot/29-a-hors-ligne`) : service worker retiré (question 94), intercepteur et vente comptoir. Rejoué sur la version de production dans Chrome : aucun des six gestes coupés n'affiche de succès sans écriture. **Constaté au rejeu, sans lot propriétaire** : Chrome renvoie seul une requête coupée, et les routes sans clé anti-doublon l'écrivent à nouveau (scan d'inventaire compté 4 fois au lieu d'une, contact créé 6 fois, pour 5 coupures de suite) ; ventes et paiements ont tenu grâce à leur clé.
 - [ ] Étape 1 · Un client neuf démarre, rien ne compte deux fois
 - [ ] Étape 2 · Qui a fait quoi
 - [ ] Étape 3 · Le stock juste, chacun dans sa boutique

@@ -181,4 +181,44 @@ describe('VenteComptoir', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(screen.getByText('T-shirt bleu M')).toBeInTheDocument();
   });
+
+  it('coupure réseau (29-A) : erreur affichée, aucun « Vente enregistrée », même clé au nouvel essai', async () => {
+    mocked(factureService.createVenteComptoir).mockRejectedValueOnce({
+      isAxiosError: true,
+      code: 'ERR_NETWORK',
+      message: 'Network Error',
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await scan(user, BARCODE);
+    await screen.findByText('T-shirt bleu M');
+
+    await user.click(screen.getByRole('button', { name: /Encaisser/ }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Serveur injoignable. Vérifiez votre connexion.')
+    );
+    expect(screen.queryByRole('dialog', { name: 'Vente enregistrée' })).not.toBeInTheDocument();
+    expect(screen.getByText('T-shirt bleu M')).toBeInTheDocument();
+
+    // Le caissier réessaie : la même clé part, le serveur retrouve la vente s'il l'avait écrite.
+    await user.click(screen.getByRole('button', { name: /Encaisser/ }));
+    await screen.findByRole('dialog', { name: 'Vente enregistrée' });
+    const [first, second] = mocked(factureService.createVenteComptoir).mock.calls.map((call) => call[0]);
+    expect(second.idempotency_key).toBe(first.idempotency_key);
+  });
+
+  it('réponse sans facture (29-A) : pas de « Vente enregistrée »', async () => {
+    mocked(factureService.createVenteComptoir).mockResolvedValueOnce({ success: false, error: 'Hors ligne' });
+    const user = userEvent.setup();
+    renderPage();
+    await scan(user, BARCODE);
+    await screen.findByText('T-shirt bleu M');
+
+    await user.click(screen.getByRole('button', { name: /Encaisser/ }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Le serveur n’a pas confirmé la vente. Vérifiez la connexion puis réessayez.')
+    );
+    expect(screen.queryByRole('dialog', { name: 'Vente enregistrée' })).not.toBeInTheDocument();
+    expect(screen.getByText('T-shirt bleu M')).toBeInTheDocument();
+  });
 });

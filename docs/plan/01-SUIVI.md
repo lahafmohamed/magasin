@@ -307,7 +307,7 @@ Vague 1 : 45 défauts rejoués, 35 confirmés, 10 nuancés, 0 faux. Vague 2 : 48
 91. Supprimer les bulles de vente et de paiement (proposé) ?
 92. Garder la pièce d'identité d'un client à crédit ? Journal d'audit gardé sans limite (proposé) ?
 93. Accepte-t-on des trous de numérotation (un par vente refusée), ou un numéro donné seulement à l'enregistrement réussi ?
-94. Retire-t-on tout de suite le service worker (proposé) ?
+94. Retire-t-on tout de suite le service worker (proposé) ? → **Oui** (2026-11-28) : retiré par le lot 29-A.
 95. Le pare-feu du serveur ferme-t-il les ports des API ? (à vérifier par le propriétaire)
 96. Mise à jour : la démo, puis un client pilote, puis les autres (proposé) ?
 97. Prospects et clients suivis par git : supprimés du dépôt et de l'historique (proposé) ?

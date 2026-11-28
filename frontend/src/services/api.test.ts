@@ -6,6 +6,7 @@ import {
   caisseService,
   creditNoteService,
   factureService,
+  failedEnvelopeError,
   generalLedgerService,
   normalizeApiResponseBody,
   paiementService,
@@ -13,6 +14,7 @@ import {
   retourService,
   tiersService,
 } from './api';
+import { getErrorMessage, OFFLINE_MESSAGE } from '../utils/errors';
 
 /** Faux serveur : répond `body` avec `status` à toute requête de l'instance `api`. */
 function respondWith(status: number, body: unknown, seen?: InternalAxiosRequestConfig[]): AxiosAdapter {
@@ -201,5 +203,56 @@ describe('normalizeApiResponseBody', () => {
   it('conserve une réponse message sans champ data', () => {
     const response = { success: true, message: 'Statut mis à jour' };
     expect(normalizeApiResponseBody(response)).toBe(response);
+  });
+});
+
+describe('enveloppe en échec sous un statut 200 (lot 29-A)', () => {
+  /** Ce que répondait l'ancien service worker à une coupure réseau. */
+  const OLD_SW_OFFLINE = { success: false, error: 'Hors ligne' };
+  const FALLBACK = 'La vente n’a pas été enregistrée. Vérifiez les articles puis réessayez.';
+
+  it('vente comptoir : le faux succès du service worker devient une erreur réseau', async () => {
+    api.defaults.adapter = respondWith(200, OLD_SW_OFFLINE);
+    const error = await factureService
+      .createVenteComptoir({ lignes: [{ produit_id: 5, quantite: 1, prix_unitaire: 2500 }], paiements: [{ methode_paiement: 'espece' }] })
+      .catch((err: unknown) => err);
+    expect(error).toMatchObject({ isAxiosError: true, code: 'ERR_NETWORK' });
+    // « Serveur injoignable », jamais le libellé de la page : la vente a peut-être été écrite.
+    expect(getErrorMessage(error, FALLBACK)).toBe(OFFLINE_MESSAGE);
+  });
+
+  it('encaissement (`keepEnvelope`) : rejeté aussi', async () => {
+    api.defaults.adapter = respondWith(200, OLD_SW_OFFLINE);
+    await expect(paiementService.create(110, { montant: 5000, methode_paiement: 'espece' })).rejects.toMatchObject({
+      code: 'ERR_NETWORK',
+    });
+  });
+
+  it('caisse : ouverture et clôture rejetées', async () => {
+    api.defaults.adapter = respondWith(200, OLD_SW_OFFLINE);
+    await expect(caisseService.ouvrir({ magasin_id: 1, fond_initial: 20000 })).rejects.toMatchObject({ code: 'ERR_NETWORK' });
+    await expect(caisseService.cloturer(2, { fond_final_compte: 60000 })).rejects.toMatchObject({ code: 'ERR_NETWORK' });
+  });
+
+  it('lecture : une liste en échec est une erreur, pas une page vide qui plante', async () => {
+    api.defaults.adapter = respondWith(200, OLD_SW_OFFLINE);
+    await expect(api.get('/factures')).rejects.toMatchObject({ code: 'ERR_NETWORK' });
+  });
+
+  it('autre refus en 200 : rejeté avec son message serveur', async () => {
+    api.defaults.adapter = respondWith(200, { success: false, error: 'Caisse fermée : ouvrez-la avant d’encaisser.' });
+    const error = await api.post('/factures/comptoir', {}).catch((err: unknown) => err);
+    expect(getErrorMessage(error, FALLBACK)).toBe('Caisse fermée : ouvrez-la avant d’encaisser.');
+  });
+
+  it('une réponse réussie passe toujours', async () => {
+    api.defaults.adapter = respondWith(200, { success: true, data: { id: 1 } });
+    await expect(api.get('/factures/1')).resolves.toMatchObject({ data: { id: 1 } });
+  });
+
+  it('failedEnvelopeError ignore un corps sans enveloppe', () => {
+    const config = {} as InternalAxiosRequestConfig;
+    expect(failedEnvelopeError({ data: [{ id: 1 }], status: 200, statusText: 'OK', headers: {}, config })).toBeNull();
+    expect(failedEnvelopeError({ data: 'texte', status: 200, statusText: 'OK', headers: {}, config })).toBeNull();
   });
 });

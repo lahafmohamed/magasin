@@ -1,81 +1,34 @@
-// v4: rebrand nolyxERP — bump forces the activate handler to purge the old
-// hitek-cache-v3, which may still hold financial API data on shared machines.
-const CACHE_NAME = 'nolyx-cache-v4';
-const STATIC_ASSETS = [
-  '/manifest.json',
-  '/logo.png',
-];
+// Service worker retiré (lot 29-A, 2026-11-28).
+//
+// L'ancien service worker répondait à une coupure réseau par un statut 200
+// `{ success: false }` : l'application le prenait pour un succès et affichait
+// « Vente enregistrée », « Paiement enregistré » ou « Caisse clôturée » alors
+// que rien n'était écrit.
+//
+// Ce fichier reste servi à la même adresse (`/sw.js`, en `no-cache`) pour que
+// chaque navigateur qui avait installé l'ancien le remplace par celui-ci à sa
+// prochaine visite. Il n'intercepte aucune requête (pas d'écouteur `fetch`),
+// vide tous les caches et se désinscrit. Il ne recharge pas la page : un
+// rechargement viderait un panier en cours.
+//
+// Chrome ne l'active qu'une fois fermés les onglets que l'ancien garde occupé
+// (rejeu du 2026-11-28) : c'est `retirerServiceWorker` (src/main.tsx) qui
+// retire l'ancien dès la première visite de la nouvelle version. Celui-ci
+// reste le filet pour un navigateur qui rouvrirait une ancienne version.
+//
+// Ne pas supprimer ce fichier : un 404, ou `index.html` servi à sa place par
+// le repli de nginx, laisse l'ancien service worker en place.
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
-  );
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
-      );
-    })
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+      await self.registration.unregister();
+    })()
   );
-  self.clients.claim();
 });
-
-self.addEventListener('fetch', (event) => {
-  const { request } = event;
-  const url = new URL(request.url);
-
-  // Ne jamais intercepter les requêtes Vite HMR ou les modules
-  if (url.pathname.startsWith('/@vite/') || url.pathname.startsWith('/node_modules/') || url.hostname === 'localhost' && url.port !== '') {
-    return;
-  }
-
-  // API requests → Network ONLY. Never write API responses to Cache Storage:
-  // they carry financial/account data and Cache Storage survives logout and is
-  // readable by anyone on a shared machine. Offline = a graceful JSON error.
-  if (url.pathname.startsWith('/api/')) {
-    event.respondWith(networkOnly(request));
-    return;
-  }
-
-  // Static assets (images, fonts, manifest) → Cache First
-  if (request.destination === 'image' || request.destination === 'font' || request.destination === 'manifest') {
-    event.respondWith(cacheFirst(request));
-    return;
-  }
-
-  // Ne pas intercepter les scripts JS (laissés à Vite) ni les documents
-  // pour éviter les problèmes de cache avec React
-  return;
-});
-
-async function networkOnly(request) {
-  // Always hit the network; never read or write Cache Storage for API traffic.
-  // Offline yields a graceful JSON error instead of a stale cached response.
-  try {
-    return await fetch(request);
-  } catch (error) {
-    return new Response(
-      JSON.stringify({ success: false, error: 'Hors ligne' }),
-      { headers: { 'Content-Type': 'application/json' } }
-    );
-  }
-}
-
-async function cacheFirst(request) {
-  const cached = await caches.match(request);
-  if (cached) return cached;
-  try {
-    const response = await fetch(request);
-    const cache = await caches.open(CACHE_NAME);
-    cache.put(request, response.clone());
-    return response;
-  } catch {
-    return new Response('', { status: 408 });
-  }
-}
